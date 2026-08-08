@@ -142,6 +142,10 @@ export const api = {
   taxSummaryByYear: (params: { as_of?: string } = {}) =>
     request<TaxYearsSummary>(`/tax-report/summary-by-year${qs(params)}`),
 
+  /** Year-end ZIP download URL (open in new tab / anchor download). */
+  yearEndExportUrl: (year?: number) =>
+    `${API_BASE}/exports/year-end${qs({ year: year ?? undefined })}`,
+
   statementFiles: (params: { limit?: number; status?: string } = {}) =>
     request<{ total: number; items: StatementFileRow[] }>(
       `/statement-files${qs(params)}`,

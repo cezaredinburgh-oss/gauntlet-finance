@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-08 — Wave 4: year-end export pack
+
+- `GET /api/exports/year-end?year=` → ZIP (tax JSON/CSV, open lots, gains-by-year, category spend, statement files, README).
+- UI: Investments → Tax “Year-end pack”; Settings download with year picker.
+
 ## 2026-08-08 — Wave 3: rule suggestions + split investments page
 
 - `GET /api/categories/rule-suggestions` — ranked residuals with category affinity.

@@ -24,6 +24,7 @@ from backend.api.routes import (
     auth_routes,
     categories,
     dashboard,
+    exports as exports_routes,
     fx as fx_routes,
     investments,
     prices,
@@ -123,6 +124,7 @@ def create_app() -> FastAPI:
     api.include_router(dashboard.router)
     api.include_router(prices.router)
     api.include_router(tax.router)
+    api.include_router(exports_routes.router)
     api.include_router(admin.router)
     api.include_router(fx_routes.router)
 

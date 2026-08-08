@@ -47,6 +47,7 @@ export function SettingsPage() {
   const [jobBusy, setJobBusy] = useState<string | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
   const [jobMsg, setJobMsg] = useState<string | null>(null);
+  const [exportYear, setExportYear] = useState(() => new Date().getFullYear());
 
   const refreshCleanupPreview = useCallback(async () => {
     try {
@@ -303,6 +304,30 @@ export function SettingsPage() {
         ) : (
           <Spinner />
         )}
+      </section>
+
+      <section className="card space-y-3 p-5">
+        <h2 className="text-sm font-semibold">Year-end export pack</h2>
+        <p className="text-xs text-ink-muted">
+          ZIP with tax report JSON/CSV, open lots, multi-year realised gains, category spend, and
+          statement-file audit. Not tax advice.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            className="input w-auto"
+            value={exportYear}
+            onChange={(e) => setExportYear(Number(e.target.value))}
+          >
+            {Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - i).map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+          <a className="btn-primary text-sm" href={api.yearEndExportUrl(exportYear)}>
+            Download ZIP
+          </a>
+        </div>
       </section>
 
       <section className="card space-y-4 p-5">

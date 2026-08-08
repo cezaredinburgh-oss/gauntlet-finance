@@ -101,6 +101,10 @@ export function TaxPage() {
     URL.revokeObjectURL(a.href);
   }
 
+  function downloadYearEndPack() {
+    window.open(api.yearEndExportUrl(year), "_blank", "noopener,noreferrer");
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -153,6 +157,15 @@ export function TaxPage() {
           >
             <Download className="h-3.5 w-3.5" />
             Exempt CSV
+          </button>
+          <button
+            type="button"
+            className="btn-primary text-xs"
+            onClick={downloadYearEndPack}
+            title="ZIP: tax JSON/CSV, open lots, multi-year gains, category spend, statement files"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Year-end pack
           </button>
         </div>
       </div>
