@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-08 — Fix: PortfolioSnapshots missing tab 500
+
+- Root cause: `PortfolioSnapshots` not in live spreadsheet; `list_rows` raised on parse range.
+- `GoogleSheetsRepository._load_tab` auto-creates missing schema tabs; `list_mv_series` returns empty on failure.
+
 ## 2026-08-08 — Wave 4: year-end export pack
 
 - `GET /api/exports/year-end?year=` → ZIP (tax JSON/CSV, open lots, gains-by-year, category spend, statement files, README).

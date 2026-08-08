@@ -311,6 +311,42 @@ class GoogleSheetsRepository:
         )
         return [s["properties"]["title"] for s in meta.get("sheets", [])]
 
+    def ensure_tab(self, tab: str) -> str:
+        """Create a single missing tab + header row. Idempotent."""
+        if tab not in SHEET_HEADERS:
+            raise KeyError(f"unknown tab {tab}")
+        existing = set(self.list_tab_names())
+        if tab not in existing:
+            self._service.spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={
+                    "requests": [
+                        {
+                            "addSheet": {
+                                "properties": {
+                                    "title": tab,
+                                    "gridProperties": {
+                                        "rowCount": 10000,
+                                        "columnCount": max(
+                                            26, len(SHEET_HEADERS[tab]) + 4
+                                        ),
+                                    },
+                                }
+                            }
+                        }
+                    ]
+                },
+            ).execute()
+            action = "created"
+        else:
+            action = "exists"
+        hdr = self._ensure_header_row(tab, SHEET_HEADERS[tab])
+        if action == "exists":
+            return hdr
+        if hdr != "headers_ok":
+            return f"{action}+{hdr}"
+        return action
+
     def ensure_all_tabs(self) -> dict[str, str]:
         """
         Create missing tabs and ensure header rows match SHEET_HEADERS.
@@ -568,6 +604,29 @@ class GoogleSheetsRepository:
                     .execute()
                 )
             except HttpError as exc:
+                # Missing worksheet (new SHEET_HEADERS entry) → create and return empty
+                msg = str(exc)
+                if "Unable to parse range" in msg or (
+                    getattr(getattr(exc, "resp", None), "status", None) == 400
+                    and "parse range" in msg.lower()
+                ):
+                    logger.warning(
+                        "Tab %s missing or unreadable; creating from schema: %s",
+                        tab,
+                        exc,
+                    )
+                    try:
+                        self.ensure_tab(tab)
+                    except Exception as create_exc:  # noqa: BLE001
+                        logger.exception("Failed to create tab %s", tab)
+                        raise RuntimeError(
+                            f"Sheets tab {tab} missing and create failed: {create_exc}"
+                        ) from create_exc
+                    self._cache[tab] = {}
+                    self._row_index[tab] = {}
+                    self._next_row[tab] = 2
+                    self._cache_loaded_at[tab] = time.time()
+                    return
                 logger.exception("Failed to read tab %s", tab)
                 raise RuntimeError(f"Sheets read failed for {tab}: {exc}") from exc
 

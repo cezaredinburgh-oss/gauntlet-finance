@@ -87,9 +87,21 @@ def list_mv_series(
     if date_from > date_to:
         date_from, date_to = date_to, date_from
 
+    try:
+        raw = repo.list_rows("PortfolioSnapshots")
+    except Exception as exc:  # noqa: BLE001
+        # Missing tab / transient Sheets error — empty series, not 500
+        return {
+            "date_from": date_from.isoformat(),
+            "date_to": date_to.isoformat(),
+            "point_count": 0,
+            "series": [],
+            "error": str(exc)[:300],
+        }
+
     rows = [
         r
-        for r in repo.list_rows("PortfolioSnapshots")
+        for r in raw
         if isinstance(r, PortfolioSnapshot)
         and not r.archived
         and date_from <= r.as_of <= date_to
