@@ -22,6 +22,7 @@ from backend.schema.models import (
     CategoryRule,
     InvestmentEvent,
     InvestmentLot,
+    StatementFile,
     StatementFileStatus,
     Transaction,
 )
@@ -226,35 +227,64 @@ class ImportPipeline:
                 message="File already imported",
             )
 
+        # Everything after register is best-effort: on any failure mark ERROR so
+        # the same file can be re-uploaded (row dedupe recovers partial writes).
         try:
-            parsed = parse_statement_bytes(
-                content,
-                account_ids=acc_map,
-                existing_hashes=set(),  # already gated
+            return self._import_registered(
+                reg_statement=reg.statement,
+                content=content,
                 filename=filename,
-                source_file_id=reg.statement.id,
-                now=ts,
+                acc_map=acc_map,
+                content_sha256=h,
+                ts=ts,
             )
         except Exception as exc:  # noqa: BLE001
-            self.statements.mark_status(
-                reg.statement.id,
-                StatementFileStatus.ERROR,
-                notes=str(exc),
-                now=ts,
-            )
+            try:
+                self.statements.mark_status(
+                    reg.statement.id,
+                    StatementFileStatus.ERROR,
+                    notes=str(exc)[:1500],
+                    now=utc_now(),
+                )
+            except Exception:  # noqa: BLE001
+                # Do not hide the original import failure if ERROR write fails.
+                pass
             return UploadSummary(
                 status="error",
                 content_sha256=h,
                 statement_file_id=str(reg.statement.id),
-                message=str(exc),
+                message=(
+                    f"{exc}. File marked as failed — you can re-upload the same "
+                    "file to resume (already-written rows are skipped)."
+                ),
                 errors=[str(exc)],
             )
 
-        # Update statement metadata
+    def _import_registered(
+        self,
+        *,
+        reg_statement: StatementFile,
+        content: bytes,
+        filename: str,
+        acc_map: dict[str, UUID],
+        content_sha256: str,
+        ts: datetime,
+    ) -> UploadSummary:
+        """Parse + persist for a StatementFiles row already registered as PENDING."""
+        parsed = parse_statement_bytes(
+            content,
+            account_ids=acc_map,
+            existing_hashes=set(),  # already gated
+            filename=filename,
+            source_file_id=reg_statement.id,
+            now=ts,
+        )
+
+        # Update statement metadata (still PENDING until writes finish)
         self.repo.upsert_rows(
             "StatementFiles",
             [
-                reg.statement.model_copy(
+                reg_statement.model_copy(
                     update={
                         "institution": parsed.institution or "Unknown",
                         "parser_key": parsed.parser_key,
@@ -265,27 +295,33 @@ class ImportPipeline:
             ],
         )
 
-        # Dedupe against existing
-        existing_tx = [r for r in self.repo.list_rows("Transactions") if isinstance(r, Transaction)]
+        # Dedupe against existing (covers retries after partial write)
+        existing_tx = [
+            r for r in self.repo.list_rows("Transactions") if isinstance(r, Transaction)
+        ]
         existing_ev = [
-            r for r in self.repo.list_rows("InvestmentEvents") if isinstance(r, InvestmentEvent)
+            r
+            for r in self.repo.list_rows("InvestmentEvents")
+            if isinstance(r, InvestmentEvent)
         ]
         d_tx = StatementService.dedupe_transactions(existing_tx, parsed.transactions)
         d_ev = StatementService.dedupe_events(existing_ev, parsed.investment_events)
 
         # Categorize new transactions
-        categories = [r for r in self.repo.list_rows("Categories") if isinstance(r, Category)]
-        rules = [r for r in self.repo.list_rows("CategoryRules") if isinstance(r, CategoryRule)]
+        categories = [
+            r for r in self.repo.list_rows("Categories") if isinstance(r, Category)
+        ]
+        rules = [
+            r for r in self.repo.list_rows("CategoryRules") if isinstance(r, CategoryRule)
+        ]
         cat_engine = CategoryEngine(rules=rules, categories=categories)
         cat_result = cat_engine.categorize_many(d_tx.transactions)
 
         # Internal transfer match on union of existing + new
         combined = existing_tx + cat_result.transactions
         match_result = match_internal_transfers(combined)
-        # Persist only rows that changed transfer flags among new set + matched existing
         matched_by_id = {t.id: t for t in match_result.transactions}
         new_tx_final = [matched_by_id[t.id] for t in cat_result.transactions]
-        # Also update existing txs that gained transfer_group_id
         existing_updates = []
         for t in existing_tx:
             m = matched_by_id.get(t.id)
@@ -301,7 +337,6 @@ class ImportPipeline:
         existing_lots = [
             r for r in self.repo.list_rows("InvestmentLots") if isinstance(r, InvestmentLot)
         ]
-        # Clear lot_id on buy events so engine can open / link cleanly when parser pre-set
         events_for_fifo = []
         for e in d_ev.investment_events:
             if e.event_type.value == "LotAllocation":
@@ -309,7 +344,6 @@ class ImportPipeline:
             events_for_fifo.append(e)
 
         fifo = self.lot_engine.apply_events(existing_lots, events_for_fifo, now=ts)
-        # Enrich any placeholder USD/CZK legs (parser open_lot_from_buy path)
         enriched_lots = enrich_lots(
             fifo.lots,
             fx,
@@ -318,7 +352,7 @@ class ImportPipeline:
             fetch_missing_rates=True,
         )
 
-        # Persist
+        # Persist — only mark Imported after all of these succeed
         if new_tx_final:
             self.repo.upsert_rows("Transactions", new_tx_final)
         if existing_updates:
@@ -334,14 +368,12 @@ class ImportPipeline:
             )
 
         self.statements.mark_imported(
-            reg.statement.id,
+            reg_statement.id,
             row_count=parsed.row_count,
             now=ts,
         )
 
         tx_written = len(new_tx_final)
-        # Source events kept after dedupe (not FIFO LotAllocation children).
-        # Align structured field with human message "Y new".
         ev_written = len(d_ev.investment_events)
         msg = _build_import_message(
             parser_key=parsed.parser_key,
@@ -354,10 +386,10 @@ class ImportPipeline:
         )
         return UploadSummary(
             status="imported",
-            content_sha256=h,
+            content_sha256=content_sha256,
             parser_key=parsed.parser_key,
             institution=parsed.institution,
-            statement_file_id=str(reg.statement.id),
+            statement_file_id=str(reg_statement.id),
             rows_parsed=parsed.row_count,
             transactions_written=tx_written,
             events_written=ev_written,

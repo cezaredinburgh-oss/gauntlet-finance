@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+import random
+import time
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -23,6 +25,77 @@ from backend.schema.models import SHEET_HEADERS, StatementFile, SheetRow, TAB_MO
 from backend.sheets.codec import model_to_row, models_to_grid, row_to_model
 
 logger = logging.getLogger(__name__)
+
+
+def _http_status(exc: HttpError) -> int | None:
+    resp = getattr(exc, "resp", None)
+    if resp is None:
+        return None
+    try:
+        return int(resp.status)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_retryable_sheets_error(exc: HttpError) -> bool:
+    """429 rate limits and transient 5xx / 408."""
+    status = _http_status(exc)
+    if status in (408, 429, 500, 502, 503, 504):
+        return True
+    # Some client libs only put the code in the message body
+    msg = str(exc).lower()
+    return "rate_limit" in msg or "quota exceeded" in msg or "ratelimit" in msg
+
+
+def execute_sheets_request(
+    request: Any,
+    *,
+    what: str,
+    max_attempts: int = 10,
+    base_delay_s: float = 2.0,
+    max_delay_s: float = 75.0,
+) -> Any:
+    """
+    Execute a googleapiclient request with exponential backoff on 429/5xx.
+
+    Google Sheets free-tier write quota is ~60 writes/min/user; large statement
+    imports can hit that mid-append. Retrying with backoff is safer than
+    marking the whole file imported-or-lost.
+    """
+    delay = base_delay_s
+    last_exc: HttpError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return request.execute()
+        except HttpError as exc:
+            last_exc = exc
+            if not _is_retryable_sheets_error(exc) or attempt >= max_attempts:
+                raise
+            # Honour Retry-After when Google sends it
+            retry_after = None
+            resp = getattr(exc, "resp", None)
+            if resp is not None:
+                try:
+                    raw = resp.get("retry-after") if hasattr(resp, "get") else None
+                    if raw is not None:
+                        retry_after = float(raw)
+                except (TypeError, ValueError):
+                    retry_after = None
+            sleep_for = retry_after if retry_after is not None else delay
+            # Jitter so concurrent writers do not stampede
+            sleep_for = min(max_delay_s, sleep_for + random.uniform(0, 0.5))
+            logger.warning(
+                "Sheets %s hit %s (attempt %s/%s); sleeping %.1fs then retry",
+                what,
+                _http_status(exc) or exc,
+                attempt,
+                max_attempts,
+                sleep_for,
+            )
+            time.sleep(sleep_for)
+            delay = min(max_delay_s, delay * 2)
+    assert last_exc is not None
+    raise last_exc
 
 # spreadsheets + drive.file: open shared sheets and create SA-owned spreadsheets
 SCOPES = [
@@ -185,8 +258,9 @@ class GoogleSheetsRepository:
     and rare compacting paths.
     """
 
-    # Google values.batchUpdate is happier with modest chunk sizes
-    _PATCH_CHUNK = 200
+    # Larger chunks = fewer write requests (quota is ~60 writes/min/user).
+    # 800 rows × ~40 cols stays well under the cells-per-request limit.
+    _PATCH_CHUNK = 800
     # Prefer a long TTL: this process is the writer; invalidate/refresh on write.
     # External scripts can still force a re-read after TTL or process restart.
     _DEFAULT_TAB_TTL_SECONDS = 600.0
@@ -578,7 +652,7 @@ class GoogleSheetsRepository:
                     }
                     for sheet_row in chunk_rows
                 ]
-                (
+                req = (
                     self._service.spreadsheets()
                     .values()
                     .batchUpdate(
@@ -588,8 +662,8 @@ class GoogleSheetsRepository:
                             "data": data,
                         },
                     )
-                    .execute()
                 )
+                execute_sheets_request(req, what=f"patch {tab}")
         except HttpError as exc:
             logger.exception("Failed to patch tab %s (%d rows)", tab, len(order))
             raise RuntimeError(f"Sheets patch failed for {tab}: {exc}") from exc
@@ -669,7 +743,7 @@ class GoogleSheetsRepository:
             new_cols,
         )
         try:
-            self._service.spreadsheets().batchUpdate(
+            req = self._service.spreadsheets().batchUpdate(
                 spreadsheetId=self.spreadsheet_id,
                 body={
                     "requests": [
@@ -687,7 +761,8 @@ class GoogleSheetsRepository:
                         }
                     ]
                 },
-            ).execute()
+            )
+            execute_sheets_request(req, what=f"expand {tab}")
         except HttpError as exc:
             logger.exception("Failed to expand grid for tab %s", tab)
             raise RuntimeError(
@@ -710,7 +785,7 @@ class GoogleSheetsRepository:
             grid = [model_to_row(r, headers) for r in chunk]
             end_row = start + len(chunk) - 1
             try:
-                (
+                req = (
                     self._service.spreadsheets()
                     .values()
                     .update(
@@ -719,10 +794,10 @@ class GoogleSheetsRepository:
                         valueInputOption="RAW",
                         body={"values": grid},
                     )
-                    .execute()
                 )
+                execute_sheets_request(req, what=f"append {tab}@{start}")
             except HttpError as exc:
-                # One retry after forced expand (stale meta / concurrent writer)
+                # One structural retry after forced expand (stale meta / concurrent writer)
                 err = str(exc)
                 if "exceeds grid limits" in err or "grid limits" in err.lower():
                     logger.warning(
@@ -734,7 +809,7 @@ class GoogleSheetsRepository:
                         tab, min_rows=end_row + 1000, min_cols=len(headers)
                     )
                     try:
-                        (
+                        req2 = (
                             self._service.spreadsheets()
                             .values()
                             .update(
@@ -743,7 +818,9 @@ class GoogleSheetsRepository:
                                 valueInputOption="RAW",
                                 body={"values": grid},
                             )
-                            .execute()
+                        )
+                        execute_sheets_request(
+                            req2, what=f"append-retry {tab}@{start}"
                         )
                     except HttpError as exc2:
                         logger.exception("Failed to append to tab %s after expand", tab)
@@ -756,6 +833,9 @@ class GoogleSheetsRepository:
             for offset, row in enumerate(chunk):
                 index[row.id] = start + offset
             next_row = start + len(chunk)
+            # Pace large multi-chunk writes so we stay under ~60 writes/min
+            if len(rows) > self._PATCH_CHUNK and i + self._PATCH_CHUNK < len(rows):
+                time.sleep(1.05)
         self._next_row[tab] = next_row
 
     def _write_grid(self, tab: str, grid: list[list[str]]) -> None:
@@ -765,17 +845,19 @@ class GoogleSheetsRepository:
         self._ensure_grid_capacity(tab, min_rows=need_rows, min_cols=need_cols)
         try:
             # Clear then write keeps sheet compact
-            self._service.spreadsheets().values().clear(
+            clear_req = self._service.spreadsheets().values().clear(
                 spreadsheetId=self.spreadsheet_id,
                 range=f"'{tab}'",
                 body={},
-            ).execute()
-            self._service.spreadsheets().values().update(
+            )
+            execute_sheets_request(clear_req, what=f"clear {tab}")
+            update_req = self._service.spreadsheets().values().update(
                 spreadsheetId=self.spreadsheet_id,
                 range=f"'{tab}'!A1",
                 valueInputOption="RAW",
                 body=body,
-            ).execute()
+            )
+            execute_sheets_request(update_req, what=f"write {tab}")
         except HttpError as exc:
             logger.exception("Failed to write tab %s", tab)
             raise RuntimeError(f"Sheets write failed for {tab}: {exc}") from exc

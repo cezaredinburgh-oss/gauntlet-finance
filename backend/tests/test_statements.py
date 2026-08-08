@@ -35,6 +35,18 @@ def test_register_statement_idempotent_by_hash():
     assert first.status == "new"
     assert first.statement.status == StatementFileStatus.PENDING
 
+    # PENDING must not gate re-upload (failed/abandoned imports are retriable)
+    pending_retry = svc.register_statement(
+        filename="a-retry.csv",
+        file_bytes=data,
+        institution="Raiffeisen",
+        row_count=10,
+        parser_key="raiffeisen_cz",
+    )
+    assert pending_retry.status == "new"
+    assert pending_retry.statement.id == first.statement.id
+
+    svc.mark_imported(first.statement.id, row_count=10)
     second = svc.register_statement(
         filename="a-copy.csv",
         file_bytes=data,

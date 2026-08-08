@@ -216,15 +216,26 @@ class StatementService:
     def find_by_hash(self, content_sha256: str) -> StatementFile | None:
         return self.repo.find_statement_by_hash(content_sha256)
 
-    def is_duplicate(self, content_sha256: str) -> bool:
-        """True when this content was already imported successfully.
+    # Statuses that permanently gate re-upload of the same SHA-256.
+    # PENDING/ERROR never block — a failed or abandoned import must be retriable.
+    _BLOCKING_STATUSES = frozenset(
+        {
+            StatementFileStatus.IMPORTED,
+            StatementFileStatus.SKIPPED_DUPLICATE,
+        }
+    )
 
-        Failed (ERROR) rows do not block a retry of the same file.
+    def is_duplicate(self, content_sha256: str) -> bool:
+        """True only when this content was fully imported (or skipped as duplicate).
+
+        PENDING (crash mid-import) and ERROR (explicit failure) do **not** block
+        a retry. Row-level dedupe handles any partial ledger writes from the
+        previous attempt.
         """
         row = self.find_by_hash(content_sha256)
         if row is None or row.archived:
             return False
-        return row.status != StatementFileStatus.ERROR
+        return row.status in self._BLOCKING_STATUSES
 
     def register_statement(
         self,
@@ -241,21 +252,22 @@ class StatementService:
         """
         Create a StatementFiles row unless the content hash already exists.
 
-        On duplicate, returns the existing row with status ``duplicate``
-        (does not write a second row). ERROR rows are reset and retried.
+        On successful prior import, returns the existing row with status
+        ``duplicate`` (does not write a second row). PENDING/ERROR rows are
+        reset and retried so a rate-limit failure cannot lock the file out.
         """
         ts = now or utc_now()
         h = self.content_hash(file_bytes)
         existing = self.find_by_hash(h)
-        if existing is not None and existing.status != StatementFileStatus.ERROR:
+        if existing is not None and existing.status in self._BLOCKING_STATUSES:
             return RegisterStatementResult(
                 status="duplicate",
                 statement=existing,
                 content_sha256=h,
             )
 
-        if existing is not None and existing.status == StatementFileStatus.ERROR:
-            # Retry same file after a failed import
+        if existing is not None:
+            # Retry same file after a failed / abandoned import
             row = existing.model_copy(
                 update={
                     "original_filename": filename,
