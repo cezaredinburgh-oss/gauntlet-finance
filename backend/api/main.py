@@ -140,22 +140,72 @@ def create_app() -> FastAPI:
 
         @app.get("/{full_path:path}", include_in_schema=False)
         async def spa_fallback(full_path: str):
-            # API routers are registered first and take precedence for known paths
-            reserved = (
-                "api", "docs", "redoc", "openapi.json", "health", "setup",
-                "auth", "upload", "transactions", "investments", "categories",
-                "dashboard", "prices", "tax", "admin", "sheets", "alerts", "fx",
-            )
-            head = (full_path or "").split("/", 1)[0]
-            if head in reserved:
-                return JSONResponse({"detail": "Not Found"}, status_code=404)
-            candidate = _FRONTEND_DIST / full_path
-            if full_path and candidate.is_file():
-                from fastapi.responses import FileResponse
+            """
+            Serve static files from the React build, else index.html for UI routes.
 
-                return FileResponse(candidate)
+            API routers are registered first and always win when they match
+            exactly (e.g. GET /investments/snapshot). This catch-all must still
+            serve the SPA for client routes that share a prefix with APIs
+            (e.g. /investments/analysis, /expenses/spending) — previously those
+            returned {"detail":"Not Found"} and broke deep links / refresh.
+            """
             from fastapi.responses import FileResponse
 
+            path = (full_path or "").strip("/")
+
+            # Built assets + public files (favicon, manifest, …)
+            if path:
+                candidate = _FRONTEND_DIST / path
+                if candidate.is_file():
+                    return FileResponse(candidate)
+
+            # React Router pages (must load index.html so the client can render)
+            spa_exact = {
+                "",
+                "upload",
+                "settings",
+                "investments",
+                "investments/analysis",
+                "transactions",
+                "categories",
+            }
+            spa_prefixes = (
+                "expenses/",
+                "expenses",
+            )
+            if path in spa_exact or any(
+                path == p.rstrip("/") or path.startswith(p) for p in spa_prefixes
+            ):
+                return FileResponse(_FRONTEND_DIST / "index.html")
+
+            # Unknown path under a pure-API first segment → JSON 404
+            reserved_api_heads = {
+                "api",
+                "docs",
+                "redoc",
+                "openapi.json",
+                "health",
+                "setup",
+                "auth",
+                "upload",
+                "transactions",
+                "investments",
+                "categories",
+                "dashboard",
+                "dashboard-summary",
+                "prices",
+                "tax",
+                "admin",
+                "sheets",
+                "alerts",
+                "fx",
+                "lots",
+            }
+            head = path.split("/", 1)[0] if path else ""
+            if head in reserved_api_heads:
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+            # Anything else (future UI routes): SPA shell
             return FileResponse(_FRONTEND_DIST / "index.html")
 
         logger.info("Serving frontend SPA from %s", _FRONTEND_DIST)
