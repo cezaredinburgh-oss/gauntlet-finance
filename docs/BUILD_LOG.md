@@ -4,6 +4,20 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-08 — F9 background FX jobs
+
+- `backend/services/jobs.py`: registry, single-flight per kind, `fx-fetch-cnb` / `fx-backfill-amounts` / `fx-full`.
+- Admin: `GET/POST /api/admin/jobs…`, `POST /api/admin/jobs/tick` + `CRON_SECRET`.
+- Settings UI: run buttons + recent job table.
+
+## 2026-08-08 — F8 consistent `/api` prefix
+
+- Domain routers mounted under `/api/*`; `/health` + `/api/health`.
+- Setup wizard remains `/setup` (+ `/setup/api/*`).
+- Vite proxy no longer strips `/api`; Docker `VITE_API_BASE=/api`.
+- SPA catch-all only outside api/docs/setup/health — fixes deep links vs API collision.
+- OAuth default redirect: `/api/auth/callback`.
+
 ## 2026-08-08 — Analysis: CZK/USD chart + portfolio FX context
 
 - `GET /fx/usd-czk` — CNB series from FXRates; optional `portfolio_usd` adds CZK wealth path.

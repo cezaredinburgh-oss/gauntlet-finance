@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="dev-change-me-use-long-random-string")
     google_client_id: str = ""
     google_client_secret: str = ""
-    oauth_redirect_uri: str = "http://localhost:8020/auth/callback"
+    oauth_redirect_uri: str = "http://localhost:8020/api/auth/callback"
     session_cookie_name: str = "gf_session"
     session_max_age_seconds: int = 60 * 60 * 24 * 7
 
@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     holding_period_exemption_days: int = 1095
     primary_display_currency: str = "USD"
     secondary_display_currency: str = "CZK"
+
+    # Cron / background jobs (optional)
+    cron_secret: str = ""
 
     @field_validator("spreadsheet_id", mode="before")
     @classmethod

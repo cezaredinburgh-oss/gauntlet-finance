@@ -45,18 +45,19 @@ def client(monkeypatch):
 
 
 def test_health(client: TestClient):
-    r = client.get("/health")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["status"] == "ok"
-    assert body["auth_mode"] == "dev"
+    for path in ("/health", "/api/health"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        body = r.json()
+        assert body["status"] == "ok"
+        assert body["auth_mode"] == "dev"
 
 
 def test_upload_and_list_transactions(client: TestClient):
     path = FIXTURES / "raiffeisen_sample.csv"
     with path.open("rb") as f:
         r = client.post(
-            "/upload",
+            "/api/upload",
             files={"file": ("raiffeisen_sample.csv", f, "text/csv")},
         )
     assert r.status_code == 200, r.text
@@ -70,23 +71,23 @@ def test_upload_and_list_transactions(client: TestClient):
     # re-upload → already_imported
     with path.open("rb") as f:
         r2 = client.post(
-            "/upload",
+            "/api/upload",
             files={"file": ("raiffeisen_sample.csv", f, "text/csv")},
         )
     assert r2.status_code == 200
     assert r2.json()["status"] == "already_imported"
 
-    r3 = client.get("/transactions")
+    r3 = client.get("/api/transactions")
     assert r3.status_code == 200
     assert r3.json()["total"] >= 1
 
 
 def test_categories_and_dashboard(client: TestClient):
-    r = client.get("/categories")
+    r = client.get("/api/categories")
     assert r.status_code == 200
     assert "items" in r.json()
 
-    r2 = client.get("/dashboard-summary", params={"period_key": "this_month"})
+    r2 = client.get("/api/dashboard-summary", params={"period_key": "this_month"})
     assert r2.status_code == 200
     body = r2.json()
     assert "cashflow" in body
@@ -98,11 +99,11 @@ def test_categories_and_dashboard(client: TestClient):
 
 
 def test_alerts_and_snapshot(client: TestClient):
-    r = client.get("/alerts")
+    r = client.get("/api/alerts")
     assert r.status_code == 200
     assert "items" in r.json()
 
-    r2 = client.get("/investments/snapshot")
+    r2 = client.get("/api/investments/snapshot")
     assert r2.status_code == 200
     body = r2.json()
     assert "tax_runway" in body
@@ -126,7 +127,7 @@ def test_alerts_and_snapshot(client: TestClient):
 
 
 def test_tax_report(client: TestClient):
-    r = client.get("/tax-report")
+    r = client.get("/api/tax-report")
     assert r.status_code == 200
     body = r.json()
     assert "summary" in body
@@ -138,23 +139,25 @@ def test_openapi_available(client: TestClient):
     r = client.get("/openapi.json")
     assert r.status_code == 200
     paths = r.json()["paths"]
-    assert "/upload" in paths
-    assert "/transactions" in paths
-    assert "/prices/refresh" in paths
-    assert "/tax-report" in paths
-    assert "/sheets/status" in paths
-    assert "/alerts" in paths
-    assert "/investments/snapshot" in paths
-    assert "/categories/bulk-override" in paths
+    assert "/api/upload" in paths
+    assert "/api/transactions" in paths
+    assert "/api/prices/refresh" in paths
+    assert "/api/tax-report" in paths
+    assert "/api/sheets/status" in paths
+    assert "/api/alerts" in paths
+    assert "/api/investments/snapshot" in paths
+    assert "/api/categories/bulk-override" in paths
+    assert "/api/health" in paths
+    assert "/health" in paths
 
 
 def test_bulk_override_category(client: TestClient):
     import backend.api.deps as deps
     from backend.tests.helpers import tx as make_tx
 
-    r = client.post("/categories/ensure-defaults")
+    r = client.post("/api/categories/ensure-defaults")
     assert r.status_code == 200
-    cats = client.get("/categories").json()["items"]
+    cats = client.get("/api/categories").json()["items"]
     assert cats
     cat_id = cats[0]["id"]
 
@@ -165,7 +168,7 @@ def test_bulk_override_category(client: TestClient):
     repo.upsert_rows("Transactions", [t1, t2])
 
     r = client.post(
-        "/categories/bulk-override",
+        "/api/categories/bulk-override",
         json={
             "category_id": cat_id,
             "transaction_ids": [str(t1.id), str(t2.id)],
@@ -177,14 +180,17 @@ def test_bulk_override_category(client: TestClient):
     assert body["missing"] == 0
     assert body["category_id"] == cat_id
 
-    items = {str(t["id"]): t for t in client.get("/transactions?limit=50").json()["items"]}
+    items = {
+        str(t["id"]): t
+        for t in client.get("/api/transactions?limit=50").json()["items"]
+    }
     assert items[str(t1.id)]["category_id"] == cat_id
     assert items[str(t1.id)]["category_override"] is True
     assert items[str(t2.id)]["category_override"] is True
 
 
 def test_sheets_status_memory_mode(client: TestClient):
-    r = client.get("/sheets/status")
+    r = client.get("/api/sheets/status")
     assert r.status_code == 200
     body = r.json()
     assert body["backend"] == "memory"

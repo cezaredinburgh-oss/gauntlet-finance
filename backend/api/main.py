@@ -3,18 +3,20 @@ Gauntlet Finance FastAPI application.
 
 Run:
   uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8020
+
+Domain API lives under ``/api/*``. UI (production) is served from the same origin;
+SPA deep links are not under ``/api``.
 """
 
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.routes import (
@@ -39,6 +41,16 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _FRONTEND_DIST = _PROJECT_ROOT / "frontend" / "dist"
 
 
+def _health_payload() -> HealthResponse:
+    s = get_settings()
+    return HealthResponse(
+        status="ok",
+        app=s.app_name,
+        auth_mode=s.auth_mode,
+        spreadsheet_configured=s.spreadsheet_configured,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -47,8 +59,6 @@ async def lifespan(app: FastAPI):
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     if settings.require_sheets and not settings.spreadsheet_configured:
-        # Do not crash the process — Railway would restart forever (deploy loop).
-        # Health still returns ok; spreadsheet_configured stays false until env is set.
         logger.error(
             "REQUIRE_SHEETS=true but SPREADSHEET_ID is empty. "
             "Set SPREADSHEET_ID + GOOGLE_SERVICE_ACCOUNT_JSON in host variables. "
@@ -71,7 +81,8 @@ def create_app() -> FastAPI:
         description=(
             "Personal finance backend: Google Sheets storage, statement parsers, "
             "FIFO lots, internal-transfer matching, yfinance prices, tax JSON report.\n\n"
-            "Setup wizard: `/setup` · API docs: `/docs` · Health: `/health`."
+            "Domain API: `/api/*` · Setup wizard: `/setup` · Docs: `/docs` · "
+            "Health: `/health` and `/api/health`."
         ),
         lifespan=lifespan,
     )
@@ -92,28 +103,33 @@ def create_app() -> FastAPI:
             content={"detail": str(exc) if settings.debug else "Internal server error"},
         )
 
+    # Railway / process health (root) + consistent /api health for the SPA
     @app.get("/health", response_model=HealthResponse, tags=["health"])
-    async def health() -> HealthResponse:
-        s = get_settings()
-        return HealthResponse(
-            status="ok",
-            app=s.app_name,
-            auth_mode=s.auth_mode,
-            spreadsheet_configured=s.spreadsheet_configured,
-        )
+    async def health_root() -> HealthResponse:
+        return _health_payload()
 
-    app.include_router(auth_routes.router)
+    api = APIRouter(prefix="/api")
+
+    @api.get("/health", response_model=HealthResponse, tags=["health"])
+    async def health_api() -> HealthResponse:
+        return _health_payload()
+
+    api.include_router(auth_routes.router)
+    api.include_router(sheets_status.router)
+    api.include_router(upload.router)
+    api.include_router(transactions.router)
+    api.include_router(investments.router)
+    api.include_router(categories.router)
+    api.include_router(dashboard.router)
+    api.include_router(prices.router)
+    api.include_router(tax.router)
+    api.include_router(admin.router)
+    api.include_router(fx_routes.router)
+
+    app.include_router(api)
+
+    # First-time setup wizard stays at /setup (HTML + /setup/api/* JSON)
     app.include_router(setup_wizard.router)
-    app.include_router(sheets_status.router)
-    app.include_router(upload.router)
-    app.include_router(transactions.router)
-    app.include_router(investments.router)
-    app.include_router(categories.router)
-    app.include_router(dashboard.router)
-    app.include_router(prices.router)
-    app.include_router(tax.router)
-    app.include_router(admin.router)
-    app.include_router(fx_routes.router)
 
     serve_spa = (
         settings.app_env == "production"
@@ -125,14 +141,11 @@ def create_app() -> FastAPI:
     async def root_redirect():
         s = get_settings()
         if serve_spa:
-            from fastapi.responses import FileResponse
-
             return FileResponse(_FRONTEND_DIST / "index.html")
         if not s.spreadsheet_configured:
             return RedirectResponse(url="/setup", status_code=302)
         return RedirectResponse(url="/docs", status_code=302)
 
-    # Single-service deploy: serve React build from FastAPI (production only)
     if serve_spa:
         assets = _FRONTEND_DIST / "assets"
         if assets.is_dir():
@@ -143,69 +156,28 @@ def create_app() -> FastAPI:
             """
             Serve static files from the React build, else index.html for UI routes.
 
-            API routers are registered first and always win when they match
-            exactly (e.g. GET /investments/snapshot). This catch-all must still
-            serve the SPA for client routes that share a prefix with APIs
-            (e.g. /investments/analysis, /expenses/spending) — previously those
-            returned {"detail":"Not Found"} and broke deep links / refresh.
+            Domain APIs live only under /api/* (registered above). Never serve
+            the SPA for /api, /docs, /setup, or /health.
             """
-            from fastapi.responses import FileResponse
-
             path = (full_path or "").strip("/")
+            head = path.split("/", 1)[0] if path else ""
 
-            # Built assets + public files (favicon, manifest, …)
-            if path:
-                candidate = _FRONTEND_DIST / path
-                if candidate.is_file():
-                    return FileResponse(candidate)
-
-            # React Router pages (must load index.html so the client can render)
-            spa_exact = {
-                "",
-                "upload",
-                "settings",
-                "investments",
-                "investments/analysis",
-                "transactions",
-                "categories",
-            }
-            spa_prefixes = (
-                "expenses/",
-                "expenses",
-            )
-            if path in spa_exact or any(
-                path == p.rstrip("/") or path.startswith(p) for p in spa_prefixes
-            ):
-                return FileResponse(_FRONTEND_DIST / "index.html")
-
-            # Unknown path under a pure-API first segment → JSON 404
-            reserved_api_heads = {
+            # Never hijack API / docs / setup / health
+            if head in {
                 "api",
                 "docs",
                 "redoc",
                 "openapi.json",
                 "health",
                 "setup",
-                "auth",
-                "upload",
-                "transactions",
-                "investments",
-                "categories",
-                "dashboard",
-                "dashboard-summary",
-                "prices",
-                "tax",
-                "admin",
-                "sheets",
-                "alerts",
-                "fx",
-                "lots",
-            }
-            head = path.split("/", 1)[0] if path else ""
-            if head in reserved_api_heads:
+            }:
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
 
-            # Anything else (future UI routes): SPA shell
+            if path:
+                candidate = _FRONTEND_DIST / path
+                if candidate.is_file():
+                    return FileResponse(candidate)
+
             return FileResponse(_FRONTEND_DIST / "index.html")
 
         logger.info("Serving frontend SPA from %s", _FRONTEND_DIST)

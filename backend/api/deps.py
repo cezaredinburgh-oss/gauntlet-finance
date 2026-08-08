@@ -69,7 +69,7 @@ def require_user(
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated. Visit /auth/login",
+            detail="Not authenticated. Visit /api/auth/login",
         )
     return user
 

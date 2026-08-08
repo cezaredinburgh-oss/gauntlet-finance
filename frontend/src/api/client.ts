@@ -23,6 +23,8 @@ import type {
   Transaction,
   UploadResult,
   UsdCzkSeries,
+  AdminJob,
+  AdminJobsList,
 } from "./types";
 
 /**
@@ -103,6 +105,28 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ scopes, confirm }),
     }),
+
+  adminJobs: (limit = 15) =>
+    request<AdminJobsList>(`/admin/jobs${qs({ limit })}`),
+
+  adminJob: (jobId: string) => request<AdminJob>(`/admin/jobs/${jobId}`),
+
+  startAdminJob: (
+    kind: string,
+    body: {
+      date_from?: string;
+      date_to?: string;
+      limit?: number;
+      max_passes?: number;
+    } = {},
+  ) =>
+    request<{ job_id: string; status: string; kind?: string }>(
+      `/admin/jobs/${encodeURIComponent(kind)}`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
 
   dashboard: (params: {
     date_from?: string;

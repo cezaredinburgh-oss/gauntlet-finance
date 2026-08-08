@@ -503,6 +503,22 @@ export type PriceRefresh = {
   errors: string[];
 };
 
+export type AdminJob = {
+  id: string;
+  kind: string;
+  status: string;
+  started_at?: string;
+  finished_at?: string | null;
+  params?: Record<string, unknown>;
+  result?: unknown;
+  error?: string | null;
+};
+
+export type AdminJobsList = {
+  items: AdminJob[];
+  kinds: string[];
+};
+
 /** CNB USD/CZK history for analysis chart */
 export type UsdCzkSeries = {
   pair: string;

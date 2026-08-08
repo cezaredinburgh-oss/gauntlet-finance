@@ -9,8 +9,8 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm install --no-audit --no-fund
 
 COPY frontend/ ./
-# Same-origin API in production (empty base → /api or relative /)
-ENV VITE_API_BASE=
+# Same-origin domain API (FastAPI mounts under /api/*)
+ENV VITE_API_BASE=/api
 ENV NODE_OPTIONS=--max-old-space-size=2048
 # Prefer full check; if tsc flakes in CI, vite-only still ships a working UI
 RUN npm run build || npx vite build

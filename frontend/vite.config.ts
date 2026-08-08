@@ -17,10 +17,10 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       host: "127.0.0.1",
       proxy: {
+        // Backend serves domain routes under /api/* — do not strip the prefix.
         "/api": {
           target: apiTarget,
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, ""),
         },
       },
     },
