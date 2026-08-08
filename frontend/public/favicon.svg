@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Gauntlet Finance">
+  <defs>
+    <linearGradient id="bg" x1="2" y1="2" x2="30" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#12203a"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="g" x1="9" y1="8" x2="23" y2="24" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7dd3fc"/>
+      <stop offset="1" stop-color="#34d399"/>
+    </linearGradient>
+  </defs>
+  <!-- Tile -->
+  <rect width="32" height="32" rx="8" fill="url(#bg)"/>
+  <rect x="0.75" y="0.75" width="30.5" height="30.5" rx="7.25" fill="none" stroke="rgba(148,163,184,0.28)" stroke-width="1.5"/>
+  <!-- Bold G mark (reads at 16px) -->
+  <path
+    fill="url(#g)"
+    d="M22.2 12.35c-.7-1.85-2.45-3.05-4.85-3.05-3.35 0-5.75 2.4-5.75 5.95s2.4 5.95 5.95 5.95c2 0 3.7-.8 4.7-2.15v-3.1h-4.25v2h1.95c-.45.65-1.3 1.05-2.35 1.05-2.05 0-3.4-1.5-3.4-3.75s1.35-3.75 3.4-3.75c1.4 0 2.45.65 2.95 1.7l1.65-.85z"
+  />
+  <!-- Rising edge under mark -->
+  <path
+    d="M8.5 23.2h4.1l2.2-3.1 2.55 2 5.15-5.6"
+    fill="none"
+    stroke="#34d399"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <circle cx="22.5" cy="16.5" r="1.35" fill="#38bdf8"/>
+</svg>

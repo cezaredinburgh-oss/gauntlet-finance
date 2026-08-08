@@ -26,8 +26,8 @@ from backend.schema.models import (
     StatementFileStatus,
     Transaction,
 )
-from backend.services.fx_amounts import build_fx_service
-from backend.services.lot_costs import enrich_lots
+from backend.services.fx_amounts import build_fx_service, enrich_transaction_amounts
+from backend.services.lot_costs import enrich_lots, ensure_fx_coverage
 from backend.sheets.repository import SheetsRepository
 
 
@@ -351,6 +351,20 @@ class ImportPipeline:
             persist=False,
             fetch_missing_rates=True,
         )
+
+        # Cash: historical amount_usd / amount_czk on booking_date (no GET-side flush)
+        if new_tx_final:
+            ensure_fx_coverage(
+                fx,
+                (t.booking_date for t in new_tx_final),
+                repo=self.repo,
+                fetch=True,
+            )
+            filled: list[Transaction] = []
+            for t in new_tx_final:
+                enriched_tx, _ = enrich_transaction_amounts(t, fx)
+                filled.append(enriched_tx)
+            new_tx_final = filled
 
         # Persist — only mark Imported after all of these succeed
         if new_tx_final:

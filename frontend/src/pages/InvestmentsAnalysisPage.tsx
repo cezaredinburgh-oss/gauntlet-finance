@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { PortfolioSnapshot } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
+import { FxUsdCzkChart } from "../components/FxUsdCzkChart";
 import {
   CashflowMonthlyChart,
   FeesBreakdownSection,
@@ -10,7 +11,7 @@ import {
   StakingRewardsSection,
 } from "./InvestmentsPage";
 
-/** Portfolio health, cashflow, fees, staking — split from main Holdings page. */
+/** Portfolio health, cashflow, fees, staking, FX — split from main Holdings page. */
 export function InvestmentsAnalysisPage() {
   const [snap, setSnap] = useState<PortfolioSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -41,39 +42,36 @@ export function InvestmentsAnalysisPage() {
   if (error) {
     return <EmptyState title="Couldn’t load analysis" description={error} />;
   }
-  if (!snap || snap.ticker_count === 0) {
-    return (
-      <div className="space-y-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Investments analysis</h1>
-          <InvestmentsSubNav active="analysis" />
-        </div>
-        <EmptyState
-          title="No holdings yet"
-          description="Import statements first, then review health, fees, and staking here."
-        />
-      </div>
-    );
-  }
+
+  const hasHoldings = !!snap && snap.ticker_count > 0;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Investments analysis</h1>
         <p className="text-sm text-ink-muted">
-          Portfolio health · cashflow · fees · staking rewards
+          Portfolio health · cashflow · fees · staking · CZK/USD
         </p>
         <InvestmentsSubNav active="analysis" />
       </div>
 
-      {snap.health && <HealthBand health={snap.health} />}
+      {!hasHoldings && (
+        <EmptyState
+          title="No holdings yet"
+          description="Import statements first for health, fees, and staking. FX rates still chart below when available."
+        />
+      )}
 
-      {snap.cashflow_monthly && snap.cashflow_monthly.length > 0 && (
+      {hasHoldings && snap.health && <HealthBand health={snap.health} />}
+
+      {hasHoldings && snap.cashflow_monthly && snap.cashflow_monthly.length > 0 && (
         <CashflowMonthlyChart series={snap.cashflow_monthly} />
       )}
 
-      {snap.fees && <FeesBreakdownSection fees={snap.fees} />}
-      {snap.staking && <StakingRewardsSection staking={snap.staking} />}
+      {hasHoldings && snap.fees && <FeesBreakdownSection fees={snap.fees} />}
+      {hasHoldings && snap.staking && <StakingRewardsSection staking={snap.staking} />}
+
+      <FxUsdCzkChart portfolioUsd={snap?.total_market_value_usd} />
     </div>
   );
 }

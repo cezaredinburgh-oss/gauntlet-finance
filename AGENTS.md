@@ -13,7 +13,7 @@ Document any deviation.
 - Revolut crypto Buys: qty_net = qty_gross * (1 - fees/value)
 - Digital Assets Europe cash legs → internal + Crypto funding category.
 - Czech 3-year (1095 days) tax exemption tracked on open lots.
-- USD primary display, CZK secondary (hover/tooltip).
+- Transaction rows: statement-native amount + currency; historical secondary only when stored (never invent FX). Dashboard / spend totals: USD.
 - Dark Desk-like glass theme. Home = executive summary.
 
 ## Process

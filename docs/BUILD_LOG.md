@@ -4,6 +4,20 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-08 — Analysis: CZK/USD chart + portfolio FX context
+
+- `GET /fx/usd-czk` — CNB series from FXRates; optional `portfolio_usd` adds CZK wealth path.
+- Investments **Analysis** page: timeframe picker (same control as dashboard) + dual-axis chart (rate + portfolio in CZK).
+- Portfolio context: holds **today’s USD MV** fixed and revalues in CZK at each day’s rate → pure FX effect on the CZK reading of wealth.
+
+## 2026-08-08 — Historical FX + native row display
+
+- **Bug:** UI secondary CZK used hardcoded `23.1` when `amount_czk` missing (e.g. Murariu −$854.46 → fake ≈19,738 Kč).
+- **Display rule:** rows show statement-native currency; secondary only from stored historical legs; dashboard/spend totals stay USD.
+- **Backend:** import enriches new cash txs with `amount_usd`/`amount_czk` via CNB on `booking_date`; backfill prioritizes missing either leg + optional CNB self-heal (`ensure_fx_coverage`).
+- **Ops:** `POST /admin/fetch-cnb` then `POST /admin/backfill-fx` (or CLI scripts) after large reimports.
+- Removed `DISPLAY_USD_CZK` / `estimateCzkFromUsd` invent path from frontend.
+
 ## 2026-08-07 — Phase 0 design gauntlet
 
 - Wrote `docs/GAUNTLET_DESIGN.md` (reconstructed from Collective; blueprint missing).

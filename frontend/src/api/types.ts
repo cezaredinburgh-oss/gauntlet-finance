@@ -503,6 +503,33 @@ export type PriceRefresh = {
   errors: string[];
 };
 
+/** CNB USD/CZK history for analysis chart */
+export type UsdCzkSeries = {
+  pair: string;
+  unit: string;
+  source: string;
+  date_from: string;
+  date_to: string;
+  point_count: number;
+  rate_start: string | null;
+  rate_end: string | null;
+  change_abs: string | null;
+  change_pct: string | null;
+  portfolio: {
+    portfolio_usd: string;
+    portfolio_czk_now: string;
+    portfolio_czk_at_period_start_rate: string | null;
+    fx_delta_czk: string | null;
+    note: string;
+  } | null;
+  series: Array<{
+    date: string;
+    rate: string;
+    portfolio_czk?: string;
+  }>;
+  rates_in_sheet: number;
+};
+
 export type Paginated<T> = {
   total: number;
   offset: number;

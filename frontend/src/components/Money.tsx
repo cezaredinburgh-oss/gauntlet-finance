@@ -1,15 +1,15 @@
-import { formatAmount, formatCzk, formatUsd, d, estimateCzkFromUsd } from "../lib/money";
+import { formatAmount, formatCzk, formatUsd, d, hasMoneyValue } from "../lib/money";
 import { cn } from "../lib/cn";
 
 type Props = {
-  /** Primary amount */
+  /** Primary amount — statement-native for rows; USD for aggregate cards */
   amount: string | number | null | undefined;
   currency?: string;
-  /** Optional CZK amount when known */
+  /** Historical CZK leg when known (never invent) */
   amountCzk?: string | number | null;
-  /** If amount is USD and amountCzk missing, estimate for secondary line */
-  estimateCzk?: boolean;
-  /** inline = secondary under primary; hover = CZK only in title/tooltip; none = hide */
+  /** Historical USD leg when known (never invent) */
+  amountUsd?: string | number | null;
+  /** inline = secondary under primary; hover = CZK/USD only in title; none = hide */
   secondaryMode?: "inline" | "hover" | "none";
   className?: string;
   size?: "sm" | "md" | "lg";
@@ -17,11 +17,18 @@ type Props = {
   signed?: boolean;
 };
 
+/**
+ * Primary = amount + currency (native on transaction rows).
+ * Secondary = stored historical conversion only:
+ *   - USD-native → CZK when amountCzk present
+ *   - any other → USD when amountUsd present
+ * Missing converted legs: no secondary (never a hardcoded FX constant).
+ */
 export function Money({
   amount,
   currency = "USD",
   amountCzk,
-  estimateCzk = true,
+  amountUsd,
   secondaryMode = "inline",
   className,
   size = "md",
@@ -29,18 +36,20 @@ export function Money({
   signed = false,
 }: Props) {
   const n = d(amount);
+  const ccy = (currency || "USD").toUpperCase();
   const primary =
-    currency === "USD"
-      ? formatUsd(n)
-      : formatAmount(n, currency);
+    ccy === "USD" ? formatUsd(n) : formatAmount(n, ccy);
 
   let secondary: string | null = null;
-  if (amountCzk !== undefined && amountCzk !== null && amountCzk !== "") {
+  if (ccy === "USD") {
+    if (hasMoneyValue(amountCzk)) {
+      secondary = formatCzk(amountCzk);
+    }
+  } else if (hasMoneyValue(amountUsd)) {
+    secondary = formatUsd(amountUsd);
+  } else if (ccy !== "CZK" && hasMoneyValue(amountCzk)) {
+    // Non-USD/non-CZK without USD leg: show CZK only if stored
     secondary = formatCzk(amountCzk);
-  } else if (estimateCzk && currency === "USD") {
-    secondary = `≈ ${formatCzk(estimateCzkFromUsd(n))}`;
-  } else if (currency === "CZK") {
-    secondary = `≈ ${formatUsd(n / 23.1)}`;
   }
 
   const color =

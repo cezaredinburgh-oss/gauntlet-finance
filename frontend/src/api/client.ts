@@ -22,6 +22,7 @@ import type {
   TickerDigestsResponse,
   Transaction,
   UploadResult,
+  UsdCzkSeries,
 } from "./types";
 
 /**
@@ -118,6 +119,23 @@ export const api = {
 
   tickerDigests: (params: { as_of?: string } = {}) =>
     request<TickerDigestsResponse>(`/investments/ticker-digests${qs(params)}`),
+
+  /** CNB historical CZK per 1 USD; optional portfolio_usd for CZK wealth context */
+  fxUsdCzk: (params: {
+    date_from?: string | null;
+    date_to?: string | null;
+    portfolio_usd?: string | number | null;
+  } = {}) =>
+    request<UsdCzkSeries>(
+      `/fx/usd-czk${qs({
+        date_from: params.date_from ?? undefined,
+        date_to: params.date_to ?? undefined,
+        portfolio_usd:
+          params.portfolio_usd != null && params.portfolio_usd !== ""
+            ? String(params.portfolio_usd)
+            : undefined,
+      })}`,
+    ),
 
   transactions: (params: {
     date_from?: string;

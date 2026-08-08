@@ -22,6 +22,7 @@ from backend.api.routes import (
     auth_routes,
     categories,
     dashboard,
+    fx as fx_routes,
     investments,
     prices,
     setup_wizard,
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(prices.router)
     app.include_router(tax.router)
     app.include_router(admin.router)
+    app.include_router(fx_routes.router)
 
     serve_spa = (
         settings.app_env == "production"
@@ -142,7 +144,7 @@ def create_app() -> FastAPI:
             reserved = (
                 "api", "docs", "redoc", "openapi.json", "health", "setup",
                 "auth", "upload", "transactions", "investments", "categories",
-                "dashboard", "prices", "tax", "admin", "sheets", "alerts",
+                "dashboard", "prices", "tax", "admin", "sheets", "alerts", "fx",
             )
             head = (full_path or "").split("/", 1)[0]
             if head in reserved:

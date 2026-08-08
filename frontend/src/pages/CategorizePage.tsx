@@ -1413,7 +1413,7 @@ export function CategorizePage() {
                           amount={t.amount}
                           currency={t.currency}
                           amountCzk={t.amount_czk}
-                          estimateCzk={t.currency === "USD"}
+                          amountUsd={t.amount_usd}
                           signed
                           align="right"
                           size="sm"

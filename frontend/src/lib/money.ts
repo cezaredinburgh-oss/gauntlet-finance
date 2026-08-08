@@ -1,4 +1,4 @@
-/** Money display helpers — USD primary, CZK secondary. */
+/** Money display helpers — native on rows; USD for totals. */
 
 const usdFmt = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -54,9 +54,8 @@ export function formatQty(value: string | number | null | undefined): string {
   return qtyFmt.format(d(value));
 }
 
-/** Rough USD→CZK for display when amount_czk missing (UI only). */
-export const DISPLAY_USD_CZK = 23.1;
-
-export function estimateCzkFromUsd(usd: string | number | null | undefined): number {
-  return d(usd) * DISPLAY_USD_CZK;
+/** True when a converted leg is present for display (no invented rates). */
+export function hasMoneyValue(value: string | number | null | undefined): boolean {
+  if (value === null || value === undefined || value === "") return false;
+  return Number.isFinite(typeof value === "number" ? value : Number(value));
 }
