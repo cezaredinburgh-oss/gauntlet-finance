@@ -3,6 +3,9 @@ __pycache__/
 .venv/
 venv/
 .env
+# Local deploy helper outputs (contain secrets — never commit)
+railway-env.txt
+deploy-env.local
 *.egg-info/
 .pytest_cache/
 .mypy_cache/

@@ -46,9 +46,12 @@ async def lifespan(app: FastAPI):
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     if settings.require_sheets and not settings.spreadsheet_configured:
-        raise RuntimeError(
+        # Do not crash the process — Railway would restart forever (deploy loop).
+        # Health still returns ok; spreadsheet_configured stays false until env is set.
+        logger.error(
             "REQUIRE_SHEETS=true but SPREADSHEET_ID is empty. "
-            "Configure Sheets or set REQUIRE_SHEETS=false."
+            "Set SPREADSHEET_ID + GOOGLE_SERVICE_ACCOUNT_JSON in host variables. "
+            "App is starting in degraded mode so deploys can succeed."
         )
     logger.info(
         "Starting %s (auth_mode=%s, spreadsheet=%s)",
