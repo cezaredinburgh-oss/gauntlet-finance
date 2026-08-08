@@ -1,7 +1,7 @@
-import { useCallback, useState } from "react";
-import { FileUp, CheckCircle2, AlertCircle, Copy } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { FileUp, CheckCircle2, AlertCircle, Copy, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
-import type { UploadResult } from "../api/types";
+import type { StatementFileRow, UploadResult } from "../api/types";
 import { cn } from "../lib/cn";
 import { Spinner } from "../components/Spinner";
 
@@ -12,23 +12,59 @@ export function UploadPage() {
   const [result, setResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [history, setHistory] = useState<StatementFileRow[]>([]);
+  const [histError, setHistError] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
 
-  const upload = useCallback(async (file: File) => {
-    setBusy(true);
-    setError(null);
-    setResult(null);
-    setFileName(file.name);
-    setProgress(0);
+  const loadHistory = useCallback(async () => {
     try {
-      const r = await api.upload(file, setProgress);
-      setResult(r);
+      const r = await api.statementFiles({ limit: 40 });
+      setHistory(r.items || []);
+      setHistError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
-    } finally {
-      setBusy(false);
-      setProgress(null);
+      setHistError(e instanceof Error ? e.message : "Could not load history");
     }
   }, []);
+
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
+
+  const upload = useCallback(
+    async (file: File) => {
+      setBusy(true);
+      setError(null);
+      setResult(null);
+      setFileName(file.name);
+      setProgress(0);
+      try {
+        const r = await api.upload(file, setProgress);
+        setResult(r);
+        await loadHistory();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Upload failed");
+      } finally {
+        setBusy(false);
+        setProgress(null);
+      }
+    },
+    [loadHistory],
+  );
+
+  async function onRetry(row: StatementFileRow) {
+    setRetryingId(row.id);
+    setError(null);
+    try {
+      const r = await api.retryStatementFile(row.id);
+      setResult(r);
+      setFileName(row.original_filename);
+      await loadHistory();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Retry failed");
+    } finally {
+      setRetryingId(null);
+    }
+  }
 
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
@@ -38,12 +74,12 @@ export function UploadPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Upload</h1>
         <p className="text-sm text-ink-muted">
           Drop a bank or broker statement (CSV or eToro Excel .xlsx). Institution is detected
-          automatically. Re-uploads of the same file are skipped via SHA-256.
+          automatically. Failed imports can be retried if the file was stored.
         </p>
       </div>
 
@@ -82,9 +118,7 @@ export function UploadPage() {
             }}
           />
         </label>
-        {fileName && (
-          <p className="text-xs text-ink-faint">Selected: {fileName}</p>
-        )}
+        {fileName && <p className="text-xs text-ink-faint">Selected: {fileName}</p>}
         {progress !== null && (
           <div className="mt-2 w-full max-w-xs">
             <div className="mb-1 flex justify-between text-xs text-ink-muted">
@@ -168,10 +202,115 @@ export function UploadPage() {
         </div>
       )}
 
+      <section className="card overflow-hidden">
+        <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
+          <div>
+            <h2 className="text-sm font-semibold">Import history</h2>
+            <p className="text-xs text-ink-faint">
+              ERROR / PENDING can retry when file bytes were stored on this server.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            onClick={() => void loadHistory()}
+          >
+            Refresh
+          </button>
+        </div>
+        {histError && (
+          <p className="px-4 py-2 text-xs text-danger">{histError}</p>
+        )}
+        {history.length === 0 ? (
+          <p className="px-4 py-6 text-center text-sm text-ink-muted">No statement files yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="text-xs text-ink-faint">
+                <tr>
+                  <th className="px-3 py-2 font-medium">When</th>
+                  <th className="px-3 py-2 font-medium">File</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium">Parser</th>
+                  <th className="px-3 py-2 font-medium text-right">Rows</th>
+                  <th className="px-3 py-2 font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((row) => (
+                  <tr key={row.id} className="border-t border-white/5 align-top">
+                    <td className="px-3 py-2 text-xs tabular-nums text-ink-muted">
+                      {(row.uploaded_at || "").replace("T", " ").slice(0, 16)}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="max-w-[14rem] truncate font-medium" title={row.original_filename}>
+                        {row.original_filename}
+                      </div>
+                      {row.notes && (
+                        <div className="mt-0.5 max-w-xs text-[11px] text-danger line-clamp-2">
+                          {row.notes}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      <StatusPill status={row.status} />
+                    </td>
+                    <td className="px-3 py-2 text-xs text-ink-muted">
+                      {row.parser_key || row.institution || "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
+                      {row.row_count ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {row.retryable ? (
+                        <button
+                          type="button"
+                          className="btn-secondary inline-flex text-xs"
+                          disabled={retryingId === row.id}
+                          onClick={() => void onRetry(row)}
+                        >
+                          {retryingId === row.id ? (
+                            <Spinner className="h-3.5 w-3.5" />
+                          ) : (
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          )}
+                          Retry
+                        </button>
+                      ) : ["ERROR", "PENDING"].includes(row.status.toUpperCase()) ? (
+                        <span className="text-[10px] text-ink-faint">Re-upload file</span>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 text-xs text-ink-muted">
         Supported: Raiffeisen CZ, Revolut expenses, Revolut stocks, Revolut crypto, eToro activity.
       </div>
     </div>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const s = status.toUpperCase();
+  const cls =
+    s === "IMPORTED"
+      ? "text-ok bg-ok/15"
+      : s === "ERROR"
+        ? "text-danger bg-danger/15"
+        : s === "PENDING"
+          ? "text-brand bg-brand/15"
+          : s === "SKIPPED_DUPLICATE"
+            ? "text-warn bg-warn/15"
+            : "text-ink-muted bg-white/10";
+  return (
+    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase", cls)}>
+      {status}
+    </span>
   );
 }
 

@@ -146,3 +146,112 @@ def build_tax_report(
         "taxable_disposals": taxable_disposals,
         "open_positions": open_summaries,
     }
+
+
+def _allocation_years(events: list[InvestmentEvent]) -> list[int]:
+    years = {
+        e.event_date.year
+        for e in events
+        if not e.archived
+        and e.event_type == InvestmentEventType.LOT_ALLOCATION
+        and e.event_date is not None
+    }
+    return sorted(years)
+
+
+def list_tax_years(repo: SheetsRepository) -> dict[str, Any]:
+    """Years that have lot-allocation disposals, plus current calendar year."""
+    events = [
+        r for r in repo.list_rows("InvestmentEvents") if isinstance(r, InvestmentEvent)
+    ]
+    years = _allocation_years(events)
+    today_y = date.today().year
+    if today_y not in years:
+        years = sorted(set(years) | {today_y})
+    return {"years": years, "default_year": today_y}
+
+
+def summary_by_year(
+    repo: SheetsRepository,
+    *,
+    as_of: date | None = None,
+    exemption_days: int = 1095,
+) -> dict[str, Any]:
+    """Aggregate realised gains per calendar year (LotAllocation only)."""
+    del exemption_days  # reserved for future cost adjustments
+    as_of = as_of or date.today()
+    events = [
+        r for r in repo.list_rows("InvestmentEvents") if isinstance(r, InvestmentEvent)
+    ]
+    by: dict[int, dict[str, Decimal | int]] = {}
+    for e in events:
+        if e.archived or e.event_type != InvestmentEventType.LOT_ALLOCATION:
+            continue
+        y = e.event_date.year
+        bucket = by.setdefault(
+            y,
+            {
+                "disposal_count": 0,
+                "exempt_count": 0,
+                "taxable_count": 0,
+                "total_gain_czk": Decimal("0"),
+                "total_gain_usd": Decimal("0"),
+                "exempt_gain_czk": Decimal("0"),
+                "taxable_gain_czk": Decimal("0"),
+            },
+        )
+        g_czk = e.realized_gain_czk or Decimal("0")
+        g_usd = e.realized_gain_usd or Decimal("0")
+        bucket["disposal_count"] = int(bucket["disposal_count"]) + 1
+        bucket["total_gain_czk"] = Decimal(str(bucket["total_gain_czk"])) + g_czk
+        bucket["total_gain_usd"] = Decimal(str(bucket["total_gain_usd"])) + g_usd
+        if e.qualifies_3y_exemption:
+            bucket["exempt_count"] = int(bucket["exempt_count"]) + 1
+            bucket["exempt_gain_czk"] = Decimal(str(bucket["exempt_gain_czk"])) + g_czk
+        else:
+            bucket["taxable_count"] = int(bucket["taxable_count"]) + 1
+            bucket["taxable_gain_czk"] = Decimal(str(bucket["taxable_gain_czk"])) + g_czk
+
+    years_out = []
+    for y in sorted(by.keys()):
+        b = by[y]
+        years_out.append(
+            {
+                "year": y,
+                "disposal_count": int(b["disposal_count"]),
+                "exempt_count": int(b["exempt_count"]),
+                "taxable_count": int(b["taxable_count"]),
+                "total_realized_gain_czk": str(b["total_gain_czk"]),
+                "total_realized_gain_usd": str(b["total_gain_usd"]),
+                "exempt_realized_gain_czk": str(b["exempt_gain_czk"]),
+                "taxable_realized_gain_czk": str(b["taxable_gain_czk"]),
+            }
+        )
+    return {"as_of": as_of.isoformat(), "years": years_out}
+
+
+def disposals_csv(rows: list[dict[str, Any]]) -> str:
+    """Minimal CSV for tax disposal tables."""
+    headers = [
+        "date",
+        "ticker",
+        "quantity",
+        "value_czk",
+        "value_usd",
+        "realized_gain_czk",
+        "realized_gain_usd",
+        "holding_period_days",
+        "qualifies_3y_exemption",
+        "source",
+    ]
+    lines = [",".join(headers)]
+    for r in rows:
+        cells = []
+        for h in headers:
+            v = r.get(h)
+            s = "" if v is None else str(v)
+            if any(c in s for c in (",", '"', "\n")):
+                s = '"' + s.replace('"', '""') + '"'
+            cells.append(s)
+        lines.append(",".join(cells))
+    return "\n".join(lines) + "\n"

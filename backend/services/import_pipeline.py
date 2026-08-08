@@ -154,6 +154,14 @@ class ImportPipeline:
         ts = now or utc_now()
         h = self.statements.content_hash(content)
 
+        # Keep bytes for ERROR/PENDING retry without re-selecting the file
+        try:
+            from backend.services.upload_store import store_upload
+
+            store_upload(h, content)
+        except Exception:  # noqa: BLE001
+            pass
+
         if self.statements.is_duplicate(h):
             existing = self.statements.find_by_hash(h)
             return UploadSummary(

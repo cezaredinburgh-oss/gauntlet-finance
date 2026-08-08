@@ -645,6 +645,7 @@ export function DashboardPage() {
         <QuickLink to="/expenses/categorize" label="Categorize" />
         <QuickLink to="/investments" label="Holdings" />
         <QuickLink to="/investments/analysis" label="Investments analysis" />
+        <QuickLink to="/investments/tax" label="Tax report" />
         <QuickLink to="/expenses/alerts" label="Alerts" />
       </div>
     </div>

@@ -8,6 +8,7 @@ import { SpendingPage } from "./pages/SpendingPage";
 import { CategorizePage } from "./pages/CategorizePage";
 import { InvestmentsPage } from "./pages/InvestmentsPage";
 import { InvestmentsAnalysisPage } from "./pages/InvestmentsAnalysisPage";
+import { TaxPage } from "./pages/TaxPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { UploadPage } from "./pages/UploadPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -73,6 +74,7 @@ export default function App() {
             </Route>
             <Route path="investments" element={<InvestmentsPage />} />
             <Route path="investments/analysis" element={<InvestmentsAnalysisPage />} />
+            <Route path="investments/tax" element={<TaxPage />} />
             <Route path="upload" element={<UploadPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="transactions" element={<RedirectPreserveSearch to="/expenses/categorize" />} />

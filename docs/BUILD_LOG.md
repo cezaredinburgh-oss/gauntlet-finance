@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-08 — Wave 1: Tax UI + import reliability
+
+- Tax: `/tax-report/years`, `/summary-by-year`, CSV export; UI at **Investments → Tax**.
+- Gains-by-year stacked bar (taxable vs exempt CZK).
+- Statement files: `GET /statement-files`, `POST …/retry`; upload bytes stored under `data/uploads` (or `UPLOAD_STORE_DIR`).
+- Upload page: import history + Retry for Error/Pending when bytes present.
+
 ## 2026-08-08 — F9 background FX jobs
 
 - `backend/services/jobs.py`: registry, single-flight per kind, `fx-fetch-cnb` / `fx-backfill-amounts` / `fx-full`.

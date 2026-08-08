@@ -25,6 +25,10 @@ import type {
   UsdCzkSeries,
   AdminJob,
   AdminJobsList,
+  TaxReport,
+  TaxYearsList,
+  TaxYearsSummary,
+  StatementFileRow,
 } from "./types";
 
 /**
@@ -32,7 +36,7 @@ import type {
  * - Dev: `/api` (Vite proxy → FastAPI) so cookies work same-origin
  * - Prod: set VITE_API_BASE to the FastAPI origin
  */
-const API_BASE = (import.meta.env.VITE_API_BASE ?? "/api").replace(/\/$/, "");
+export const API_BASE = (import.meta.env.VITE_API_BASE ?? "/api").replace(/\/$/, "");
 
 export class ApiError extends Error {
   status: number;
@@ -127,6 +131,22 @@ export const api = {
         body: JSON.stringify(body),
       },
     ),
+
+  taxReport: (params: { year?: number; as_of?: string } = {}) =>
+    request<TaxReport>(`/tax-report${qs(params)}`),
+
+  taxYears: () => request<TaxYearsList>("/tax-report/years"),
+
+  taxSummaryByYear: (params: { as_of?: string } = {}) =>
+    request<TaxYearsSummary>(`/tax-report/summary-by-year${qs(params)}`),
+
+  statementFiles: (params: { limit?: number; status?: string } = {}) =>
+    request<{ total: number; items: StatementFileRow[] }>(
+      `/statement-files${qs(params)}`,
+    ),
+
+  retryStatementFile: (id: string) =>
+    request<UploadResult>(`/statement-files/${id}/retry`, { method: "POST" }),
 
   dashboard: (params: {
     date_from?: string;

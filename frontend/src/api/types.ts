@@ -503,6 +503,91 @@ export type PriceRefresh = {
   errors: string[];
 };
 
+export type TaxDisposal = {
+  id: string;
+  date: string;
+  ticker?: string | null;
+  quantity?: string | null;
+  value_native?: string | null;
+  value_czk?: string | null;
+  value_usd?: string | null;
+  realized_gain_czk?: string | null;
+  realized_gain_usd?: string | null;
+  holding_period_days?: number | null;
+  qualifies_3y_exemption?: boolean | null;
+  lot_id?: string | null;
+  parent_event_id?: string | null;
+  source?: string | null;
+  notes?: string | null;
+};
+
+export type TaxOpenPosition = {
+  ticker: string;
+  total_quantity: string;
+  quantity_tax_free: string;
+  quantity_pending: string;
+  cost_basis_native: string;
+  cost_basis_czk: string;
+  cost_basis_usd: string;
+  native_currency: string;
+};
+
+export type TaxReport = {
+  meta: {
+    tax_year: number;
+    as_of: string;
+    exemption_days: number;
+    currency_primary_reporting: string;
+    notes: string;
+  };
+  summary: {
+    disposal_count: number;
+    exempt_disposal_count: number;
+    taxable_disposal_count: number;
+    total_realized_gain_czk: string;
+    total_realized_gain_usd: string;
+    exempt_realized_gain_czk: string;
+    taxable_realized_gain_czk: string;
+  };
+  disposals: TaxDisposal[];
+  exempt_disposals: TaxDisposal[];
+  taxable_disposals: TaxDisposal[];
+  open_positions: TaxOpenPosition[];
+};
+
+export type TaxYearsList = {
+  years: number[];
+  default_year: number;
+};
+
+export type TaxYearsSummary = {
+  as_of: string;
+  years: Array<{
+    year: number;
+    disposal_count: number;
+    exempt_count: number;
+    taxable_count: number;
+    total_realized_gain_czk: string;
+    total_realized_gain_usd: string;
+    exempt_realized_gain_czk: string;
+    taxable_realized_gain_czk: string;
+  }>;
+};
+
+export type StatementFileRow = {
+  id: string;
+  original_filename: string;
+  uploaded_at: string | null;
+  content_sha256: string;
+  institution?: string | null;
+  row_count?: number | null;
+  parser_key?: string | null;
+  status: string;
+  notes?: string | null;
+  has_stored_bytes: boolean;
+  retryable: boolean;
+};
+
 export type AdminJob = {
   id: string;
   kind: string;
