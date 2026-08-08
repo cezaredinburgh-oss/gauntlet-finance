@@ -1,11 +1,8 @@
-# Railway: deploy from GitHub. Set variables in the Railway dashboard
-# (use Setup wizard → Deploy → "Generate env vars").
-
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
 healthcheckPath = "/health"
-healthcheckTimeout = 120
+healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"

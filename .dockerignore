@@ -1,0 +1,21 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.env
+.env.*
+secrets/**
+!secrets/.gitkeep
+*.log
+api.pid
+ui.pid
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc
+.mypy_cache
+docs/**/*.md
+# Keep Bank statements out of image (use Sheets + upload)
+Bank statements
