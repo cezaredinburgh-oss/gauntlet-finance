@@ -81,7 +81,25 @@ class _FakeSpreadsheets:
         return self
 
     def execute(self):
-        return {"sheets": [{"properties": {"title": "Transactions"}}]}
+        # Large grid so capacity expand is a no-op in unit tests
+        return {
+            "sheets": [
+                {
+                    "properties": {
+                        "sheetId": 1,
+                        "title": "Transactions",
+                        "gridProperties": {"rowCount": 50000, "columnCount": 50},
+                    }
+                },
+                {
+                    "properties": {
+                        "sheetId": 2,
+                        "title": "FXRates",
+                        "gridProperties": {"rowCount": 50000, "columnCount": 50},
+                    }
+                },
+            ]
+        }
 
 
 class _FakeService:

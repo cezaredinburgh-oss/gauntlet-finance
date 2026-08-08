@@ -249,7 +249,20 @@ class GoogleSheetsRepository:
         requests = []
         for tab in SHEET_HEADERS:
             if tab not in existing:
-                requests.append({"addSheet": {"properties": {"title": tab}}})
+                # Larger default grid so FXRates/Transactions do not hit 1000-row limit quickly
+                requests.append(
+                    {
+                        "addSheet": {
+                            "properties": {
+                                "title": tab,
+                                "gridProperties": {
+                                    "rowCount": 10000,
+                                    "columnCount": max(26, len(SHEET_HEADERS[tab]) + 4),
+                                },
+                            }
+                        }
+                    }
+                )
         if requests:
             self._service.spreadsheets().batchUpdate(
                 spreadsheetId=self.spreadsheet_id,
@@ -551,6 +564,10 @@ class GoogleSheetsRepository:
                 order.append(sheet_row)
             by_row[sheet_row] = cells
 
+        max_row = max(order)
+        max_cols = max((len(c) for c in by_row.values()), default=26)
+        self._ensure_grid_capacity(tab, min_rows=max_row, min_cols=max_cols)
+
         try:
             for i in range(0, len(order), self._PATCH_CHUNK):
                 chunk_rows = order[i : i + self._PATCH_CHUNK]
@@ -577,17 +594,121 @@ class GoogleSheetsRepository:
             logger.exception("Failed to patch tab %s (%d rows)", tab, len(order))
             raise RuntimeError(f"Sheets patch failed for {tab}: {exc}") from exc
 
+    def _sheet_meta(self) -> dict[str, dict[str, Any]]:
+        """title -> {sheetId, rowCount, columnCount}."""
+        meta = (
+            self._service.spreadsheets()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                fields="sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)))",
+            )
+            .execute()
+        )
+        out: dict[str, dict[str, Any]] = {}
+        for s in meta.get("sheets", []):
+            props = s.get("properties") or {}
+            title = props.get("title")
+            if not title:
+                continue
+            grid = props.get("gridProperties") or {}
+            out[str(title)] = {
+                "sheetId": props.get("sheetId"),
+                "rowCount": int(grid.get("rowCount") or 1000),
+                "columnCount": int(grid.get("columnCount") or 26),
+            }
+        return out
+
+    def _ensure_grid_capacity(
+        self,
+        tab: str,
+        *,
+        min_rows: int,
+        min_cols: int | None = None,
+    ) -> None:
+        """
+        Expand sheet grid when Google would reject writes past max rows/cols.
+
+        Default Google sheets start with ~1000 rows; FXRates and Transactions
+        grow past that during import / CNB backfill.
+        """
+        if min_rows < 2:
+            return
+        try:
+            info = self._sheet_meta().get(tab)
+        except HttpError as exc:
+            logger.warning("Could not read sheet meta for %s: %s", tab, exc)
+            return
+        if not info or info.get("sheetId") is None:
+            return
+
+        need_rows = int(min_rows)
+        # Headroom so the next bulk append does not re-hit the limit immediately
+        target_rows = max(need_rows + 500, need_rows)
+        # Soft cap — Google allows far more; avoid absurd expansions
+        target_rows = min(target_rows, 500_000)
+
+        need_cols = int(min_cols or 0)
+        headers = SHEET_HEADERS.get(tab) or []
+        if headers:
+            need_cols = max(need_cols, len(headers) + 2)
+        target_cols = max(int(info.get("columnCount") or 26), need_cols, 26)
+
+        cur_rows = int(info.get("rowCount") or 0)
+        cur_cols = int(info.get("columnCount") or 0)
+        if cur_rows >= need_rows and cur_cols >= target_cols:
+            return
+
+        new_rows = max(cur_rows, target_rows)
+        new_cols = max(cur_cols, target_cols)
+        logger.info(
+            "Expanding sheet grid %s: rows %s→%s cols %s→%s",
+            tab,
+            cur_rows,
+            new_rows,
+            cur_cols,
+            new_cols,
+        )
+        try:
+            self._service.spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={
+                    "requests": [
+                        {
+                            "updateSheetProperties": {
+                                "properties": {
+                                    "sheetId": info["sheetId"],
+                                    "gridProperties": {
+                                        "rowCount": new_rows,
+                                        "columnCount": new_cols,
+                                    },
+                                },
+                                "fields": "gridProperties.rowCount,gridProperties.columnCount",
+                            }
+                        }
+                    ]
+                },
+            ).execute()
+        except HttpError as exc:
+            logger.exception("Failed to expand grid for tab %s", tab)
+            raise RuntimeError(
+                f"Sheets grid expand failed for {tab} (need row {need_rows}): {exc}"
+            ) from exc
+
     def _append_rows(self, tab: str, rows: list[SheetRow], headers: list[str]) -> None:
         """Append new models at the end of the tab and record their row indices."""
         if not rows:
             return
         index = self._row_index.setdefault(tab, {})
         next_row = self._next_row.get(tab, 2)
+        # Expand grid before write (Google rejects A1007 when max rows is 1006)
+        last_row_needed = next_row + len(rows) - 1
+        self._ensure_grid_capacity(tab, min_rows=last_row_needed, min_cols=len(headers))
         # Contiguous block write is cheaper than N appends
         for i in range(0, len(rows), self._PATCH_CHUNK):
             chunk = rows[i : i + self._PATCH_CHUNK]
             start = next_row
             grid = [model_to_row(r, headers) for r in chunk]
+            end_row = start + len(chunk) - 1
             try:
                 (
                     self._service.spreadsheets()
@@ -601,8 +722,37 @@ class GoogleSheetsRepository:
                     .execute()
                 )
             except HttpError as exc:
-                logger.exception("Failed to append to tab %s", tab)
-                raise RuntimeError(f"Sheets append failed for {tab}: {exc}") from exc
+                # One retry after forced expand (stale meta / concurrent writer)
+                err = str(exc)
+                if "exceeds grid limits" in err or "grid limits" in err.lower():
+                    logger.warning(
+                        "Grid limit on %s row %s; expanding and retrying",
+                        tab,
+                        end_row,
+                    )
+                    self._ensure_grid_capacity(
+                        tab, min_rows=end_row + 1000, min_cols=len(headers)
+                    )
+                    try:
+                        (
+                            self._service.spreadsheets()
+                            .values()
+                            .update(
+                                spreadsheetId=self.spreadsheet_id,
+                                range=f"'{tab}'!A{start}",
+                                valueInputOption="RAW",
+                                body={"values": grid},
+                            )
+                            .execute()
+                        )
+                    except HttpError as exc2:
+                        logger.exception("Failed to append to tab %s after expand", tab)
+                        raise RuntimeError(
+                            f"Sheets append failed for {tab}: {exc2}"
+                        ) from exc2
+                else:
+                    logger.exception("Failed to append to tab %s", tab)
+                    raise RuntimeError(f"Sheets append failed for {tab}: {exc}") from exc
             for offset, row in enumerate(chunk):
                 index[row.id] = start + offset
             next_row = start + len(chunk)
@@ -610,6 +760,9 @@ class GoogleSheetsRepository:
 
     def _write_grid(self, tab: str, grid: list[list[str]]) -> None:
         body = {"values": grid}
+        need_rows = max(len(grid), 1)
+        need_cols = max((len(r) for r in grid), default=1)
+        self._ensure_grid_capacity(tab, min_rows=need_rows, min_cols=need_cols)
         try:
             # Clear then write keeps sheet compact
             self._service.spreadsheets().values().clear(
