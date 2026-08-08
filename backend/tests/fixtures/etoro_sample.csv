@@ -1,0 +1,5 @@
+Date,Platform,EventType,Ticker,Class,Side,Units,PriceNative,Currency,ValueNative,FeesNative,Comments
+2026-07-06,eToro,Staking reward,ADA,Crypto,Buy,6.362224,0.1855,USD,1.18,0.00,Staking reward ADA/USD
+2026-07-20,eToro,Deposit,,Cash,,0,0,USD,1100.00,0.00,Deposit 1100.00 USD CreditCard
+2026-07-20,eToro,Buy,SPCX,Stocks,Buy,9,120.9556,USD,1088.60,0.00,Open Position SPCX/USD 9 units
+2026-07-20,eToro,Commission,SPCX,Stocks,,0,0,USD,-1.00,0.00,Commission On Open for position 3519253305

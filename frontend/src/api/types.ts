@@ -1,0 +1,597 @@
+export type AuthMe = {
+  email: string;
+  name: string | null;
+  picture: string | null;
+  auth_mode: "dev" | "oauth" | "disabled" | string;
+};
+
+export type Health = {
+  status: string;
+  app: string;
+  auth_mode: string;
+  spreadsheet_configured: boolean;
+};
+
+export type SheetsStatus = {
+  backend: string;
+  spreadsheet_id?: string | null;
+  service_account_email?: string | null;
+  tabs?: string[];
+  ok?: boolean;
+  message?: string;
+};
+
+export type CleanupScopePreview = {
+  id: string;
+  label: string;
+  description: string;
+  tabs: string[];
+  row_counts: Record<string, number>;
+  total_rows: number;
+  notes?: string;
+};
+
+export type CleanupPreview = {
+  scopes: CleanupScopePreview[];
+  tab_counts: Record<string, number>;
+  confirm_token: string;
+};
+
+export type CleanupResult = {
+  scopes_requested: string[];
+  scopes_applied: string[];
+  tabs_cleared: Record<string, number>;
+  transactions_uncategorized: number;
+  message: string;
+};
+
+export type Transaction = {
+  id: string;
+  account_id: string;
+  booking_date: string;
+  value_date?: string | null;
+  amount: string;
+  currency: string;
+  amount_czk?: string | null;
+  amount_usd?: string | null;
+  fee_amount: string;
+  fee_currency?: string | null;
+  merchant?: string | null;
+  description?: string | null;
+  original_description?: string | null;
+  counterparty_name?: string | null;
+  source_institution: string;
+  external_id?: string | null;
+  category_id?: string | null;
+  category_override: boolean;
+  is_internal_transfer: boolean;
+  transfer_group_id?: string | null;
+  notes?: string | null;
+};
+
+export type Category = {
+  id: string;
+  name: string;
+  parent_id?: string | null;
+  necessity: string;
+  life_domain: string;
+  is_income: boolean;
+  is_transfer: boolean;
+  sort_order: number;
+};
+
+export type Lot = {
+  id: string;
+  account_id: string;
+  ticker: string;
+  asset_class: string;
+  source: string;
+  acquisition_date: string;
+  quantity_opened: string;
+  quantity_remaining: string;
+  cost_basis_native: string;
+  cost_basis_czk: string;
+  cost_basis_usd: string;
+  native_currency: string;
+  status: string;
+  holding_period_days?: number;
+  tax_free_on?: string;
+  qualifies_3y_exemption?: boolean;
+};
+
+export type LotSummary = {
+  ticker: string;
+  total_quantity: string;
+  quantity_tax_free: string;
+  quantity_pending: string;
+  cost_basis_native: string;
+  cost_basis_czk: string;
+  cost_basis_usd: string;
+  native_currency: string | null;
+  as_of?: string;
+  lots: Array<{
+    lot_id: string;
+    ticker: string;
+    quantity_remaining: string;
+    acquisition_date: string;
+    tax_free_on: string;
+    holding_period_days: number;
+    qualifies_3y_exemption: boolean;
+    cost_basis_native: string;
+    cost_basis_czk: string;
+    cost_basis_usd: string;
+    native_currency: string;
+  }>;
+};
+
+export type TopItem = {
+  label: string;
+  amount_usd: string;
+  count: number;
+};
+
+export type CurrencyRow = {
+  currency: string;
+  income: string;
+  expense: string;
+  net: string;
+};
+
+export type DashboardSummary = {
+  filters: {
+    date_from: string | null;
+    date_to: string | null;
+    currency: string | null;
+    period_key?: string | null;
+  };
+  cashflow: {
+    transaction_count: number;
+    internal_transfer_count: number;
+    income: string;
+    expense: string;
+    net: string;
+    income_usd: string;
+    expense_usd: string;
+    net_usd: string;
+    income_czk: string;
+    expense_czk: string;
+    net_czk: string;
+    by_currency: CurrencyRow[];
+    top_income: TopItem[];
+    top_expense_merchants: TopItem[];
+    top_expense_domains: TopItem[];
+    unconverted_count: number;
+    expense_by_currency: Record<string, string>;
+  };
+  comparison: {
+    prior_from: string | null;
+    prior_to: string | null;
+    income_usd: string;
+    expense_usd: string;
+    net_usd: string;
+    income_change_pct: number | null;
+    expense_change_pct: number | null;
+    net_change_pct: number | null;
+  } | null;
+  pace: {
+    spend_30d_usd: string;
+    spend_30d_investments_usd?: string;
+    spend_30d_living_usd?: string;
+    avg_monthly_6m_usd: string;
+    avg_monthly_6m_investments_usd?: string;
+    avg_monthly_6m_living_usd?: string;
+    pace_pct: number | null;
+    pace_pct_living?: number | null;
+    investments_share_30d_pct?: number | null;
+    investments_share_6m_avg_pct?: number | null;
+  };
+  spending: {
+    by_domain: Array<{ name: string; amount_usd: string }>;
+    by_necessity: Array<{ name: string; amount_usd: string }>;
+    by_category?: Array<{
+      id: string;
+      name: string;
+      amount_usd: string;
+      life_domain: string;
+      necessity: string;
+      pct_of_spend: number;
+    }>;
+    uncategorized_expense_usd: string;
+    uncategorized_pct: number;
+  };
+  portfolio: {
+    ticker_count: number;
+    positions_with_tax_free_qty: number;
+    total_cost_basis_usd: string;
+    total_cost_basis_czk?: string;
+    total_market_value: string | null;
+    unrealized_usd?: string | null;
+    unrealized_pct?: number | null;
+    tax_free_now_usd?: string;
+    prices_as_of?: string | null;
+    top_tickers_by_cost?: Array<{
+      ticker: string;
+      cost_usd: string;
+      market_value_usd: string | null;
+    }>;
+    positions: Array<{
+      ticker: string;
+      quantity: string;
+      quantity_tax_free: string;
+      quantity_pending: string;
+      cost_basis_usd: string;
+      price: string | null;
+      market_value: string | null;
+    }>;
+  };
+  portfolio_compact: {
+    total_cost_basis_usd: string;
+    total_cost_basis_czk?: string;
+    total_market_value_usd: string | null;
+    unrealized_usd: string | null;
+    unrealized_pct: number | null;
+    tax_free_now_usd: string;
+    ticker_count: number;
+    prices_as_of: string | null;
+    top_tickers_by_cost: Array<{
+      ticker: string;
+      cost_usd: string;
+      market_value_usd: string | null;
+    }>;
+    living_draw_12m?: LivingDraw12m | null;
+    health?: { grade: string; score: number; summary: string } | null;
+    price_status?: {
+      mode: string;
+      note: string;
+      mode_note?: string;
+      prices_as_of?: string | null;
+    } | null;
+  };
+};
+
+export type AlertItem = {
+  id: string;
+  level: "info" | "warn" | "danger";
+  title: string;
+  body: string;
+  href?: string | null;
+};
+
+export type AlertsResponse = {
+  items: AlertItem[];
+  warn_count: number;
+  total: number;
+};
+
+export type LivingDraw12m = {
+  window_days: number;
+  window_start: string;
+  window_end: string;
+  sold_usd: string;
+  bought_usd: string;
+  draw_usd: string;
+  by_ticker: Array<{
+    ticker: string;
+    sold_usd: string;
+    bought_usd: string;
+    draw_usd: string;
+  }>;
+  notes?: string;
+};
+
+export type FeeSeriesByPlatform = {
+  platform: string;
+  amount_usd: string;
+};
+
+export type FeeSeriesByType = {
+  label: string;
+  amount_usd: string;
+};
+
+export type FeesSummary = {
+  trade_fees_usd: string;
+  explicit_fee_events_usd: string;
+  total_fees_usd: string;
+  deposits_usd: string;
+  withdrawals_usd: string;
+  fees_by_event_type: Array<{
+    label: string;
+    amount_usd: string;
+    by_platform: FeeSeriesByPlatform[];
+  }>;
+  fees_by_platform: Array<{
+    platform: string;
+    amount_usd: string;
+    by_type: FeeSeriesByType[];
+  }>;
+  notes?: string;
+};
+
+export type StakingByTicker = {
+  ticker: string;
+  events: number;
+  units: string;
+  mark_usd: string;
+  broker_usd?: string;
+  live_usd?: string;
+  mark_source: "broker" | "live" | "mixed" | "unknown" | string;
+  platforms: string[];
+  first: string;
+  last: string;
+};
+
+export type StakingSummary = {
+  reward_rows: number;
+  units_sum?: string;
+  mark_usd_total: string;
+  broker_mark_usd: string;
+  live_mark_usd: string;
+  by_ticker: StakingByTicker[];
+  notes?: string;
+};
+
+export type PortfolioSnapshot = {
+  as_of: string;
+  ticker_count: number;
+  total_cost_basis_usd: string;
+  total_cost_basis_czk: string;
+  total_market_value_usd: string | null;
+  unrealized_usd: string | null;
+  unrealized_pct: number | null;
+  realized_lifetime_usd: string;
+  tax_free_now_usd: string;
+  tax_runway: {
+    available_usd: string;
+    locked_usd: string;
+    buckets: Array<{
+      key: string;
+      label: string;
+      amount_usd: string;
+      tickers: Array<{
+        ticker: string;
+        quantity: string;
+        amount_usd: string;
+      }>;
+    }>;
+  };
+  prices_as_of: string | null;
+  quote_count: number;
+  missing_quotes: string[];
+  positions: Array<{
+    ticker: string;
+    quantity: string;
+    quantity_tax_free: string;
+    quantity_pending: string;
+    cost_basis_usd: string;
+    cost_basis_czk: string;
+    price: string | null;
+    market_value: string | null;
+    unrealized_usd: string | null;
+  }>;
+  top_tickers_by_cost: Array<{
+    ticker: string;
+    cost_usd: string;
+    market_value_usd: string | null;
+  }>;
+  living_draw_12m?: LivingDraw12m;
+  fees?: FeesSummary;
+  staking?: StakingSummary;
+  cashflow_monthly?: Array<{
+    month: string;
+    bought_usd: string;
+    sold_usd: string;
+    net_usd: string;
+    reinvestment_rate_pct: number | null;
+    /** Unbounded cum buys/sells — do not plot (scale killer). */
+    cumulative_reinvestment_rate_pct?: number | null;
+    /** Chart-safe 0–100%: min(cum buys, cum sells) / cum sells. */
+    proceeds_coverage_pct?: number | null;
+    cumulative_invested_usd?: string;
+    cumulative_proceeds_usd?: string;
+    cumulative_net_capital_usd?: string;
+  }>;
+  health?: {
+    score: number;
+    grade: string;
+    summary: string;
+    issues: Array<{ severity: string; title: string; detail: string }>;
+    concentration: {
+      top_ticker: string | null;
+      top_weight_pct: number;
+      top3_weight_pct: number;
+      hhi: number;
+      crypto_weight_pct: number;
+      tax_free_basis_pct: number;
+      largest_position_line: string;
+    };
+  };
+  price_status?: {
+    mode: string;
+    quote_count: number;
+    open_ticker_count: number;
+    missing_quotes: string[];
+    prices_as_of: string | null;
+    note: string;
+    mode_note?: string;
+  };
+};
+
+export type TickerPlatformSplit = {
+  source: string;
+  quantity: string;
+  cost_basis_usd: string;
+  market_value_usd: string;
+  lot_count: number;
+};
+
+export type TaxTranche = {
+  key: string;
+  label: string;
+  quantity: string;
+  market_value_usd: string;
+};
+
+export type TickerDigest = {
+  ticker: string;
+  quantity_total: string;
+  by_platform: TickerPlatformSplit[];
+  multi_platform: boolean;
+  price_usd: string | null;
+  price_as_of: string | null;
+  cost_basis_usd: string;
+  avg_cost_usd: string;
+  market_value_usd: string | null;
+  unrealized_usd: string | null;
+  unrealized_pct: number | null;
+  roi_grade: string;
+  roi_grade_label: string;
+  portfolio_weight_pct: number;
+  unrealized_share_pct: number | null;
+  growth_contribution_pp: number | null;
+  tax_tranches: TaxTranche[];
+  next_unlock_date: string | null;
+  next_unlock_quantity: string | null;
+  realized_lifetime_usd: string;
+  first_acquired: string | null;
+  last_acquired: string | null;
+  open_lot_count: number;
+  missing_price: boolean;
+};
+
+export type TickerDigestsResponse = {
+  as_of: string;
+  prices_as_of: string | null;
+  portfolio: {
+    total_cost_basis_usd: string;
+    total_market_value_usd: string | null;
+    unrealized_usd: string | null;
+    unrealized_pct: number | null;
+  };
+  tickers: TickerDigest[];
+};
+
+export type UploadResult = {
+  status: string;
+  content_sha256: string;
+  parser_key?: string | null;
+  institution?: string | null;
+  statement_file_id?: string | null;
+  rows_parsed: number;
+  transactions_written: number;
+  events_written: number;
+  lots_written: number;
+  transfer_pairs_linked: number;
+  transactions_deduped: number;
+  events_deduped: number;
+  message: string;
+  errors: string[];
+};
+
+export type PriceRefresh = {
+  as_of: string;
+  quote_count: number;
+  total_market_value_usd: string | null;
+  quotes: Array<{
+    ticker: string;
+    price: string;
+    currency: string;
+    as_of: string;
+    source: string;
+  }>;
+  positions: Array<Record<string, string | null>>;
+  errors: string[];
+};
+
+export type Paginated<T> = {
+  total: number;
+  offset: number;
+  limit: number;
+  items: T[];
+};
+
+export type PeriodKey =
+  | "this_month"
+  | "last_month"
+  | "last_30d"
+  | "last_6m"
+  | "this_year"
+  | "last_year"
+  | "all_time"
+  | "custom"
+  | "calendar_month";
+
+export type CategoryRule = {
+  id: string;
+  priority: number;
+  match_field: string;
+  match_type: string;
+  match_value: string;
+  category_id: string;
+  set_internal_transfer: boolean;
+  institution_scope?: string | null;
+  is_active: boolean;
+  notes?: string | null;
+};
+
+export type CategoryCoverage = {
+  days: number;
+  expense_usd_total: string;
+  expense_usd_categorized: string;
+  uncategorized_expense_usd?: string;
+  coverage_pct: number;
+  target_pct?: number;
+  amber_pct?: number;
+  status?: "below_target" | "on_target" | "stretch" | string;
+  progress_note?: string;
+  by_domain: Array<{ name: string; amount_usd: string }>;
+  top_uncategorized_merchants: Array<{
+    label: string;
+    amount_usd: string;
+    tx_count?: number;
+  }>;
+  windows?: {
+    "30d"?: { coverage_pct: number; status: string; expense_usd_total: string };
+    "180d"?: { coverage_pct: number; status: string; expense_usd_total: string };
+  };
+  categories_count: number;
+  rules_count: number;
+};
+
+export type ApplyRulesResult = {
+  scanned: number;
+  filled: number;
+  skipped_override: number;
+  skipped_already: number;
+  unmatched: number;
+  rules_used: number;
+};
+
+export type BulkOverrideResult = {
+  category_id: string;
+  updated: number;
+  missing: number;
+  transaction_ids: string[];
+};
+
+export type ApplyMatchResult = {
+  scanned: number;
+  matched: number;
+  updated: number;
+  skipped_override: number;
+  skipped_already: number;
+  mode: string;
+  category_id: string;
+  match_field: string;
+  match_type: string;
+  match_value: string;
+};
+
+export type BootstrapRulesResult = {
+  ensure: { created: number; updated: number; total_defaults: number };
+  rules_created: number;
+  rules_total_active: number;
+  merchants_mapped: number;
+  top_merchants_scanned: number;
+  apply: ApplyRulesResult | null;
+};

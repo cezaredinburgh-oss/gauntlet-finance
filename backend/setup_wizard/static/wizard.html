@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Google Sheets setup wizard — Gauntlet Finance</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --panel2: #243044;
+      --text: #e7ecf3;
+      --muted: #9aa8bc;
+      --accent: #3d9cf0;
+      --accent2: #2dd4a8;
+      --warn: #f0b429;
+      --danger: #f07178;
+      --ok: #7fd962;
+      --border: #2e3a4d;
+      --radius: 14px;
+      --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      background: radial-gradient(1200px 600px at 10% -10%, #1b3a5c 0%, transparent 50%),
+                  radial-gradient(900px 500px at 100% 0%, #16352d 0%, transparent 45%),
+                  var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+    .wrap { max-width: 820px; margin: 0 auto; padding: 28px 18px 80px; }
+    h1 { font-size: 1.55rem; margin: 0 0 6px; font-weight: 700; }
+    .sub { color: var(--muted); margin-bottom: 22px; }
+    .progress {
+      height: 8px; background: var(--panel2); border-radius: 99px; overflow: hidden;
+      margin-bottom: 8px;
+    }
+    .progress > i {
+      display: block; height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      transition: width .35s ease;
+    }
+    .progress-label { color: var(--muted); font-size: .85rem; margin-bottom: 20px; }
+    .steps-nav {
+      display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px;
+    }
+    .pill {
+      border: 1px solid var(--border); background: var(--panel);
+      color: var(--muted); padding: 6px 12px; border-radius: 999px;
+      font-size: .8rem; cursor: pointer;
+    }
+    .pill.active { color: var(--text); border-color: var(--accent); background: #1e3350; }
+    .pill.done { color: var(--ok); border-color: #3d6b45; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 22px 22px 18px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.25);
+    }
+    .card h2 { margin: 0 0 10px; font-size: 1.2rem; }
+    .card p { color: var(--muted); margin: 0 0 12px; }
+    ol.checklist { margin: 0 0 16px; padding-left: 1.2rem; color: var(--text); }
+    ol.checklist li { margin: 8px 0; }
+    ol.checklist a { color: var(--accent); }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+    label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: 4px; }
+    input[type=text], input[type=file], textarea {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); border-radius: 10px; padding: 10px 12px; font: inherit;
+    }
+    textarea { min-height: 90px; font-family: ui-monospace, Consolas, monospace; font-size: .85rem; }
+    .btn {
+      appearance: none; border: 0; border-radius: 10px; padding: 10px 16px;
+      font: inherit; font-weight: 600; cursor: pointer;
+      background: var(--accent); color: #041018;
+    }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .btn.secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
+    .btn.success { background: var(--accent2); color: #042018; }
+    .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+    .nav { display: flex; justify-content: space-between; gap: 10px; margin-top: 18px; }
+    .banner {
+      border-radius: 10px; padding: 10px 12px; margin: 12px 0; font-size: .92rem;
+      border: 1px solid var(--border); background: var(--panel2);
+    }
+    .banner.ok { border-color: #3d6b45; color: var(--ok); }
+    .banner.err { border-color: #7a3038; color: #ffb4b8; }
+    .banner.warn { border-color: #7a6320; color: var(--warn); }
+    .mono {
+      font-family: ui-monospace, Consolas, monospace; font-size: .88rem;
+      background: var(--bg); padding: 8px 10px; border-radius: 8px;
+      border: 1px solid var(--border); word-break: break-all; user-select: all;
+    }
+    .copy-btn { margin-left: 8px; }
+    .hidden { display: none !important; }
+    .status-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;
+    }
+    @media (max-width: 600px) { .status-grid { grid-template-columns: 1fr; } }
+    .stat {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+      padding: 10px 12px; font-size: .88rem;
+    }
+    .stat b { display: block; color: var(--muted); font-weight: 500; font-size: .75rem; }
+    ul.tabs { margin: 8px 0 0; padding-left: 1.1rem; color: var(--muted); font-size: .85rem; columns: 2; }
+    .footer { margin-top: 18px; color: var(--muted); font-size: .8rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Gauntlet setup &amp; deploy wizard</h1>
+    <p class="sub">Connect Google Sheets (your cloud database), then push to GitHub and deploy on Railway/Render — guided steps for non-experts. Secrets stay on your machine / host env, never in git.</p>
+
+    <div class="progress"><i id="bar"></i></div>
+    <div class="progress-label" id="progressLabel">Loading…</div>
+    <div class="steps-nav" id="pills"></div>
+
+    <div class="card" id="panel"></div>
+    <div class="footer">Gauntlet Finance · local setup only · credentials stay on your machine</div>
+  </div>
+
+  <script>
+    const STEPS = [
+      { key: "welcome", title: "Welcome" },
+      { key: "cloud", title: "1 · Cloud & APIs" },
+      { key: "key", title: "2 · Service key" },
+      { key: "sheet", title: "3 · Spreadsheet" },
+      { key: "share", title: "4 · Share / test" },
+      { key: "tabs", title: "5 · Prepare ledger" },
+      { key: "local", title: "6 · Local check" },
+      { key: "github", title: "7 · GitHub" },
+      { key: "deploy", title: "8 · Deploy" },
+      { key: "done", title: "Done" },
+    ];
+    let step = 0;
+    let status = null;
+    let busy = false;
+
+    const $ = (id) => document.getElementById(id);
+
+    async function api(path, opts) {
+      const r = await fetch(path, opts);
+      const text = await r.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { detail: text }; }
+      if (!r.ok) throw new Error(data.detail || data.message || r.statusText);
+      return data;
+    }
+
+    async function refreshStatus() {
+      status = await api("/setup/api/status");
+      render();
+    }
+
+    function setProgress() {
+      const p = status?.progress?.percent ?? 0;
+      $("bar").style.width = p + "%";
+      $("progressLabel").textContent = status?.progress?.ready
+        ? "Ready — spreadsheet connected and tabs OK"
+        : `Progress: ${status?.progress?.auto_steps_done ?? 0}/4 automated checks · ${p}%`;
+    }
+
+    function pills() {
+      const el = $("pills");
+      el.innerHTML = "";
+      STEPS.forEach((s, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "pill" + (i === step ? " active" : "");
+        // mark done-ish
+        if (i === 2 && status?.steps?.service_account?.done) b.classList.add("done");
+        if (i === 3 && status?.steps?.spreadsheet?.done) b.classList.add("done");
+        if (i === 4 && status?.steps?.share?.done) b.classList.add("done");
+        if (i === 5 && status?.steps?.tabs?.done) b.classList.add("done");
+        if (i === 6 && status?.progress?.ready) b.classList.add("done");
+        b.textContent = s.title;
+        b.onclick = () => { step = i; render(); };
+        el.appendChild(b);
+      });
+    }
+
+    function banner(type, html) {
+      return `<div class="banner ${type}">${html}</div>`;
+    }
+
+    function nav(prev = true, next = true, nextLabel = "Continue") {
+      return `<div class="nav">
+        <button type="button" class="btn secondary" ${prev ? "" : "disabled"} data-act="prev">Back</button>
+        <button type="button" class="btn" ${next ? "" : "disabled"} data-act="next">${nextLabel}</button>
+      </div>`;
+    }
+
+    function renderPanel() {
+      const L = status?.links || {};
+      const sa = status?.service_account_email;
+      const conn = status?.connection || {};
+      let html = "";
+
+      if (step === 0) {
+        html = `
+          <h2>Welcome</h2>
+          <p>This wizard walks you through connecting a real Google Spreadsheet using a <b>service account</b> (best for personal use on Windows + iPhone/iPad against this API).</p>
+          <div class="status-grid">
+            <div class="stat"><b>Credentials</b>${status?.credentials_found ? "✅ Found" : "❌ Missing"}</div>
+            <div class="stat"><b>Spreadsheet ID</b>${status?.spreadsheet_id ? "✅ Set" : "❌ Not set"}</div>
+            <div class="stat"><b>API connection</b>${conn.connected ? "✅ Connected" : "❌ Not connected"}</div>
+            <div class="stat"><b>Tabs ready</b>${conn.ok ? "✅ All tabs OK" : "❌ Incomplete"}</div>
+          </div>
+          ${conn.error ? banner("warn", "Last error: " + escapeHtml(conn.error)) : ""}
+          <p style="margin-top:14px">You will need about 10–15 minutes and a Google account.</p>
+          ${nav(false, true, status?.progress?.ready ? "Review steps" : "Start setup")}`;
+      }
+
+      if (step === 1) {
+        html = `
+          <h2>Step 1 — Google Cloud project & APIs</h2>
+          <p>Do these once in the Google Cloud Console (opens in new tabs).</p>
+          <ol class="checklist">
+            <li>Open <a href="${L.create_project}" target="_blank" rel="noopener">Create a project</a> → name it e.g. <code>gauntlet-finance</code> → Create.</li>
+            <li>Select that project in the top bar.</li>
+            <li>Enable <a href="${L.sheets_api}" target="_blank" rel="noopener">Google Sheets API</a>.</li>
+            <li>Enable <a href="${L.drive_api}" target="_blank" rel="noopener">Google Drive API</a>.</li>
+            <li>Optional hub: <a href="${L.api_library}" target="_blank" rel="noopener">API Library</a> · <a href="${L.credentials}" target="_blank" rel="noopener">Credentials</a>.</li>
+          </ol>
+          <label><input type="checkbox" id="chkCloud" /> I have created the project and enabled both APIs</label>
+          ${nav(true, true)}`;
+      }
+
+      if (step === 2) {
+        html = `
+          <h2>Step 2 — Create & upload service account key</h2>
+          <ol class="checklist">
+            <li>Go to <a href="${L.credentials}" target="_blank" rel="noopener">Credentials</a>.</li>
+            <li><b>Create credentials → Service account</b> → name <code>finance-sheets</code> → Done.</li>
+            <li>Open the service account → <b>Keys → Add key → Create new key → JSON</b>.</li>
+            <li>Upload that downloaded JSON file here (saved as <code>secrets/service-account.json</code>).</li>
+          </ol>
+          ${sa ? banner("ok", "Key loaded. Service account email:<div class='mono' style='margin-top:8px' id='saEmail'>" + escapeHtml(sa) + "</div><button type='button' class='btn secondary copy-btn' data-act='copy-sa'>Copy email</button>") : banner("warn", "No valid key detected yet.")}
+          ${status?.steps?.service_account?.error ? banner("err", escapeHtml(status.steps.service_account.error)) : ""}
+          <div class="row" style="flex-direction:column;align-items:stretch">
+            <div>
+              <label>Upload JSON key file</label>
+              <input type="file" id="keyFile" accept=".json,application/json" />
+            </div>
+            <button type="button" class="btn" data-act="upload-key" ${busy ? "disabled" : ""}>Save key to project</button>
+          </div>
+          <p style="font-size:.85rem">Path target: <code>${escapeHtml(status?.credentials_path || "")}</code></p>
+          ${nav(true, !!sa)}`;
+      }
+
+      if (step === 3) {
+        html = `
+          <h2>Step 3 — Spreadsheet (your cloud database)</h2>
+          <p><b>Recommended:</b> let the wizard create a sheet with your service account (one click). Or paste an existing sheet URL.</p>
+          <div class="row" style="flex-direction:column;align-items:stretch">
+            <label>Your Gmail (optional — so you can open the new sheet in the browser)</label>
+            <input type="text" id="shareEmail" placeholder="you@gmail.com" />
+            <label>Sheet title</label>
+            <input type="text" id="sheetTitle" value="Gauntlet Finance Data" />
+            <button type="button" class="btn success" data-act="create-sheet" ${busy || !sa ? "disabled" : ""}>
+              Create spreadsheet automatically
+            </button>
+            ${!sa ? banner("warn", "Upload a service account key first (step 2).") : ""}
+          </div>
+          <hr style="border:0;border-top:1px solid var(--border);margin:18px 0" />
+          <p style="font-size:.9rem">Or paste an existing sheet URL / ID:</p>
+          <label>Spreadsheet URL or ID</label>
+          <input type="text" id="sheetId" placeholder="Paste full URL or ID" value="${escapeHtml(status?.spreadsheet_id || "")}" />
+          <div class="row">
+            <button type="button" class="btn secondary" data-act="save-sheet">Save to .env</button>
+            <a class="btn ghost" href="${L.new_sheet || "https://sheets.google.com"}" target="_blank" rel="noopener">Open blank sheet</a>
+          </div>
+          <div id="sheetMsg"></div>
+          ${status?.spreadsheet_id ? banner("ok", "Saved ID: <code>" + escapeHtml(status.spreadsheet_id) + "</code>") : banner("warn", "No spreadsheet ID saved yet.")}
+          ${nav(true, !!status?.spreadsheet_id)}`;
+      }
+
+      if (step === 4) {
+        html = `
+          <h2>Step 4 — Share the sheet with the robot</h2>
+          <p>Google treats the service account as a separate user. You must share the spreadsheet with it as <b>Editor</b>.</p>
+          ${sa ? `<p>Share with this email:</p><div class="mono" id="saEmail2">${escapeHtml(sa)}</div>
+            <div class="row"><button type="button" class="btn secondary" data-act="copy-sa2">Copy email</button>
+            <a class="btn ghost" href="https://docs.google.com/spreadsheets/d/${encodeURIComponent(status?.spreadsheet_id || "")}/edit" target="_blank" rel="noopener">Open your sheet</a></div>`
+            : banner("err", "Upload a service account key first (step 2).")}
+          <ol class="checklist">
+            <li>In the sheet click <b>Share</b>.</li>
+            <li>Paste the email above.</li>
+            <li>Role: <b>Editor</b>.</li>
+            <li>Uncheck “Notify people” if you want → Share.</li>
+          </ol>
+          <div class="row">
+            <button type="button" class="btn" data-act="test-conn">Test connection</button>
+          </div>
+          <div id="shareMsg"></div>
+          ${conn.connected ? banner("ok", "Connection works — the service account can open the spreadsheet.") : ""}
+          ${conn.error && !conn.connected ? banner("err", escapeHtml(conn.error)) : ""}
+          ${nav(true, !!conn.connected)}`;
+      }
+
+      if (step === 5) {
+        const missing = (conn.missing_tabs || []).join(", ") || "none";
+        html = `
+          <h2>Step 5 — Prepare ledger</h2>
+          <p>Creates all finance tabs, default categories (Fitness, My business, …), and the Digital Assets Europe rule. Safe to run multiple times.</p>
+          <div class="status-grid">
+            <div class="stat"><b>Missing tabs</b>${escapeHtml(missing)}</div>
+            <div class="stat"><b>Tabs in sheet</b>${(conn.tabs || []).length}</div>
+          </div>
+          <div class="row">
+            <button type="button" class="btn success" data-act="prepare-ledger">Prepare ledger now</button>
+            <button type="button" class="btn secondary" data-act="ensure-tabs">Tabs only</button>
+          </div>
+          <div id="tabsMsg"></div>
+          ${conn.ok ? banner("ok", "All required tabs are present with headers.") : banner("warn", "Tabs not complete yet.")}
+          ${conn.ok && conn.tabs?.length ? `<ul class="tabs">${conn.tabs.map(t => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : ""}
+          ${nav(true, !!conn.ok)}`;
+      }
+
+      if (step === 6) {
+        html = `
+          <h2>Step 6 — Local check</h2>
+          <p>Confirm the API sees your sheet. Then open the React UI (port 5190) to import statements.</p>
+          <div class="status-grid">
+            <div class="stat"><b>Health</b><a href="/health" target="_blank">/health</a></div>
+            <div class="stat"><b>Sheets status</b><a href="/sheets/status" target="_blank">/sheets/status</a></div>
+            <div class="stat"><b>Spreadsheet</b>${conn.connected ? "✅ Connected" : "❌ Not connected"}</div>
+            <div class="stat"><b>Tabs</b>${conn.ok ? "✅ Ready" : "❌ Incomplete"}</div>
+          </div>
+          <div class="row" style="margin-top:14px">
+            <button type="button" class="btn" data-act="test-conn">Re-test connection</button>
+            <a class="btn secondary" href="http://127.0.0.1:5190/" target="_blank" rel="noopener">Open app UI (5190)</a>
+            <a class="btn ghost" href="/docs" target="_blank">API docs</a>
+          </div>
+          <div id="shareMsg"></div>
+          <p style="font-size:.85rem;color:var(--muted);margin-top:12px">
+            Tip: double-click <code>Start-App.bat</code> for API + UI together.
+          </p>
+          ${nav(true, !!(conn.connected && conn.ok))}`;
+      }
+
+      if (step === 7) {
+        html = `
+          <h2>Step 7 — GitHub (safe push)</h2>
+          <p>Put the code on GitHub <b>without secrets</b>. Your <code>.env</code> and <code>secrets/</code> stay local.</p>
+          <ol class="checklist">
+            <li>Install <a href="https://git-scm.com/downloads" target="_blank" rel="noopener">Git</a> and optionally <a href="https://cli.github.com/" target="_blank" rel="noopener">GitHub CLI</a>.</li>
+            <li>Create an empty repo: <a href="https://github.com/new" target="_blank" rel="noopener">github.com/new</a> → name <code>gauntlet-finance</code> (no README if project already has files).</li>
+            <li>In the project folder, double-click <code>scripts\\Prepare-GitHub.bat</code>
+              <b>or</b> in PowerShell run:<br>
+              <div class="mono">powershell -ExecutionPolicy Bypass -File .\\scripts\\Prepare-GitHub.ps1</div>
+              (Windows often blocks <code>.ps1</code> alone; Bypass is only for this run.)
+              Then follow the printed <code>git remote</code> / <code>git push</code> lines.
+            </li>
+            <li>Never upload <code>secrets/service-account.json</code> or <code>.env</code>.</li>
+          </ol>
+          ${banner("ok", "Dockerfile and railway.toml are already in the project for the next step.")}
+          ${nav(true, true)}`;
+      }
+
+      if (step === 8) {
+        html = `
+          <h2>Step 8 — Deploy (Railway / Render)</h2>
+          <p>Host the app on the internet so iPhone / iPad / PC can open one HTTPS URL. Database remains Google Sheets.</p>
+          <ol class="checklist">
+            <li>Open <a href="https://railway.app/new" target="_blank" rel="noopener">Railway</a> (recommended) or <a href="https://dashboard.render.com/" target="_blank" rel="noopener">Render</a> → login with GitHub.</li>
+            <li>New project → Deploy from your <code>gauntlet-finance</code> repo.</li>
+            <li>Paste environment variables (button below builds them from your local setup).</li>
+            <li>After you get a public URL, paste it here and regenerate so <code>CORS_ORIGINS</code> matches.</li>
+          </ol>
+          <label>Public app URL (after first deploy)</label>
+          <input type="text" id="publicUrl" placeholder="https://your-app.up.railway.app" />
+          <div class="row">
+            <button type="button" class="btn success" data-act="deploy-env">Generate env vars to copy</button>
+          </div>
+          <div id="deployMsg"></div>
+          <textarea id="deployEnv" class="hidden" readonly style="min-height:160px;margin-top:10px"></textarea>
+          <p style="font-size:.85rem;color:var(--muted)">Full guide: <code>docs/DEPLOY.md</code></p>
+          ${nav(true, true)}`;
+      }
+
+      if (step === 9) {
+        html = `
+          <h2>${status?.progress?.ready ? "You're set up 🎉" : "Almost there"}</h2>
+          ${status?.progress?.ready
+            ? banner("ok", "Google Sheets is your cloud database. Local app can upload statements. Deploy for multi-device access.")
+            : banner("warn", "Sheets setup incomplete — use Back to finish steps 1–6.")}
+          <div class="status-grid">
+            <div class="stat"><b>Backend store</b>${conn.connected ? "google_sheets" : (status?.spreadsheet_id ? "not connected" : "unset")}</div>
+            <div class="stat"><b>Spreadsheet</b>${escapeHtml(status?.spreadsheet_id || "—")}</div>
+            <div class="stat"><b>Service account</b>${escapeHtml(sa || "—")}</div>
+            <div class="stat"><b>Tabs OK</b>${conn.ok ? "yes" : "no"}</div>
+          </div>
+          <div class="row" style="margin-top:16px">
+            <a class="btn" href="http://127.0.0.1:5190/" target="_blank" rel="noopener">Open local UI</a>
+            <a class="btn secondary" href="/docs" target="_blank">API docs</a>
+            <a class="btn secondary" href="/health" target="_blank">Health</a>
+            <button type="button" class="btn ghost" data-act="refresh">Refresh status</button>
+          </div>
+          <p style="margin-top:16px;font-size:.9rem;color:var(--muted)">
+            Phone checklist: open your Railway HTTPS URL → confirm /health → import a small statement → refresh investments.
+          </p>
+          ${nav(true, false)}`;
+      }
+
+      $("panel").innerHTML = html;
+      bindPanel();
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? "").replace(/[&<>"']/g, c => ({
+        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+      })[c]);
+    }
+
+    function bindPanel() {
+      $("panel").querySelectorAll("[data-act]").forEach(btn => {
+        btn.addEventListener("click", onAction);
+      });
+    }
+
+    async function onAction(ev) {
+      const act = ev.currentTarget.getAttribute("data-act");
+      if (act === "prev") { step = Math.max(0, step - 1); render(); return; }
+      if (act === "next") {
+        if (step === 1) {
+          const chk = document.getElementById("chkCloud");
+          if (chk && !chk.checked) {
+            alert("Please confirm you enabled the APIs (check the box).");
+            return;
+          }
+        }
+        step = Math.min(STEPS.length - 1, step + 1);
+        render();
+        return;
+      }
+      if (act === "refresh") { await refreshStatus(); return; }
+      if (act === "copy-sa" || act === "copy-sa2") {
+        const t = status?.service_account_email;
+        if (t) {
+          await navigator.clipboard.writeText(t);
+          alert("Copied: " + t);
+        }
+        return;
+      }
+      if (act === "upload-key") {
+        const f = document.getElementById("keyFile")?.files?.[0];
+        if (!f) { alert("Choose a JSON file first."); return; }
+        const fd = new FormData();
+        fd.append("file", f);
+        busy = true; render();
+        try {
+          await api("/setup/api/upload-credentials", { method: "POST", body: fd });
+          await refreshStatus();
+          alert("Key saved.");
+        } catch (e) {
+          alert("Upload failed: " + e.message);
+          busy = false; render();
+        }
+        busy = false;
+        return;
+      }
+      if (act === "save-sheet") {
+        const raw = document.getElementById("sheetId")?.value || "";
+        busy = true;
+        try {
+          await api("/setup/api/save-spreadsheet", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ spreadsheet_id: raw }),
+          });
+          await refreshStatus();
+        } catch (e) {
+          alert("Save failed: " + e.message);
+        }
+        busy = false; render();
+        return;
+      }
+      if (act === "create-sheet") {
+        const title = document.getElementById("sheetTitle")?.value || "Gauntlet Finance Data";
+        const share = document.getElementById("shareEmail")?.value || "";
+        const msg = document.getElementById("sheetMsg");
+        if (msg) msg.innerHTML = banner("warn", "Creating spreadsheet…");
+        busy = true; render();
+        try {
+          const r = await api("/setup/api/create-spreadsheet", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title, share_with_email: share }),
+          });
+          await refreshStatus();
+          busy = false;
+          render();
+          const m2 = document.getElementById("sheetMsg");
+          if (m2) {
+            m2.innerHTML = banner("ok", escapeHtml(r.message || "Created.") +
+              (r.url ? ` <a href="${escapeHtml(r.url)}" target="_blank" rel="noopener">Open sheet</a>` : ""));
+          }
+        } catch (e) {
+          busy = false; render();
+          const m2 = document.getElementById("sheetMsg");
+          if (m2) m2.innerHTML = banner("err", escapeHtml(e.message));
+          else alert(e.message);
+        }
+        return;
+      }
+      if (act === "prepare-ledger") {
+        const msg = document.getElementById("tabsMsg");
+        if (msg) msg.innerHTML = banner("warn", "Preparing ledger…");
+        try {
+          const r = await api("/setup/api/prepare-ledger", { method: "POST" });
+          await refreshStatus();
+          if (msg) msg.innerHTML = banner(r.ok ? "ok" : "err", escapeHtml(r.message || JSON.stringify(r)));
+        } catch (e) {
+          if (msg) msg.innerHTML = banner("err", escapeHtml(e.message));
+        }
+        return;
+      }
+      if (act === "deploy-env") {
+        const url = document.getElementById("publicUrl")?.value || "";
+        const msg = document.getElementById("deployMsg");
+        const ta = document.getElementById("deployEnv");
+        if (msg) msg.innerHTML = banner("warn", "Building env…");
+        try {
+          const q = url ? ("?public_url=" + encodeURIComponent(url)) : "";
+          const r = await api("/setup/api/deploy-env" + q);
+          if (ta) {
+            ta.classList.remove("hidden");
+            ta.value = r.env_file_text || "";
+          }
+          if (msg) msg.innerHTML = banner(r.ok ? "ok" : "warn", escapeHtml(r.message || ""));
+        } catch (e) {
+          if (msg) msg.innerHTML = banner("err", escapeHtml(e.message));
+        }
+        return;
+      }
+      if (act === "test-conn") {
+        const msg = document.getElementById("shareMsg");
+        if (msg) msg.innerHTML = banner("warn", "Testing…");
+        try {
+          const r = await api("/setup/api/test-connection", { method: "POST" });
+          await refreshStatus();
+          if (msg) msg.innerHTML = r.ok
+            ? banner("ok", escapeHtml(r.message || "Connected."))
+            : banner("err", escapeHtml(r.message || r.error || "Failed"));
+        } catch (e) {
+          if (msg) msg.innerHTML = banner("err", escapeHtml(e.message));
+        }
+        return;
+      }
+      if (act === "ensure-tabs") {
+        const msg = document.getElementById("tabsMsg");
+        const seed = document.getElementById("chkSeed")?.checked;
+        if (msg) msg.innerHTML = banner("warn", "Creating tabs…");
+        try {
+          const r = await api("/setup/api/ensure-tabs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ seed: !!seed }),
+          });
+          await refreshStatus();
+          if (msg) msg.innerHTML = banner(r.ok ? "ok" : "err", escapeHtml(r.message || JSON.stringify(r)));
+        } catch (e) {
+          if (msg) msg.innerHTML = banner("err", escapeHtml(e.message));
+        }
+        return;
+      }
+    }
+
+    function render() {
+      setProgress();
+      pills();
+      renderPanel();
+    }
+
+    refreshStatus().catch(e => {
+      $("panel").innerHTML = banner("err", "Could not load wizard status: " + escapeHtml(e.message) +
+        "<p>Is the API running? Start with <code>uvicorn backend.api.main:app --reload --port 8020</code></p>");
+    });
+  </script>
+</body>
+</html>

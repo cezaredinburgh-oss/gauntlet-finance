@@ -1,0 +1,22 @@
+# Render Blueprint (optional). Or create a Web Service manually from this repo.
+services:
+  - type: web
+    name: gauntlet-finance
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: AUTH_MODE
+        value: dev
+      - key: REQUIRE_SHEETS
+        value: "true"
+      - key: SPREADSHEET_ID
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false

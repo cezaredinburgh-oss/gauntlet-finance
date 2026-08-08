@@ -1,0 +1,334 @@
+import type {
+  AlertsResponse,
+  ApplyRulesResult,
+  AuthMe,
+  BootstrapRulesResult,
+  ApplyMatchResult,
+  BulkOverrideResult,
+  Category,
+  CategoryCoverage,
+  CategoryRule,
+  CleanupPreview,
+  CleanupResult,
+  DashboardSummary,
+  Health,
+  Lot,
+  LotSummary,
+  Paginated,
+  PeriodKey,
+  PortfolioSnapshot,
+  PriceRefresh,
+  SheetsStatus,
+  TickerDigestsResponse,
+  Transaction,
+  UploadResult,
+} from "./types";
+
+/**
+ * Base URL for API calls.
+ * - Dev: `/api` (Vite proxy → FastAPI) so cookies work same-origin
+ * - Prod: set VITE_API_BASE to the FastAPI origin
+ */
+const API_BASE = (import.meta.env.VITE_API_BASE ?? "/api").replace(/\/$/, "");
+
+export class ApiError extends Error {
+  status: number;
+  detail: string;
+  constructor(status: number, detail: string) {
+    super(detail);
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail ?? JSON.stringify(body);
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(res.status, String(detail));
+  }
+
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+function qs(params: Record<string, string | number | boolean | undefined | null>) {
+  const u = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === "") return;
+    u.set(k, String(v));
+  });
+  const s = u.toString();
+  return s ? `?${s}` : "";
+}
+
+export const api = {
+  base: API_BASE,
+
+  health: () => request<Health>("/health"),
+
+  me: () => request<AuthMe>("/auth/me"),
+
+  logout: () => request<{ status: string }>("/auth/logout", { method: "POST" }),
+
+  /** Full URL for browser redirect to Google OAuth */
+  loginUrl: () => `${API_BASE}/auth/login`,
+
+  sheetsStatus: () => request<SheetsStatus>("/sheets/status"),
+
+  cleanupPreview: () => request<CleanupPreview>("/admin/cleanup/preview"),
+
+  cleanupRun: (scopes: string[], confirm: string) =>
+    request<CleanupResult>("/admin/cleanup", {
+      method: "POST",
+      body: JSON.stringify({ scopes, confirm }),
+    }),
+
+  dashboard: (params: {
+    date_from?: string;
+    date_to?: string;
+    currency?: string;
+    period_key?: PeriodKey | string;
+  } = {}) =>
+    request<DashboardSummary>(`/dashboard-summary${qs(params)}`),
+
+  alerts: () => request<AlertsResponse>("/alerts"),
+
+  investmentsSnapshot: (params: { as_of?: string } = {}) =>
+    request<PortfolioSnapshot>(`/investments/snapshot${qs(params)}`),
+
+  tickerDigests: (params: { as_of?: string } = {}) =>
+    request<TickerDigestsResponse>(`/investments/ticker-digests${qs(params)}`),
+
+  transactions: (params: {
+    date_from?: string;
+    date_to?: string;
+    currency?: string;
+    is_internal_transfer?: boolean;
+    category_id?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) =>
+    request<Paginated<Transaction>>(`/transactions${qs(params)}`),
+
+  categories: () => request<{ items: Category[] }>("/categories"),
+
+  categoryCoverage: (days = 180) =>
+    request<CategoryCoverage>(`/categories/coverage${qs({ days })}`),
+
+  merchantQueue: (days = 180, limit = 40) =>
+    request<{
+      days: number;
+      items: Array<{
+        label: string;
+        match_field?: string;
+        match_value?: string;
+        amount_usd: string;
+        tx_count: number;
+        suggested_category_id?: string | null;
+      }>;
+      coverage_pct: number;
+    }>(`/categories/merchant-queue${qs({ days, limit })}`),
+
+  merchantQueueApply: (body: {
+    label: string;
+    category_id: string;
+    match_field?: string;
+    match_value?: string;
+    create_rule?: boolean;
+    also_apply?: boolean;
+  }) =>
+    request<{
+      updated?: number;
+      matched?: number;
+      removed_from_queue?: boolean;
+      label?: string;
+      [k: string]: unknown;
+    }>("/categories/merchant-queue/apply", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  createCategory: (body: {
+    name: string;
+    necessity: string;
+    life_domain: string;
+    parent_id?: string | null;
+    is_income?: boolean;
+    is_transfer?: boolean;
+    sort_order?: number;
+  }) =>
+    request<{ item: Category }>("/categories", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateCategory: (
+    id: string,
+    body: Partial<{
+      name: string;
+      necessity: string;
+      life_domain: string;
+      parent_id: string | null;
+      is_income: boolean;
+      is_transfer: boolean;
+      sort_order: number;
+    }>,
+  ) =>
+    request<{ item: Category }>(`/categories/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteCategory: (
+    id: string,
+    opts?: { reassign_to?: string; cascade_children?: boolean },
+  ) =>
+    request<Record<string, unknown>>(
+      `/categories/${id}${qs({
+        reassign_to: opts?.reassign_to,
+        cascade_children: opts?.cascade_children,
+      })}`,
+      { method: "DELETE" },
+    ),
+
+  ensureCategories: () =>
+    request<{ created: number; updated: number; total_defaults: number }>(
+      "/categories/ensure-defaults",
+      { method: "POST" },
+    ),
+
+  warmCache: () =>
+    request<{ ok: boolean; counts: Record<string, unknown> }>("/admin/warm-cache", {
+      method: "POST",
+    }),
+
+  bootstrapRules: (also_apply = true) =>
+    request<BootstrapRulesResult>("/categories/bootstrap-rules", {
+      method: "POST",
+      body: JSON.stringify({ also_apply }),
+    }),
+
+  applyRules: () =>
+    request<ApplyRulesResult>("/categories/apply-rules", { method: "POST" }),
+
+  /** Global match apply — all ledger txs, not limited to current UI filter. */
+  applyMatch: (body: {
+    category_id: string;
+    match_field: string;
+    match_type: string;
+    match_value: string;
+    institution_scope?: string | null;
+    set_internal_transfer?: boolean;
+    mode?: "fill_blanks" | "reclassify_non_override" | "force";
+    mark_override?: boolean;
+  }) =>
+    request<ApplyMatchResult>("/categories/apply-match", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  categoryRules: () => request<{ items: CategoryRule[] }>("/category-rules"),
+
+  createCategoryRule: (body: Partial<CategoryRule> & {
+    match_field: string;
+    match_type: string;
+    match_value: string;
+    category_id: string;
+  }) =>
+    request<CategoryRule>("/category-rules", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateCategoryRule: (id: string, body: Partial<CategoryRule>) =>
+    request<CategoryRule>(`/category-rules/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteCategoryRule: (id: string) =>
+    request<{ status: string; id: string }>(`/category-rules/${id}`, {
+      method: "DELETE",
+    }),
+
+  overrideCategory: (categoryId: string, transactionId: string) =>
+    request<{ transaction_id: string; category_id: string; category_override: boolean }>(
+      `/categories/${categoryId}/override`,
+      {
+        method: "POST",
+        body: JSON.stringify({ transaction_id: transactionId }),
+      },
+    ),
+
+  bulkOverrideCategory: (categoryId: string, transactionIds: string[]) =>
+    request<BulkOverrideResult>("/categories/bulk-override", {
+      method: "POST",
+      body: JSON.stringify({
+        category_id: categoryId,
+        transaction_ids: transactionIds,
+      }),
+    }),
+
+  lots: (params: { ticker?: string; open_only?: boolean; as_of?: string } = {}) =>
+    request<{ items: Lot[]; summaries: LotSummary[] }>(`/lots${qs(params)}`),
+
+  investments: (params: {
+    date_from?: string;
+    date_to?: string;
+    ticker?: string;
+    event_type?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) =>
+    request<Paginated<Record<string, unknown>>>(`/investments${qs(params)}`),
+
+  upload: async (file: File, onProgress?: (pct: number) => void) => {
+    // fetch doesn't support upload progress easily; use XHR
+    return new Promise<UploadResult>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${API_BASE}/upload`);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) {
+          onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300) resolve(body);
+          else reject(new ApiError(xhr.status, body.detail || xhr.statusText));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      xhr.onerror = () => reject(new ApiError(0, "Network error"));
+      const fd = new FormData();
+      fd.append("file", file);
+      xhr.send(fd);
+    });
+  },
+
+  refreshPrices: (force = false) =>
+    request<PriceRefresh>(`/prices/refresh${qs({ force })}`, { method: "POST" }),
+};

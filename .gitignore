@@ -1,0 +1,29 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+frontend/node_modules/
+frontend/dist/
+
+# Runtime logs / pids from Start-App
+*.log
+api.pid
+ui.pid
+launcher.log
+
+# Google credentials — never commit
+secrets/**
+!secrets/.gitkeep
+*.json
+!backend/**/*.json
+!frontend/**/*.json
+!package.json
+!package-lock.json
+!tsconfig*.json
+service-account.json
+credentials.json
+token.json

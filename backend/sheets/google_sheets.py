@@ -1,0 +1,660 @@
+"""
+Google Sheets repository using google-api-python-client.
+
+Read whole tabs into an in-memory cache (with row-index map). Writes use
+**row-level patches** via ``values.batchUpdate`` so categorization does not
+rewrite 10k+ rows. Full clear+rewrite remains available for ``replace_all_rows``.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Any
+from uuid import UUID
+
+from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials as UserCredentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+from backend.schema.models import SHEET_HEADERS, StatementFile, SheetRow, TAB_MODEL
+from backend.sheets.codec import model_to_row, models_to_grid, row_to_model
+
+logger = logging.getLogger(__name__)
+
+# spreadsheets + drive.file: open shared sheets and create SA-owned spreadsheets
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.file",
+]
+
+# Common default locations (relative to process cwd / project root)
+DEFAULT_SA_PATHS = (
+    "secrets/service-account.json",
+    "secrets/credentials.json",
+    "service-account.json",
+    "credentials.json",
+)
+
+
+def resolve_service_account_path(explicit: str | None = None) -> Path | None:
+    """Return first existing service-account JSON path."""
+    candidates: list[str] = []
+    if explicit and str(explicit).strip():
+        candidates.append(str(explicit).strip())
+    candidates.extend(DEFAULT_SA_PATHS)
+    for c in candidates:
+        p = Path(c)
+        if not p.is_absolute():
+            # try cwd, then parent of backend/
+            if p.is_file():
+                return p.resolve()
+            alt = Path(__file__).resolve().parents[2] / c
+            if alt.is_file():
+                return alt.resolve()
+        elif p.is_file():
+            return p
+    return None
+
+
+def load_service_account_info(
+    *,
+    json_path: str | None = None,
+    json_inline: str | None = None,
+) -> dict[str, Any]:
+    if json_inline and json_inline.strip():
+        return json.loads(json_inline)
+    path = resolve_service_account_path(json_path)
+    if path is None:
+        raise ValueError(
+            "service account JSON not found. Set GOOGLE_APPLICATION_CREDENTIALS "
+            "or place the key at secrets/service-account.json"
+        )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def service_account_email(
+    *,
+    json_path: str | None = None,
+    json_inline: str | None = None,
+) -> str:
+    info = load_service_account_info(json_path=json_path, json_inline=json_inline)
+    email = info.get("client_email")
+    if not email:
+        raise ValueError("service account JSON missing client_email")
+    return str(email)
+
+
+def credentials_from_service_account(
+    *,
+    json_path: str | None = None,
+    json_inline: str | None = None,
+) -> service_account.Credentials:
+    if json_inline and json_inline.strip():
+        info = json.loads(json_inline)
+        return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+    path = resolve_service_account_path(json_path)
+    if path is not None:
+        return service_account.Credentials.from_service_account_file(
+            str(path), scopes=SCOPES
+        )
+    raise ValueError(
+        "service account credentials not configured "
+        "(set GOOGLE_APPLICATION_CREDENTIALS or secrets/service-account.json)"
+    )
+
+
+def credentials_from_user_token(
+    *,
+    token: str,
+    refresh_token: str | None,
+    client_id: str,
+    client_secret: str,
+    token_uri: str = "https://oauth2.googleapis.com/token",
+) -> UserCredentials:
+    return UserCredentials(
+        token=token,
+        refresh_token=refresh_token,
+        token_uri=token_uri,
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=SCOPES,
+    )
+
+
+def create_spreadsheet(
+    credentials: service_account.Credentials | UserCredentials,
+    *,
+    title: str = "Gauntlet Finance Data",
+    share_with_email: str | None = None,
+) -> dict[str, str]:
+    """
+    Create a new Google Spreadsheet owned by the service account.
+
+    Optionally share with a human Google account as writer so they can open it
+    in the browser. Returns spreadsheet_id and url.
+    """
+    sheets = build("sheets", "v4", credentials=credentials, cache_discovery=False)
+    created = (
+        sheets.spreadsheets()
+        .create(body={"properties": {"title": title}})
+        .execute()
+    )
+    sid = str(created["spreadsheetId"])
+    url = str(
+        created.get("spreadsheetUrl")
+        or f"https://docs.google.com/spreadsheets/d/{sid}/edit"
+    )
+
+    if share_with_email and share_with_email.strip():
+        email = share_with_email.strip()
+        try:
+            drive = build("drive", "v3", credentials=credentials, cache_discovery=False)
+            drive.permissions().create(
+                fileId=sid,
+                body={
+                    "type": "user",
+                    "role": "writer",
+                    "emailAddress": email,
+                },
+                sendNotificationEmail=False,
+                fields="id",
+            ).execute()
+        except HttpError as exc:
+            logger.warning("Could not share spreadsheet with %s: %s", email, exc)
+            return {
+                "spreadsheet_id": sid,
+                "url": url,
+                "shared_with": "",
+                "share_warning": str(exc),
+            }
+        return {"spreadsheet_id": sid, "url": url, "shared_with": email}
+
+    return {"spreadsheet_id": sid, "url": url, "shared_with": ""}
+
+
+class GoogleSheetsRepository:
+    """
+    Sheets-backed :class:`SheetsRepository`.
+
+    Caches tab contents after first read. ``upsert_rows`` merges by id and
+    **patches only changed rows** via ``values.batchUpdate`` (fast for
+    categorization). Full clear+rewrite is reserved for ``replace_all_rows``
+    and rare compacting paths.
+    """
+
+    # Google values.batchUpdate is happier with modest chunk sizes
+    _PATCH_CHUNK = 200
+    # Prefer a long TTL: this process is the writer; invalidate/refresh on write.
+    # External scripts can still force a re-read after TTL or process restart.
+    _DEFAULT_TAB_TTL_SECONDS = 600.0
+
+    def __init__(
+        self,
+        spreadsheet_id: str,
+        credentials: Any,
+        *,
+        ensure_tabs: bool = True,
+        tab_cache_ttl_seconds: float | None = None,
+    ) -> None:
+        if not spreadsheet_id:
+            raise ValueError("spreadsheet_id is required")
+        self.spreadsheet_id = spreadsheet_id
+        self._creds = credentials
+        self._service = build("sheets", "v4", credentials=credentials, cache_discovery=False)
+        self._cache: dict[str, dict[UUID, SheetRow]] = {}
+        self._cache_loaded_at: dict[str, float] = {}
+        # id -> 1-based sheet row (header is row 1; data starts at 2)
+        self._row_index: dict[str, dict[UUID, int]] = {}
+        # next free 1-based row for appends
+        self._next_row: dict[str, int] = {}
+        self._dirty: set[str] = set()
+        self._tab_cache_ttl_seconds = (
+            float(tab_cache_ttl_seconds)
+            if tab_cache_ttl_seconds is not None
+            else self._DEFAULT_TAB_TTL_SECONDS
+        )
+        # Serialize concurrent first-loads of the same tab (dashboard + alerts race)
+        from threading import Lock
+
+        self._load_lock = Lock()
+        self._tab_locks: dict[str, Lock] = {}
+        self._tab_locks_guard = Lock()
+        if ensure_tabs:
+            self.ensure_all_tabs()
+
+    # ------------------------------------------------------------------
+    # Tab setup
+    # ------------------------------------------------------------------
+
+    def list_tab_names(self) -> list[str]:
+        meta = (
+            self._service.spreadsheets()
+            .get(spreadsheetId=self.spreadsheet_id)
+            .execute()
+        )
+        return [s["properties"]["title"] for s in meta.get("sheets", [])]
+
+    def ensure_all_tabs(self) -> dict[str, str]:
+        """
+        Create missing tabs and ensure header rows match SHEET_HEADERS.
+
+        Idempotent: safe to run many times. Does not wipe data rows when
+        headers already match. Returns per-tab status messages.
+        """
+        status: dict[str, str] = {}
+        existing = set(self.list_tab_names())
+        requests = []
+        for tab in SHEET_HEADERS:
+            if tab not in existing:
+                requests.append({"addSheet": {"properties": {"title": tab}}})
+        if requests:
+            self._service.spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={"requests": requests},
+            ).execute()
+            for tab in SHEET_HEADERS:
+                if tab not in existing:
+                    status[tab] = "created"
+        else:
+            for tab in SHEET_HEADERS:
+                status.setdefault(tab, "exists")
+
+        for tab, headers in SHEET_HEADERS.items():
+            action = self._ensure_header_row(tab, headers)
+            if tab not in status or status[tab] == "exists":
+                status[tab] = action
+            elif action != "headers_ok":
+                status[tab] = f"{status[tab]}+{action}"
+        return status
+
+    def _ensure_header_row(self, tab: str, headers: list[str]) -> str:
+        """Write header row if missing/mismatched; preserve data rows when possible."""
+        try:
+            result = (
+                self._service.spreadsheets()
+                .values()
+                .get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f"'{tab}'!A1:ZZ",
+                    majorDimension="ROWS",
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            raise RuntimeError(f"Cannot read tab {tab}: {exc}") from exc
+
+        values = result.get("values") or []
+        if not values:
+            self._service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'{tab}'!A1",
+                valueInputOption="RAW",
+                body={"values": [headers]},
+            ).execute()
+            return "headers_written"
+
+        current = [str(c).strip() for c in values[0]]
+        if current == headers:
+            return "headers_ok"
+
+        data_rows = values[1:] if len(values) > 1 else []
+        if not data_rows or not any(any(str(c).strip() for c in row) for row in data_rows):
+            # empty sheet besides wrong header — safe full rewrite of header only
+            self._service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'{tab}'!A1",
+                valueInputOption="RAW",
+                body={"values": [headers]},
+            ).execute()
+            return "headers_fixed"
+
+        # Has data with different headers: fix header row only (do not clear body)
+        self._service.spreadsheets().values().update(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"'{tab}'!A1",
+            valueInputOption="RAW",
+            body={"values": [headers]},
+        ).execute()
+        logger.warning(
+            "Tab %s had non-matching headers; header row updated in place "
+            "(%d data rows left unchanged)",
+            tab,
+            len(data_rows),
+        )
+        return "headers_updated_in_place"
+
+    # ------------------------------------------------------------------
+    # Protocol
+    # ------------------------------------------------------------------
+
+    def list_rows(self, tab: str) -> list[SheetRow]:
+        self._load_tab(tab)
+        return list(self._cache[tab].values())
+
+    def upsert_rows(self, tab: str, rows: list[SheetRow]) -> None:
+        """Merge rows by id and patch only those sheet rows (not the full tab)."""
+        if not rows:
+            return
+        self._load_tab(tab)
+        expected = TAB_MODEL[tab]
+        headers = SHEET_HEADERS[tab]
+        bucket = self._cache[tab]
+        index = self._row_index.setdefault(tab, {})
+        updates: list[tuple[int, list[str]]] = []  # (1-based row, cells)
+        appends: list[SheetRow] = []
+
+        for row in rows:
+            if not isinstance(row, expected):
+                raise TypeError(
+                    f"expected {expected.__name__} for {tab}, got {type(row).__name__}"
+                )
+            bucket[row.id] = row
+            cells = model_to_row(row, headers)
+            sheet_row = index.get(row.id)
+            if sheet_row is None:
+                appends.append(row)
+            else:
+                updates.append((sheet_row, cells))
+
+        if updates:
+            self._patch_rows(tab, updates)
+        if appends:
+            self._append_rows(tab, appends, headers)
+
+        import time
+
+        self._cache_loaded_at[tab] = time.time()
+        self._dirty.discard(tab)
+
+    def get_by_id(self, tab: str, row_id: UUID) -> SheetRow | None:
+        self._load_tab(tab)
+        return self._cache[tab].get(row_id)
+
+    def find_statement_by_hash(self, content_sha256: str) -> StatementFile | None:
+        needle = content_sha256.lower()
+        for row in self.list_rows("StatementFiles"):
+            assert isinstance(row, StatementFile)
+            if row.archived:
+                continue
+            if row.content_sha256.lower() == needle:
+                return row
+        return None
+
+    def delete_by_id(self, tab: str, row_id: UUID) -> bool:
+        """Remove one row. Clears that sheet row in place (leaves a blank gap)."""
+        self._load_tab(tab)
+        if self._cache[tab].pop(row_id, None) is None:
+            return False
+        index = self._row_index.setdefault(tab, {})
+        sheet_row = index.pop(row_id, None)
+        if sheet_row is not None:
+            headers = SHEET_HEADERS[tab]
+            blank = [""] * len(headers)
+            self._patch_rows(tab, [(sheet_row, blank)])
+        import time
+
+        self._cache_loaded_at[tab] = time.time()
+        self._dirty.discard(tab)
+        return True
+
+    def replace_all_rows(self, tab: str, rows: list[SheetRow]) -> None:
+        """Replace an entire tab contents in one write (efficient bulk repair)."""
+        expected = TAB_MODEL[tab]
+        bucket: dict[UUID, SheetRow] = {}
+        for row in rows:
+            if not isinstance(row, expected):
+                raise TypeError(
+                    f"expected {expected.__name__} for {tab}, got {type(row).__name__}"
+                )
+            bucket[row.id] = row
+        self._cache[tab] = bucket
+        self._dirty.add(tab)
+        self._flush_tab(tab)
+
+    def flush_all(self) -> None:
+        for tab in list(self._dirty):
+            self._flush_tab(tab)
+
+    def invalidate_cache(self, tab: str | None = None) -> None:
+        if tab is None:
+            self._cache.clear()
+            self._cache_loaded_at.clear()
+            self._row_index.clear()
+            self._next_row.clear()
+        else:
+            self._cache.pop(tab, None)
+            self._cache_loaded_at.pop(tab, None)
+            self._row_index.pop(tab, None)
+            self._next_row.pop(tab, None)
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _tab_lock(self, tab: str):
+        with self._tab_locks_guard:
+            lock = self._tab_locks.get(tab)
+            if lock is None:
+                from threading import Lock
+
+                lock = Lock()
+                self._tab_locks[tab] = lock
+            return lock
+
+    def _tab_cache_fresh(self, tab: str) -> bool:
+        import time
+
+        if tab not in self._cache:
+            return False
+        # Never expire dirty tabs mid-write batch — local cache is source of truth
+        if tab in self._dirty:
+            return True
+        loaded = self._cache_loaded_at.get(tab)
+        if loaded is None:
+            return False
+        return (time.time() - loaded) < self._tab_cache_ttl_seconds
+
+    def _load_tab(self, tab: str) -> None:
+        if self._tab_cache_fresh(tab):
+            return
+        if tab not in SHEET_HEADERS:
+            raise KeyError(f"unknown tab {tab}")
+        with self._tab_lock(tab):
+            # Second check after acquiring lock (another request may have loaded)
+            if self._tab_cache_fresh(tab):
+                return
+            import time
+
+            headers = SHEET_HEADERS[tab]
+            try:
+                result = (
+                    self._service.spreadsheets()
+                    .values()
+                    .get(
+                        spreadsheetId=self.spreadsheet_id,
+                        range=f"'{tab}'!A1:ZZ",
+                        majorDimension="ROWS",
+                    )
+                    .execute()
+                )
+            except HttpError as exc:
+                logger.exception("Failed to read tab %s", tab)
+                raise RuntimeError(f"Sheets read failed for {tab}: {exc}") from exc
+
+            values = result.get("values") or []
+            bucket: dict[UUID, SheetRow] = {}
+            row_index: dict[UUID, int] = {}
+            if not values:
+                self._write_grid(tab, [headers])
+                self._cache[tab] = bucket
+                self._row_index[tab] = row_index
+                self._next_row[tab] = 2  # first data row
+                self._cache_loaded_at[tab] = time.time()
+                return
+
+            file_headers = [str(h).strip() for h in values[0]]
+            # If empty or wrong headers, reset header row (keep data best-effort)
+            if file_headers != headers:
+                if not any(file_headers):
+                    file_headers = headers
+                # Use intersection order of expected headers
+                use_headers = file_headers if "id" in file_headers else headers
+
+            else:
+                use_headers = headers
+
+            # Sheet rows are 1-based; values[0] is header → data starts at row 2
+            for offset, raw in enumerate(values[1:]):
+                sheet_row = offset + 2
+                if not raw or not any(str(c).strip() for c in raw):
+                    continue
+                try:
+                    model = row_to_model(tab, use_headers, [str(c) for c in raw])
+                    bucket[model.id] = model
+                    row_index[model.id] = sheet_row
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Skipping bad row in %s: %s", tab, exc)
+            self._cache[tab] = bucket
+            self._row_index[tab] = row_index
+            # Next free row is past the last physical row we saw (including blanks)
+            self._next_row[tab] = max(len(values) + 1, 2)
+            self._cache_loaded_at[tab] = time.time()
+
+    def _flush_tab(self, tab: str) -> None:
+        """Full clear+rewrite. Rebuilds row index. Prefer upsert_rows patch path."""
+        headers = SHEET_HEADERS[tab]
+        rows = list(self._cache.get(tab, {}).values())
+        # Stable order by id string for deterministic sheets
+        rows.sort(key=lambda r: str(r.id))
+        grid = models_to_grid(tab, rows, headers)
+        self._write_grid(tab, grid)
+        # Rebuild id → sheet row map (header row 1, data from 2)
+        self._row_index[tab] = {row.id: i + 2 for i, row in enumerate(rows)}
+        self._next_row[tab] = len(rows) + 2
+        self._dirty.discard(tab)
+        import time
+
+        self._cache_loaded_at[tab] = time.time()
+
+    def _patch_rows(self, tab: str, updates: list[tuple[int, list[str]]]) -> None:
+        """Write only the given sheet rows via values.batchUpdate."""
+        if not updates:
+            return
+        # De-dupe by sheet row (last write wins) while preserving order
+        by_row: dict[int, list[str]] = {}
+        order: list[int] = []
+        for sheet_row, cells in updates:
+            if sheet_row not in by_row:
+                order.append(sheet_row)
+            by_row[sheet_row] = cells
+
+        try:
+            for i in range(0, len(order), self._PATCH_CHUNK):
+                chunk_rows = order[i : i + self._PATCH_CHUNK]
+                data = [
+                    {
+                        "range": f"'{tab}'!A{sheet_row}",
+                        "values": [by_row[sheet_row]],
+                    }
+                    for sheet_row in chunk_rows
+                ]
+                (
+                    self._service.spreadsheets()
+                    .values()
+                    .batchUpdate(
+                        spreadsheetId=self.spreadsheet_id,
+                        body={
+                            "valueInputOption": "RAW",
+                            "data": data,
+                        },
+                    )
+                    .execute()
+                )
+        except HttpError as exc:
+            logger.exception("Failed to patch tab %s (%d rows)", tab, len(order))
+            raise RuntimeError(f"Sheets patch failed for {tab}: {exc}") from exc
+
+    def _append_rows(self, tab: str, rows: list[SheetRow], headers: list[str]) -> None:
+        """Append new models at the end of the tab and record their row indices."""
+        if not rows:
+            return
+        index = self._row_index.setdefault(tab, {})
+        next_row = self._next_row.get(tab, 2)
+        # Contiguous block write is cheaper than N appends
+        for i in range(0, len(rows), self._PATCH_CHUNK):
+            chunk = rows[i : i + self._PATCH_CHUNK]
+            start = next_row
+            grid = [model_to_row(r, headers) for r in chunk]
+            try:
+                (
+                    self._service.spreadsheets()
+                    .values()
+                    .update(
+                        spreadsheetId=self.spreadsheet_id,
+                        range=f"'{tab}'!A{start}",
+                        valueInputOption="RAW",
+                        body={"values": grid},
+                    )
+                    .execute()
+                )
+            except HttpError as exc:
+                logger.exception("Failed to append to tab %s", tab)
+                raise RuntimeError(f"Sheets append failed for {tab}: {exc}") from exc
+            for offset, row in enumerate(chunk):
+                index[row.id] = start + offset
+            next_row = start + len(chunk)
+        self._next_row[tab] = next_row
+
+    def _write_grid(self, tab: str, grid: list[list[str]]) -> None:
+        body = {"values": grid}
+        try:
+            # Clear then write keeps sheet compact
+            self._service.spreadsheets().values().clear(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'{tab}'",
+                body={},
+            ).execute()
+            self._service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'{tab}'!A1",
+                valueInputOption="RAW",
+                body=body,
+            ).execute()
+        except HttpError as exc:
+            logger.exception("Failed to write tab %s", tab)
+            raise RuntimeError(f"Sheets write failed for {tab}: {exc}") from exc
+
+
+def build_repository_from_settings(
+    settings: Any,
+    *,
+    user_credentials: UserCredentials | None = None,
+    ensure_tabs: bool = False,
+) -> GoogleSheetsRepository:
+    """Factory: OAuth user creds preferred, else service account JSON.
+
+    ``ensure_tabs`` defaults to False for request-path repos — header setup is
+    expensive and belongs in the setup wizard / setup script only.
+    """
+    if user_credentials is not None and getattr(user_credentials, "token", None):
+        creds: Any = user_credentials
+    else:
+        try:
+            creds = credentials_from_service_account(
+                json_path=getattr(settings, "google_application_credentials", None) or None,
+                json_inline=getattr(settings, "google_service_account_json", None) or None,
+            )
+        except ValueError as exc:
+            raise RuntimeError(
+                "No Google credentials: place a service-account key at "
+                "secrets/service-account.json, or set GOOGLE_APPLICATION_CREDENTIALS, "
+                "or complete OAuth login (AUTH_MODE=oauth)."
+            ) from exc
+    return GoogleSheetsRepository(
+        spreadsheet_id=settings.spreadsheet_id,
+        credentials=creds,
+        ensure_tabs=ensure_tabs,
+    )

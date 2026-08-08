@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #0b1220;
+  color: #e2e8f0;
+}
+
+/* iOS safe area for bottom nav */
+.safe-bottom {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+.safe-top {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}
+
+/* Subtle scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2e3a4d transparent;
+}
+
+@layer components {
+  /* Desk-style glass card */
+  .card {
+    @apply rounded-2xl shadow-card;
+    background: linear-gradient(
+      135deg,
+      rgba(59, 130, 246, 0.12),
+      rgba(16, 185, 129, 0.08)
+    );
+    border: 1px solid rgba(148, 163, 184, 0.22);
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn bg-brand text-slate-950 hover:bg-sky-300;
+  }
+  .btn-secondary {
+    @apply btn text-ink hover:bg-white/5;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-ink-muted hover:text-ink hover:bg-white/5;
+  }
+  .input {
+    @apply w-full rounded-xl px-3 py-2.5 text-sm text-ink placeholder:text-ink-faint outline-none focus:ring-2 focus:ring-brand/20;
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+  }
+  .input:focus {
+    border-color: rgba(56, 189, 248, 0.55);
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium uppercase tracking-wide text-ink-faint;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold;
+  }
+  .pill-good {
+    @apply badge;
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+  }
+  .pill-warn {
+    @apply badge;
+    background: rgba(245, 158, 11, 0.2);
+    color: #fcd34d;
+  }
+  .pill-bad {
+    @apply badge;
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+  }
+  .pill-info {
+    @apply badge;
+    background: rgba(59, 130, 246, 0.2);
+    color: #93c5fd;
+  }
+}
+
+/* Native <select> dropdowns: solid dark panel so option text stays readable */
+select {
+  background-color: #0f172a;
+  color: #e2e8f0;
+  color-scheme: dark;
+}
+
+select option,
+select optgroup {
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
