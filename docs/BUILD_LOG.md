@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-08 — Wave 3: rule suggestions + split investments page
+
+- `GET /api/categories/rule-suggestions` — ranked residuals with category affinity.
+- Merchant queue pre-fills suggested categories; Categorize shows Suggested rules panel.
+- Investments analysis widgets split to `frontend/src/features/investments/*` (page re-exports).
+
 ## 2026-08-08 — Wave 2: MV series + living vs safe draw
 
 - Tab `PortfolioSnapshots`; record on price refresh + job `portfolio-snapshot`.

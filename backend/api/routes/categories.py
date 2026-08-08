@@ -30,6 +30,7 @@ from backend.services.categorization import (
     ensure_default_categories,
     list_rules,
     merchant_queue,
+    rule_suggestions,
     update_category,
     update_rule,
 )
@@ -189,6 +190,17 @@ async def get_merchant_queue(
     limit: int = 40,
 ) -> dict[str, Any]:
     return merchant_queue(repo, days=days, limit=limit)
+
+
+@router.get("/categories/rule-suggestions")
+async def get_rule_suggestions(
+    repo: RepoDep,
+    _user: UserDep,
+    days: int = 180,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Ranked residual rule proposals (heuristics; human apply only)."""
+    return rule_suggestions(repo, days=days, limit=limit)
 
 
 @router.post("/categories/merchant-queue/apply")

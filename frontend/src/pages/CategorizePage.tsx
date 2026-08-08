@@ -90,11 +90,32 @@ export function CategorizePage() {
       match_value?: string;
       amount_usd: string;
       tx_count: number;
+      suggested_category_id?: string | null;
+      suggested_category_name?: string | null;
+      suggestion_confidence?: number | null;
+    }>
+  >([]);
+  const [suggestions, setSuggestions] = useState<
+    Array<{
+      label: string;
+      match_field: string;
+      match_type: string;
+      match_value: string;
+      amount_usd: string;
+      tx_count: number;
+      score: number;
+      suggested_category_id?: string | null;
+      suggested_category_name?: string | null;
+      suggestion_confidence?: number | null;
+      reason?: string;
     }>
   >([]);
   const [queueCat, setQueueCat] = useState<Record<string, string>>({});
   const [queueBusy, setQueueBusy] = useState<string | null>(null);
   const [dismissedQueue, setDismissedQueue] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [dismissedSuggest, setDismissedSuggest] = useState<Set<string>>(
     () => new Set(),
   );
 
@@ -165,7 +186,7 @@ export function CategorizePage() {
         categoryIdParam && isUuid(categoryIdParam) ? categoryIdParam : undefined;
       // Larger page when drill-down filters need client-side refinement
       const limit = drilldownActive ? 3000 : 1000;
-      const [t, c, cov, r, mq] = await Promise.all([
+      const [t, c, cov, r, mq, sug] = await Promise.all([
         api.transactions({
           limit,
           date_from: dateFrom || undefined,
@@ -178,6 +199,7 @@ export function CategorizePage() {
         api.categoryCoverage(180),
         api.categoryRules(),
         api.merchantQueue(180, 25).catch(() => ({ items: [], days: 180, coverage_pct: 0 })),
+        api.ruleSuggestions(180, 15).catch(() => ({ items: [], days: 180, coverage_pct: 0 })),
       ]);
       setItems(t.items);
       setTotal(t.total);
@@ -185,6 +207,16 @@ export function CategorizePage() {
       setCoverage(cov);
       setRules(r.items);
       setQueue(mq.items || []);
+      setSuggestions(sug.items || []);
+      setQueueCat((prev) => {
+        const next = { ...prev };
+        for (const m of mq.items || []) {
+          if (m.suggested_category_id && !next[m.label] && isUuid(m.suggested_category_id)) {
+            next[m.label] = m.suggested_category_id;
+          }
+        }
+        return next;
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -685,6 +717,112 @@ export function CategorizePage() {
         </div>
       )}
 
+      {suggestions.filter((s) => !dismissedSuggest.has(s.label)).length > 0 && (
+        <div className="card p-4">
+          <div className="mb-2">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Sparkles className="h-4 w-4 text-brand" />
+              Suggested rules
+            </div>
+            <p className="text-xs text-ink-faint">
+              Ranked residuals with category affinity — Draft opens the rule form; Apply guess creates rule + reclassifies
+            </p>
+          </div>
+          <ul className="max-h-64 space-y-2 overflow-y-auto">
+            {suggestions
+              .filter((s) => !dismissedSuggest.has(s.label))
+              .slice(0, 10)
+              .map((s) => (
+                <li
+                  key={`sug-${s.label}-${s.match_field}`}
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-brand/20 bg-brand/[0.04] px-2 py-1.5 text-xs"
+                >
+                  <div className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      className="truncate font-medium hover:text-brand"
+                      onClick={() => {
+                        setQ(s.label);
+                        patchParams({ category_id: "uncategorized", category_ids: null });
+                      }}
+                    >
+                      {s.label}
+                    </button>
+                    <div className="text-[10px] text-ink-faint">
+                      {s.reason || `${s.tx_count} tx`} · score {s.score}
+                      {s.suggested_category_name ? ` · guess: ${s.suggested_category_name}` : ""}
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-ink-faint">
+                    {formatUsd(s.amount_usd)} · {s.tx_count} tx
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-secondary px-2 py-0.5 text-[11px]"
+                    onClick={() => {
+                      setRuleDraft({
+                        match_field: s.match_field || "merchant",
+                        match_type: s.match_type || "contains",
+                        match_value: s.match_value || s.label,
+                        category_id: s.suggested_category_id || "",
+                        institution_scope: "",
+                        candidates: [{ value: s.match_value || s.label, count: s.tx_count }],
+                        seedTxs: [],
+                      });
+                      setRuleMsg(null);
+                      setShowRules(true);
+                    }}
+                  >
+                    Draft rule
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary px-2 py-0.5 text-[11px]"
+                    disabled={!s.suggested_category_id || queueBusy === `sug:${s.label}`}
+                    onClick={() => {
+                      const catId = s.suggested_category_id;
+                      if (!catId) return;
+                      const key = `sug:${s.label}`;
+                      setQueueBusy(key);
+                      void (async () => {
+                        try {
+                          const res = await api.merchantQueueApply({
+                            label: s.label,
+                            category_id: catId,
+                            match_field: s.match_field || "merchant",
+                            match_value: s.match_value || s.label,
+                            create_rule: true,
+                            also_apply: true,
+                          });
+                          const updated = Number(res.updated || 0);
+                          setDismissedSuggest((prev) => new Set(prev).add(s.label));
+                          setToolsMsg(
+                            `Suggested rule "${s.label}" -> ${updated} transaction${updated === 1 ? "" : "s"}`,
+                          );
+                          await load({ quiet: true });
+                        } catch (e) {
+                          setToolsMsg(e instanceof Error ? e.message : "Suggestion apply failed");
+                        } finally {
+                          setQueueBusy(null);
+                        }
+                      })();
+                    }}
+                  >
+                    {queueBusy === `sug:${s.label}` ? "..." : "Apply guess"}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-[11px] text-ink-faint hover:text-ink"
+                    onClick={() => setDismissedSuggest((prev) => new Set(prev).add(s.label))}
+                  >
+                    Dismiss
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
+
       {queue.filter((m) => !dismissedQueue.has(m.label)).length > 0 && (
         <div className="card p-4">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -713,6 +851,11 @@ export function CategorizePage() {
                     }}
                   >
                     {m.label}
+                    {m.suggested_category_name ? (
+                      <span className="ml-1 font-normal text-brand/80">
+                        → {m.suggested_category_name}
+                      </span>
+                    ) : null}
                   </button>
                   <span className="shrink-0 text-ink-faint">
                     {formatUsd(m.amount_usd)} · {m.tx_count} tx

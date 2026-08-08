@@ -993,6 +993,60 @@ def coverage_stats(repo: SheetsRepository, *, days: int = 180) -> dict[str, Any]
     }
 
 
+def _normalize_label(s: str) -> str:
+    return " ".join((s or "").lower().split())
+
+
+def _token_set(s: str) -> set[str]:
+    return {t for t in _normalize_label(s).replace("/", " ").split() if len(t) >= 3}
+
+
+def _build_category_affinity(
+    txs: list[Transaction],
+    cats: dict[UUID, Category],
+) -> dict[str, dict[UUID, int]]:
+    token_hits: dict[str, dict[UUID, int]] = defaultdict(lambda: defaultdict(int))
+    for t in txs:
+        if t.archived or t.is_internal_transfer or t.category_id is None:
+            continue
+        if t.category_id not in cats:
+            continue
+        labels = [t.merchant or "", t.counterparty_name or "", (t.description or "")[:80]]
+        for lab in labels:
+            for tok in _token_set(lab):
+                token_hits[tok][t.category_id] += 1
+        merch = _normalize_label(t.merchant or "")
+        if merch and len(merch) >= 3:
+            token_hits[f"exact:{merch}"][t.category_id] += 2
+    return token_hits  # type: ignore[return-value]
+
+
+def _suggest_category_for_label(
+    label: str,
+    affinity: dict[str, dict[UUID, int]],
+    cats: dict[UUID, Category],
+) -> tuple[UUID | None, float, str | None]:
+    scores: dict[UUID, float] = defaultdict(float)
+    exact_key = f"exact:{_normalize_label(label)}"
+    if exact_key in affinity:
+        for cid, n in affinity[exact_key].items():
+            scores[cid] += float(n) * 3.0
+    for tok in _token_set(label):
+        if tok not in affinity:
+            continue
+        for cid, n in affinity[tok].items():
+            scores[cid] += float(n)
+    if not scores:
+        return None, 0.0, None
+    best_cid, best = max(scores.items(), key=lambda x: x[1])
+    total = sum(scores.values()) or 1.0
+    conf = min(1.0, best / total)
+    if best < 2:
+        return None, conf, None
+    name = cats[best_cid].name if best_cid in cats else None
+    return best_cid, conf, name
+
+
 def merchant_queue(
     repo: SheetsRepository, *, days: int = 180, limit: int = 40
 ) -> dict[str, Any]:
@@ -1005,29 +1059,122 @@ def merchant_queue(
     }
     today = date.today()
     start = today - timedelta(days=days - 1)
-    w = _window_coverage(
-        [t for t in repo.list_rows("Transactions") if isinstance(t, Transaction)],
-        cats,
-        fx,
-        start=start,
-        end=today,
-    )
+    all_txs = [t for t in repo.list_rows("Transactions") if isinstance(t, Transaction)]
+    w = _window_coverage(all_txs, cats, fx, start=start, end=today)
+    affinity = _build_category_affinity(all_txs, cats)
     full = sorted(w["_merchant_map"].items(), key=lambda x: x[1], reverse=True)[:limit]
-    items = [
-        {
-            "label": value,
-            "match_field": field,
-            "match_value": value,
-            "amount_usd": str(amt.quantize(Decimal("0.01"))),
-            "tx_count": w["_merchant_counts"][(field, value)],
-            "suggested_category_id": None,
-        }
-        for (field, value), amt in full
-    ]
+    items = []
+    for (field, value), amt in full:
+        sug_id, conf, sug_name = _suggest_category_for_label(value, affinity, cats)
+        items.append(
+            {
+                "label": value,
+                "match_field": field,
+                "match_value": value,
+                "amount_usd": str(amt.quantize(Decimal("0.01"))),
+                "tx_count": w["_merchant_counts"][(field, value)],
+                "suggested_category_id": str(sug_id) if sug_id else None,
+                "suggested_category_name": sug_name,
+                "suggestion_confidence": round(conf, 3) if sug_id else None,
+            }
+        )
     return {
         "days": days,
         "items": items,
         "coverage_pct": w["coverage_pct"],
+    }
+
+
+def rule_suggestions(
+    repo: SheetsRepository, *, days: int = 180, limit: int = 20
+) -> dict[str, Any]:
+    """Ranked residual rule proposals (heuristics; human apply only)."""
+    fx = build_fx_service(repo)
+    cats = {
+        c.id: c
+        for c in repo.list_rows("Categories")
+        if isinstance(c, Category) and not c.archived
+    }
+    rules = [
+        r
+        for r in repo.list_rows("CategoryRules")
+        if isinstance(r, CategoryRule) and r.is_active and not r.archived
+    ]
+    existing_values = {
+        (
+            (
+                r.match_field.value
+                if hasattr(r.match_field, "value")
+                else str(r.match_field)
+            ).lower(),
+            _normalize_label(r.match_value),
+        )
+        for r in rules
+    }
+    today = date.today()
+    start = today - timedelta(days=days - 1)
+    all_txs = [t for t in repo.list_rows("Transactions") if isinstance(t, Transaction)]
+    w = _window_coverage(all_txs, cats, fx, start=start, end=today)
+    affinity = _build_category_affinity(all_txs, cats)
+
+    last_seen: dict[tuple[str, str], date] = {}
+    for t in all_txs:
+        if t.archived or t.is_internal_transfer:
+            continue
+        cat = cats.get(t.category_id) if t.category_id else None
+        if cat is not None and cat.name.lower() not in {"other", "uncategorized"}:
+            continue
+        field, value = "merchant", (t.merchant or "").strip()
+        if not value:
+            field, value = "description", (t.description or "").strip()[:80]
+        if not value:
+            continue
+        key = (field, value)
+        if key not in last_seen or t.booking_date > last_seen[key]:
+            last_seen[key] = t.booking_date
+
+    scored: list[dict[str, Any]] = []
+    for (field, value), amt in w["_merchant_map"].items():
+        if (field.lower(), _normalize_label(value)) in existing_values:
+            continue
+        count = int(w["_merchant_counts"][(field, value)])
+        amt_f = float(amt)
+        recency_days = 999
+        if (field, value) in last_seen:
+            recency_days = max(0, (today - last_seen[(field, value)]).days)
+        recency_score = max(0.0, 1.0 - (recency_days / max(days, 1)))
+        sug_id, conf, sug_name = _suggest_category_for_label(value, affinity, cats)
+        score = (
+            (amt_f ** 0.5) * 2.0
+            + count * 1.5
+            + recency_score * 10.0
+            + (conf * 15.0 if sug_id else 0.0)
+        )
+        reason = f"High residual spend ({count} tx)"
+        if sug_name:
+            reason += f"; similar to {sug_name!r}"
+        scored.append(
+            {
+                "label": value,
+                "match_field": field,
+                "match_type": "contains",
+                "match_value": value[:120],
+                "amount_usd": str(amt.quantize(Decimal("0.01"))),
+                "tx_count": count,
+                "last_seen": last_seen.get((field, value), today).isoformat(),
+                "recency_days": recency_days,
+                "score": round(score, 2),
+                "suggested_category_id": str(sug_id) if sug_id else None,
+                "suggested_category_name": sug_name,
+                "suggestion_confidence": round(conf, 3) if sug_id else None,
+                "reason": reason,
+            }
+        )
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return {
+        "days": days,
+        "coverage_pct": w["coverage_pct"],
+        "items": scored[: max(1, min(limit, 50))],
     }
 
 

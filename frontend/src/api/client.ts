@@ -216,6 +216,26 @@ export const api = {
   categoryCoverage: (days = 180) =>
     request<CategoryCoverage>(`/categories/coverage${qs({ days })}`),
 
+  ruleSuggestions: (days = 180, limit = 20) =>
+    request<{
+      days: number;
+      coverage_pct: number;
+      items: Array<{
+        label: string;
+        match_field: string;
+        match_type: string;
+        match_value: string;
+        amount_usd: string;
+        tx_count: number;
+        last_seen?: string;
+        score: number;
+        suggested_category_id?: string | null;
+        suggested_category_name?: string | null;
+        suggestion_confidence?: number | null;
+        reason?: string;
+      }>;
+    }>(`/categories/rule-suggestions${qs({ days, limit })}`),
+
   merchantQueue: (days = 180, limit = 40) =>
     request<{
       days: number;
@@ -226,6 +246,8 @@ export const api = {
         amount_usd: string;
         tx_count: number;
         suggested_category_id?: string | null;
+        suggested_category_name?: string | null;
+        suggestion_confidence?: number | null;
       }>;
       coverage_pct: number;
     }>(`/categories/merchant-queue${qs({ days, limit })}`),
