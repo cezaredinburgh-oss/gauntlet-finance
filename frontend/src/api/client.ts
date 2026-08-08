@@ -29,6 +29,8 @@ import type {
   TaxYearsList,
   TaxYearsSummary,
   StatementFileRow,
+  MvSeries,
+  DrawMetrics,
 } from "./types";
 
 /**
@@ -163,6 +165,23 @@ export const api = {
 
   tickerDigests: (params: { as_of?: string } = {}) =>
     request<TickerDigestsResponse>(`/investments/ticker-digests${qs(params)}`),
+
+  mvSeries: (params: { date_from?: string | null; date_to?: string | null } = {}) =>
+    request<MvSeries>(
+      `/investments/mv-series${qs({
+        date_from: params.date_from ?? undefined,
+        date_to: params.date_to ?? undefined,
+      })}`,
+    ),
+
+  drawMetrics: (params: { as_of?: string } = {}) =>
+    request<DrawMetrics>(`/investments/draw-metrics${qs(params)}`),
+
+  recordMvSnapshot: () =>
+    request<{ as_of: string; total_market_value_usd: string | null; source: string }>(
+      "/investments/snapshots/record",
+      { method: "POST" },
+    ),
 
   /** CNB historical CZK per 1 USD; optional portfolio_usd for CZK wealth context */
   fxUsdCzk: (params: {

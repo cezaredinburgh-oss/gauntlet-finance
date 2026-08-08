@@ -31,6 +31,23 @@ async def refresh_prices(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Price fetch failed: {exc}") from exc
 
+    # Point-in-time MV history (one row per day; best-effort)
+    try:
+        from backend.services.portfolio_history import record_portfolio_snapshot
+        from backend.services.portfolio_snapshot import portfolio_snapshot
+
+        snap = portfolio_snapshot(
+            repo, exemption_days=settings.holding_period_exemption_days
+        )
+        record_portfolio_snapshot(
+            repo,
+            source="price_refresh",
+            snap=snap,
+            exemption_days=settings.holding_period_exemption_days,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
     cache_invalidate("snap:")
     cache_invalidate("dash:")
     # Digests include mark-to-market ROI; must not serve pre-refresh unpriced payloads

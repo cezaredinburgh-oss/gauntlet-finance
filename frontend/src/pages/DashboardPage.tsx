@@ -17,6 +17,7 @@ import type { AlertItem, DashboardSummary, PortfolioSnapshot } from "../api/type
 import { Money } from "../components/Money";
 import { HoverPanel } from "../components/HoverPanel";
 import { EmptyState, PageLoader } from "../components/Spinner";
+import { DrawMetricsCard } from "../components/DrawMetricsCard";
 import { d, formatUsd } from "../lib/money";
 import {
   canGoNextMonth,
@@ -501,6 +502,10 @@ export function DashboardPage() {
           )}
         </section>
       </div>
+
+      {snap && snap.ticker_count > 0 && (
+        <DrawMetricsCard compact />
+      )}
 
       {/* Tax runway */}
       {runway && runway.buckets?.length > 0 && (

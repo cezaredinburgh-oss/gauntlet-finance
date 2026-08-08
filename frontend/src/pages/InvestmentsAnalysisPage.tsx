@@ -3,6 +3,8 @@ import { api } from "../api/client";
 import type { PortfolioSnapshot } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import { FxUsdCzkChart } from "../components/FxUsdCzkChart";
+import { PortfolioMvChart } from "../components/PortfolioMvChart";
+import { DrawMetricsCard } from "../components/DrawMetricsCard";
 import {
   CashflowMonthlyChart,
   FeesBreakdownSection,
@@ -11,7 +13,7 @@ import {
   StakingRewardsSection,
 } from "./InvestmentsPage";
 
-/** Portfolio health, cashflow, fees, staking, FX — split from main Holdings page. */
+/** Portfolio health, cashflow, fees, staking, draw, MV series, FX. */
 export function InvestmentsAnalysisPage() {
   const [snap, setSnap] = useState<PortfolioSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,7 +52,7 @@ export function InvestmentsAnalysisPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Investments analysis</h1>
         <p className="text-sm text-ink-muted">
-          Portfolio health · cashflow · fees · staking · CZK/USD
+          Portfolio health · cashflow · fees · staking · draw · MV history · CZK/USD
         </p>
         <InvestmentsSubNav active="analysis" />
       </div>
@@ -58,11 +60,13 @@ export function InvestmentsAnalysisPage() {
       {!hasHoldings && (
         <EmptyState
           title="No holdings yet"
-          description="Import statements first for health, fees, and staking. FX rates still chart below when available."
+          description="Import statements first for health, fees, and staking. MV / FX charts still load when data exists."
         />
       )}
 
       {hasHoldings && snap.health && <HealthBand health={snap.health} />}
+
+      {hasHoldings && <DrawMetricsCard />}
 
       {hasHoldings && snap.cashflow_monthly && snap.cashflow_monthly.length > 0 && (
         <CashflowMonthlyChart series={snap.cashflow_monthly} />
@@ -71,6 +75,7 @@ export function InvestmentsAnalysisPage() {
       {hasHoldings && snap.fees && <FeesBreakdownSection fees={snap.fees} />}
       {hasHoldings && snap.staking && <StakingRewardsSection staking={snap.staking} />}
 
+      <PortfolioMvChart />
       <FxUsdCzkChart portfolioUsd={snap?.total_market_value_usd} />
     </div>
   );

@@ -574,6 +574,39 @@ export type TaxYearsSummary = {
   }>;
 };
 
+export type MvSeriesPoint = {
+  date: string;
+  total_market_value_usd: string | null;
+  total_cost_basis_usd?: string | null;
+  unrealized_usd?: string | null;
+  tax_free_now_usd?: string | null;
+  source?: string;
+};
+
+export type MvSeries = {
+  date_from: string;
+  date_to: string;
+  point_count: number;
+  series: MvSeriesPoint[];
+};
+
+export type DrawMetrics = {
+  as_of: string;
+  portfolio_mv_usd: string;
+  tax_free_now_usd: string;
+  safe_draw_pct: string;
+  safe_draw_from_pct_usd: string;
+  safe_draw_annual_usd: string;
+  safe_draw_binding_constraint: string;
+  living_draw_12m_usd: string;
+  living_sold_usd?: string | null;
+  living_bought_usd?: string | null;
+  living_over_safe_ratio: string | null;
+  status: string;
+  formula: string;
+  note: string;
+};
+
 export type StatementFileRow = {
   id: string;
   original_filename: string;

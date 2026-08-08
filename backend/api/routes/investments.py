@@ -15,6 +15,11 @@ from backend.schema.models import (
     InvestmentLot,
     LotStatus,
 )
+from backend.services.portfolio_history import (
+    compute_draw_metrics,
+    list_mv_series,
+    record_portfolio_snapshot,
+)
 from backend.services.portfolio_snapshot import portfolio_snapshot
 from backend.services.response_cache import cached
 from backend.services.ticker_digest import build_ticker_digests
@@ -41,6 +46,62 @@ async def get_investments_snapshot(
         )
 
     return cached(key, _SNAP_TTL, _build)
+
+
+@router.get("/investments/mv-series")
+async def get_mv_series(
+    repo: RepoDep,
+    _user: UserDep,
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+) -> dict[str, Any]:
+    """Historical portfolio market value from PortfolioSnapshots (forward-only)."""
+    return list_mv_series(repo, date_from=date_from, date_to=date_to)
+
+
+@router.get("/investments/draw-metrics")
+async def get_draw_metrics(
+    repo: RepoDep,
+    settings: SettingsDep,
+    _user: UserDep,
+    as_of: date | None = None,
+) -> dict[str, Any]:
+    """Living draw (12m) vs safe draw min(4% MV, tax_free_now)."""
+    key = f"draw:{as_of}:{settings.holding_period_exemption_days}"
+
+    def _build() -> dict[str, Any]:
+        return compute_draw_metrics(
+            repo,
+            as_of=as_of,
+            exemption_days=settings.holding_period_exemption_days,
+        )
+
+    return cached(key, _SNAP_TTL, _build)
+
+
+@router.post("/investments/snapshots/record")
+async def record_snapshot_now(
+    repo: RepoDep,
+    settings: SettingsDep,
+    _user: UserDep,
+) -> dict[str, Any]:
+    """Manually append/update today's MV snapshot (no price refresh)."""
+    snap = portfolio_snapshot(
+        repo, exemption_days=settings.holding_period_exemption_days
+    )
+    row = record_portfolio_snapshot(
+        repo,
+        source="manual",
+        snap=snap,
+        exemption_days=settings.holding_period_exemption_days,
+    )
+    return {
+        "as_of": row.as_of.isoformat(),
+        "total_market_value_usd": str(row.total_market_value_usd)
+        if row.total_market_value_usd is not None
+        else None,
+        "source": row.source,
+    }
 
 
 @router.get("/investments/ticker-digests")

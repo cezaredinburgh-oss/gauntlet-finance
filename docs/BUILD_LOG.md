@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-08 — Wave 2: MV series + living vs safe draw
+
+- Tab `PortfolioSnapshots`; record on price refresh + job `portfolio-snapshot`.
+- `GET /api/investments/mv-series`, `draw-metrics`; Analysis charts; Dashboard compact draw card.
+- Safe draw = min(4% × MV, tax_free_now_usd) vs 12m living draw (sells − buys).
+
 ## 2026-08-08 — Wave 1: Tax UI + import reliability
 
 - Tax: `/tax-report/years`, `/summary-by-year`, CSV export; UI at **Investments → Tax**.

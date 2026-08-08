@@ -206,10 +206,19 @@ def run_fx_full_pipeline(
     return {"fetch": fetch_result, "backfill": backfill_result}
 
 
+def run_portfolio_snapshot_job(
+    repo: SheetsRepository, params: dict[str, Any]
+) -> dict[str, Any]:
+    from backend.services.portfolio_history import run_portfolio_snapshot_job as _run
+
+    return _run(repo, params)
+
+
 KIND_RUNNERS: dict[str, JobFn] = {
     "fx-fetch-cnb": run_fx_fetch_cnb,
     "fx-backfill-amounts": run_fx_backfill_amounts,
     "fx-full": run_fx_full_pipeline,
+    "portfolio-snapshot": run_portfolio_snapshot_job,
 }
 
 

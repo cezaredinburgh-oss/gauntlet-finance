@@ -333,6 +333,18 @@ class Price(SheetRow):
     source: str = "yfinance"
 
 
+class PortfolioSnapshot(SheetRow):
+    """Tab: PortfolioSnapshots — daily MV / cost / tax-free markers for charts."""
+
+    as_of: date
+    total_market_value_usd: Optional[Decimal] = None
+    total_cost_basis_usd: Optional[Decimal] = None
+    unrealized_usd: Optional[Decimal] = None
+    tax_free_now_usd: Optional[Decimal] = None
+    source: str = "price_refresh"
+    notes: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Sheet header order (for Google Sheets creation in a later phase)
 # ---------------------------------------------------------------------------
@@ -511,6 +523,19 @@ SHEET_HEADERS: dict[str, list[str]] = {
         "created_at",
         "updated_at",
     ],
+    "PortfolioSnapshots": [
+        "id",
+        "as_of",
+        "total_market_value_usd",
+        "total_cost_basis_usd",
+        "unrealized_usd",
+        "tax_free_now_usd",
+        "source",
+        "notes",
+        "archived",
+        "created_at",
+        "updated_at",
+    ],
 }
 
 TAB_MODEL: dict[str, type[SheetRow]] = {
@@ -524,4 +549,5 @@ TAB_MODEL: dict[str, type[SheetRow]] = {
     "StatementFiles": StatementFile,
     "Settings": Setting,
     "Prices": Price,
+    "PortfolioSnapshots": PortfolioSnapshot,
 }
