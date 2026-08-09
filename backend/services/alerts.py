@@ -38,8 +38,15 @@ def transfer_leak_resolved(tx: Transaction, cat: Category | None) -> bool:
     """
     True when a transfer-like expense no longer needs the unflagged-transfer alert.
 
-    Resolved if already flagged internal, or the user/rules assigned a transfer
-    or investments category (including external transfers — reviewed, not a leak).
+    Revolut labels many peer P2P payments as \"Transfer to NAME\". Those are real
+    spend when the user assigns a living category (e.g. Going out / Fitness).
+
+    Resolved when:
+    - already flagged internal, or
+    - categorized into Transfers / Investments / any is_transfer category, or
+    - categorized into any non-Other life domain (user/rules assigned meaning), or
+    - category_override is set (explicit human review, including Other).
+    Still fires for uncategorized rows and default Other dump without override.
     """
     if tx.is_internal_transfer:
         return True
@@ -48,7 +55,14 @@ def transfer_leak_resolved(tx: Transaction, cat: Category | None) -> bool:
     if cat.is_transfer:
         return True
     domain = cat.life_domain.value if cat.life_domain else ""
-    return domain in _TRANSFER_LEAK_RESOLVED_DOMAINS
+    if domain in _TRANSFER_LEAK_RESOLVED_DOMAINS:
+        return True
+    # Peer \"Transfer to …\" put in Food/Entertainment/etc. is intentional spend.
+    if domain and domain != "Other":
+        return True
+    if tx.category_override:
+        return True
+    return False
 
 
 def looks_like_transfer_narrative(tx: Transaction) -> bool:
@@ -442,10 +456,11 @@ def build_alerts(
                 "level": "warn",
                 "title": "Possible unflagged internal transfers",
                 "body": (
-                    f"{leak_count} expense row(s) look like own-account moves "
-                    f"(~${leak_usd:,.0f}) but are not marked internal and not yet "
-                    f"in Transfers/Investments (e.g. “{sample}”). "
-                    f"Flag as Internal transfer or categorize, then the alert clears."
+                    f"{leak_count} uncategorized (or Other) expense row(s) look like "
+                    f"transfers (~${leak_usd:,.0f}) and are not marked internal "
+                    f"(e.g. “{sample}”). Categorize them or flag Internal transfer "
+                    f"to clear this alert. Peer payments already in spend categories "
+                    f"are ignored."
                 ),
                 "href": _cat_url(
                     date_from=d180_from,

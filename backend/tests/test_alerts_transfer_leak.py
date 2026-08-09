@@ -83,6 +83,7 @@ def _has_transfer_leak(result: dict) -> bool:
 
 def test_transfer_leak_resolved_helper():
     food = _cat("Groceries", domain=LifeDomain.FOOD)
+    other = _cat("Uncategorized", domain=LifeDomain.OTHER)
     external = _cat(
         "External transfer",
         domain=LifeDomain.TRANSFERS,
@@ -96,7 +97,29 @@ def test_transfer_leak_resolved_helper():
     )
     unflagged = _tx(category_id=None)
     assert transfer_leak_resolved(unflagged, None) is False
-    assert transfer_leak_resolved(unflagged, food) is False
+    # Living category = reviewed (peer P2P often says "Transfer to …")
+    assert transfer_leak_resolved(_tx(category_id=food.id), food) is True
+    # Other without override still open
+    t_other = Transaction(
+        id=uuid4(),
+        account_id=uuid4(),
+        booking_date=date.today() - timedelta(days=3),
+        amount=Decimal("-200"),
+        currency="USD",
+        fee_amount=Decimal("0"),
+        merchant=None,
+        description="Transfer to X",
+        original_description=None,
+        source_institution="Revolut",
+        external_id=None,
+        category_id=other.id,
+        category_override=False,
+        is_internal_transfer=False,
+        transfer_group_id=None,
+        created_at=TS,
+        updated_at=TS,
+    )
+    assert transfer_leak_resolved(t_other, other) is False
     assert transfer_leak_resolved(_tx(is_internal_transfer=True), None) is True
     assert transfer_leak_resolved(_tx(category_id=external.id), external) is True
     assert transfer_leak_resolved(_tx(category_id=broker.id), broker) is True
@@ -138,11 +161,32 @@ def test_alert_clears_when_categorized_broker_funding():
     assert not _has_transfer_leak(result)
 
 
-def test_alert_still_fires_when_wrongly_categorized_as_living():
+def test_alert_clears_when_peer_transfer_categorized_as_living_spend():
+    """Revolut 'Transfer to NAME' put in Going out / Fitness is intentional spend."""
+    going_out = _cat("Going out", domain=LifeDomain.ENTERTAINMENT)
+    tx = _tx(
+        description="Transfer to PHILIPP PAUL GROSSKREUTZ",
+        category_id=going_out.id,
+        is_internal_transfer=False,
+    )
+    result = build_alerts(_repo([going_out], [tx]), persist_fx=False)
+    assert not _has_transfer_leak(result)
+
+
+def test_alert_still_fires_for_uncategorized_transfer_like():
     food = _cat("Groceries", domain=LifeDomain.FOOD)
-    tx = _tx(category_id=food.id, is_internal_transfer=False)
+    tx = _tx(category_id=None, is_internal_transfer=False)
     result = build_alerts(_repo([food], [tx]), persist_fx=False)
     assert _has_transfer_leak(result)
+
+
+def test_alert_clears_on_category_override_even_in_other():
+    other = _cat("Misc", domain=LifeDomain.OTHER)
+    tx = _tx(category_id=other.id, is_internal_transfer=False)
+    # category_override is set by helper when category_id is present
+    assert tx.category_override is True
+    result = build_alerts(_repo([other], [tx]), persist_fx=False)
+    assert not _has_transfer_leak(result)
 
 
 def test_override_to_internal_sets_flag():

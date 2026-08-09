@@ -26,6 +26,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 - `GET /api/investments/mv-series`, `draw-metrics`; Analysis charts; Dashboard compact draw card.
 - Safe draw = min(4% × MV, tax_free_now_usd) vs 12m living draw (sells − buys).
 
+## 2026-08-09 — Transfer-leak false positives (peer P2P)
+
+- Live diagnosis: remaining “unflagged transfers” were **peer** Revolut rows (`Transfer to NAME`) already in **Going out / Fitness**.
+- Resolve `transfer_leak` for any non-Other category (or `category_override`), not only Transfers/Investments.
+- Alert copy clarifies uncategorized/Other only; Categorize filter matched.
+
 ## 2026-08-08 — Tax nav + transfer-leak alerts
 
 - **Nav:** Investments → **Tax** leaf in main sidebar (`Layout.tsx`).

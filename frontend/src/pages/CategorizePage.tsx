@@ -291,18 +291,20 @@ export function CategorizePage() {
     }
 
     if (filterFlag === "transfer_leak") {
-      // Match backend alerts.transfer_leak_resolved: hide flagged internal and
-      // rows already bucketed into Transfers/Investments (or any is_transfer cat).
+      // Match backend alerts.transfer_leak_resolved: only unreviewed rows.
+      // Peer "Transfer to NAME" already in living categories is intentional spend.
       const re =
         /\b(transfer|top-?up|topup|sent to|from revolut|to revolut|own account|me to me|me2me|p[rř]evod)\b/i;
-      const resolvedDomains = new Set(["Transfers", "Investments"]);
+      const transferDomains = new Set(["Transfers", "Investments"]);
       rows = rows.filter((t) => {
         if (t.is_internal_transfer) return false;
         if (t.category_id) {
           const cat = catMap.get(t.category_id);
           if (cat) {
             if (cat.is_transfer) return false;
-            if (resolvedDomains.has(cat.life_domain)) return false;
+            if (transferDomains.has(cat.life_domain)) return false;
+            if (cat.life_domain && cat.life_domain !== "Other") return false;
+            if (t.category_override) return false;
           }
         }
         const blob = [
