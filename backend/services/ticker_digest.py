@@ -16,7 +16,7 @@ from backend.schema.models import (
 )
 from backend.services.fx_amounts import build_fx_service
 from backend.services.lot_costs import enrich_lots, resolve_lot_costs
-from backend.services.realized import realized_usd_by_ticker
+from backend.services.realized import realized_economics_by_ticker
 from backend.sheets.repository import SheetsRepository
 
 
@@ -115,7 +115,7 @@ def build_ticker_digests(
     ]
 
     # Realized lifetime by ticker (dedupe ghost double-written allocations)
-    realized_by_ticker = realized_usd_by_ticker(events)
+    realized_eco_by_ticker = realized_economics_by_ticker(events)
 
     # Group lots by ticker
     by_ticker: dict[str, list[InvestmentLot]] = defaultdict(list)
@@ -264,7 +264,15 @@ def build_ticker_digests(
                 "first_acq": first_acq,
                 "last_acq": last_acq,
                 "open_lot_count": len(t_lots),
-                "realized": realized_by_ticker.get(ticker, Decimal("0")),
+                "realized_eco": realized_eco_by_ticker.get(
+                    ticker,
+                    {
+                        "gain_usd": Decimal("0"),
+                        "proceeds_usd": Decimal("0"),
+                        "cost_basis_usd": Decimal("0"),
+                        "roi_pct": None,
+                    },
+                ),
                 "missing_price": price_val is None,
             }
         )
@@ -348,7 +356,10 @@ def build_ticker_digests(
                 "next_unlock_quantity": _str_dec(r["next_unlock_qty"], 4)
                 if r["next_unlock"]
                 else None,
-                "realized_lifetime_usd": _str_dec(r["realized"]),
+                "realized_lifetime_usd": _str_dec(r["realized_eco"]["gain_usd"]),
+                "realized_cost_basis_usd": _str_dec(r["realized_eco"]["cost_basis_usd"]),
+                "realized_proceeds_usd": _str_dec(r["realized_eco"]["proceeds_usd"]),
+                "realized_roi_pct": r["realized_eco"]["roi_pct"],
                 "first_acquired": r["first_acq"].isoformat() if r["first_acq"] else None,
                 "last_acquired": r["last_acq"].isoformat() if r["last_acq"] else None,
                 "open_lot_count": r["open_lot_count"],

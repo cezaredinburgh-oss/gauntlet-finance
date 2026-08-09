@@ -26,6 +26,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 - `GET /api/investments/mv-series`, `draw-metrics`; Analysis charts; Dashboard compact draw card.
 - Safe draw = min(4% × MV, tax_free_now_usd) vs 12m living draw (sells − buys).
 
+## 2026-08-09 — Realized windows show sold cost basis
+
+- FIFO lifetime economics: `realized_cost_basis_usd`, `realized_proceeds_usd`, `realized_roi_pct` on portfolio snapshot + ticker digests (`proceeds − gain` from LotAllocations).
+- Investments Realized KPI hover/card + Dashboard + ticker detail: “gain on $cost sold · +ROI%”.
+
 ## 2026-08-09 — Open app on Dashboard
 
 - Cold session landing on `/settings` (common iOS home-screen / tab restore after setup) redirects once to `/`.

@@ -23,7 +23,7 @@ from backend.services.portfolio_health import (
     compute_portfolio_health,
     price_status_from_snapshot,
 )
-from backend.services.realized import iter_unique_allocations, sum_realized_usd
+from backend.services.realized import iter_unique_allocations, sum_realized_economics
 from backend.services.statement_extras import compute_statement_extras
 from backend.sheets.repository import SheetsRepository
 
@@ -201,7 +201,8 @@ def portfolio_snapshot(
         unrealized_pct = float((unrealized_total / total_cost) * 100)
 
     # Realized lifetime from LotAllocation events (dedupe ghost double-writes)
-    realized = sum_realized_usd(events)
+    realized_eco = sum_realized_economics(events)
+    realized = realized_eco["gain_usd"]
 
     buckets = []
     for key, label in bucket_defs:
@@ -318,6 +319,9 @@ def portfolio_snapshot(
         "unrealized_usd": str(unrealized_total) if unrealized_total is not None else None,
         "unrealized_pct": unrealized_pct,
         "realized_lifetime_usd": str(_q2(realized)),
+        "realized_cost_basis_usd": str(_q2(realized_eco["cost_basis_usd"])),
+        "realized_proceeds_usd": str(_q2(realized_eco["proceeds_usd"])),
+        "realized_roi_pct": realized_eco["roi_pct"],
         "tax_free_now_usd": str(_q2(tax_free_display)),
         "tax_runway": {
             "available_usd": str(_q2(bucket_totals.get("now", Decimal("0")))),

@@ -340,6 +340,11 @@ export type PortfolioSnapshot = {
   unrealized_usd: string | null;
   unrealized_pct: number | null;
   realized_lifetime_usd: string;
+  /** FIFO cost of closed lots that produced realized_lifetime_usd */
+  realized_cost_basis_usd?: string;
+  realized_proceeds_usd?: string;
+  /** gain / cost_sold × 100 when cost known */
+  realized_roi_pct?: number | null;
   tax_free_now_usd: string;
   tax_runway: {
     available_usd: string;
@@ -453,6 +458,9 @@ export type TickerDigest = {
   next_unlock_date: string | null;
   next_unlock_quantity: string | null;
   realized_lifetime_usd: string;
+  realized_cost_basis_usd?: string;
+  realized_proceeds_usd?: string;
+  realized_roi_pct?: number | null;
   first_acquired: string | null;
   last_acquired: string | null;
   open_lot_count: number;

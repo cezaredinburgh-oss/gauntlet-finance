@@ -364,6 +364,19 @@ export function DashboardPage() {
                 size="lg"
                 signed
               />
+              {snap?.realized_cost_basis_usd != null &&
+                d(snap.realized_cost_basis_usd) > 0 && (
+                  <div className="text-[11px] text-ink-faint">
+                    on {formatUsd(snap.realized_cost_basis_usd)} sold
+                    {snap.realized_roi_pct != null && (
+                      <>
+                        {" "}
+                        · {snap.realized_roi_pct >= 0 ? "+" : ""}
+                        {snap.realized_roi_pct.toFixed(0)}%
+                      </>
+                    )}
+                  </div>
+                )}
             </ExecStat>
             <ExecStat label="Tax-free now" icon={ShieldAlert} tone="ok">
               <Money

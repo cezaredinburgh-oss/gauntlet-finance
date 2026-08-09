@@ -235,7 +235,13 @@ export function InvestmentsPage() {
       .sort((a, b) => b.cost - a.cost);
 
     const realizedRows = digests
-      .map((t) => ({ ticker: t.ticker, realized: d(t.realized_lifetime_usd) }))
+      .map((t) => ({
+        ticker: t.ticker,
+        realized: d(t.realized_lifetime_usd),
+        cost: t.realized_cost_basis_usd != null ? d(t.realized_cost_basis_usd) : null,
+        proceeds: t.realized_proceeds_usd != null ? d(t.realized_proceeds_usd) : null,
+        roiPct: t.realized_roi_pct ?? null,
+      }))
       .filter((r) => r.realized !== 0);
     const realizedWinners = [...realizedRows]
       .filter((r) => r.realized > 0)
@@ -431,7 +437,23 @@ export function InvestmentsPage() {
                     size="lg"
                     signed
                   />
-                  <div className="text-[11px] text-ink-faint">Closed lots via FIFO</div>
+                  <div className="text-[11px] text-ink-faint">
+                    {snap.realized_cost_basis_usd != null &&
+                    d(snap.realized_cost_basis_usd) > 0 ? (
+                      <>
+                        on {formatUsd(snap.realized_cost_basis_usd)} sold cost
+                        {snap.realized_roi_pct != null && (
+                          <>
+                            {" "}
+                            · {snap.realized_roi_pct >= 0 ? "+" : ""}
+                            {snap.realized_roi_pct.toFixed(0)}%
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      "Closed lots via FIFO"
+                    )}
+                  </div>
                 </KpiCard>
 
                 <KpiCard
@@ -593,8 +615,20 @@ type KpiBreakdown = {
   byPlatformCost: Array<{ source: string; amount: number }>;
   topByMv: Array<{ ticker: string; mv: number; cost: number }>;
   topByCost: Array<{ ticker: string; cost: number; mv: number | null }>;
-  realizedWinners: Array<{ ticker: string; realized: number }>;
-  realizedLosers: Array<{ ticker: string; realized: number }>;
+  realizedWinners: Array<{
+    ticker: string;
+    realized: number;
+    cost: number | null;
+    proceeds: number | null;
+    roiPct: number | null;
+  }>;
+  realizedLosers: Array<{
+    ticker: string;
+    realized: number;
+    cost: number | null;
+    proceeds: number | null;
+    roiPct: number | null;
+  }>;
   realizedPositiveCount: number;
   realizedNegativeCount: number;
   totalMv: number | null;
@@ -891,6 +925,22 @@ function MarketValueBreakdown({
   );
 }
 
+function formatRealizedTickerValue(r: {
+  realized: number;
+  cost: number | null;
+  roiPct: number | null;
+}): string {
+  const gain = signedUsd(r.realized);
+  if (r.cost != null && r.cost > 0) {
+    const roi =
+      r.roiPct != null
+        ? ` · ${r.roiPct >= 0 ? "+" : ""}${r.roiPct.toFixed(0)}%`
+        : "";
+    return `${gain} on ${formatUsd(r.cost)}${roi}`;
+  }
+  return gain;
+}
+
 function RealizedBreakdown({
   snap,
   breakdown,
@@ -899,31 +949,61 @@ function RealizedBreakdown({
   breakdown: KpiBreakdown;
 }) {
   const total = d(snap.realized_lifetime_usd);
+  const costSold =
+    snap.realized_cost_basis_usd != null ? d(snap.realized_cost_basis_usd) : null;
+  const proceeds =
+    snap.realized_proceeds_usd != null ? d(snap.realized_proceeds_usd) : null;
+  const roi = snap.realized_roi_pct;
+  const lifetimeRows: Array<{
+    label: string;
+    value: string;
+    tone?: "ok" | "danger" | "muted";
+  }> = [
+    {
+      label: "Realized (FIFO)",
+      value: signedUsd(total),
+      tone: total >= 0 ? "ok" : "danger",
+    },
+  ];
+  if (costSold != null && costSold > 0) {
+    lifetimeRows.push({
+      label: "Cost basis sold",
+      value: formatUsd(costSold),
+      tone: "muted",
+    });
+  }
+  if (proceeds != null && proceeds > 0) {
+    lifetimeRows.push({
+      label: "Proceeds",
+      value: formatUsd(proceeds),
+      tone: "muted",
+    });
+  }
+  if (roi != null) {
+    lifetimeRows.push({
+      label: "ROI on sold cost",
+      value: `${roi >= 0 ? "+" : ""}${roi.toFixed(1)}%`,
+      tone: roi >= 0 ? "ok" : "danger",
+    });
+  }
+  lifetimeRows.push(
+    {
+      label: "Tickers with gains",
+      value: String(breakdown.realizedPositiveCount),
+    },
+    {
+      label: "Tickers with losses",
+      value: String(breakdown.realizedNegativeCount),
+    },
+  );
   return (
     <div>
-      <BreakdownList
-        title="Lifetime"
-        rows={[
-          {
-            label: "Realized (FIFO)",
-            value: signedUsd(total),
-            tone: total >= 0 ? "ok" : "danger",
-          },
-          {
-            label: "Tickers with gains",
-            value: String(breakdown.realizedPositiveCount),
-          },
-          {
-            label: "Tickers with losses",
-            value: String(breakdown.realizedNegativeCount),
-          },
-        ]}
-      />
+      <BreakdownList title="Lifetime" rows={lifetimeRows} />
       <BreakdownList
         title="Top closed winners"
         rows={breakdown.realizedWinners.slice(0, 5).map((r) => ({
           label: r.ticker,
-          value: signedUsd(r.realized),
+          value: formatRealizedTickerValue(r),
           tone: "ok" as const,
         }))}
       />
@@ -932,13 +1012,14 @@ function RealizedBreakdown({
           title="Largest closed losses"
           rows={breakdown.realizedLosers.slice(0, 3).map((r) => ({
             label: r.ticker,
-            value: signedUsd(r.realized),
+            value: formatRealizedTickerValue(r),
             tone: "danger" as const,
           }))}
         />
       )}
       <p className="mt-1 text-[11px] text-ink-faint">
-        FIFO closed lots only · open positions not included
+        FIFO cost of closed lots · not open cost · open positions excluded from
+        realized
       </p>
     </div>
   );
@@ -1379,6 +1460,21 @@ function TickerDigestPanel({
           Realized lifetime:{" "}
           <span className="text-ink-muted">
             {formatUsd(digest.realized_lifetime_usd)}
+            {digest.realized_cost_basis_usd != null &&
+              d(digest.realized_cost_basis_usd) > 0 && (
+                <>
+                  {" "}
+                  on {formatUsd(digest.realized_cost_basis_usd)} sold
+                  {digest.realized_roi_pct != null && (
+                    <>
+                      {" "}
+                      (
+                      {digest.realized_roi_pct >= 0 ? "+" : ""}
+                      {digest.realized_roi_pct.toFixed(0)}%)
+                    </>
+                  )}
+                </>
+              )}
           </span>
         </span>
       </div>
