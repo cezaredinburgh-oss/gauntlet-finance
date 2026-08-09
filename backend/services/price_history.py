@@ -106,6 +106,95 @@ def _index_to_iso(idx: Any, *, intraday: bool) -> str:
     return s[:19] if intraday and "T" in s else s[:10]
 
 
+def _scalar_decimal(val: Any) -> Decimal | None:
+    try:
+        if val is None:
+            return None
+        # pandas scalar / numpy
+        if hasattr(val, "item") and not isinstance(val, (bytes, str)):
+            try:
+                val = val.item()
+            except Exception:  # noqa: BLE001
+                pass
+        f = float(val)
+        if f != f:  # NaN
+            return None
+        return Decimal(str(f))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _extract_close_series(data: Any, ysym: str) -> Any | None:
+    """
+    Return a 1-d Close series for ``ysym`` from a yfinance download frame.
+
+    Newer yfinance uses MultiIndex columns in two layouts:
+      - (Ticker, Price)  e.g. ('PLTR', 'Close')  when group_by='ticker'
+      - (Price, Ticker)  e.g. ('Close', 'PLTR')  single-ticker default
+    """
+    if data is None or getattr(data, "empty", True):
+        return None
+    cols = data.columns
+    nlevels = getattr(cols, "nlevels", 1)
+
+    if nlevels > 1:
+        level0 = list(cols.get_level_values(0))
+        # Layout A: ticker first
+        if ysym in level0:
+            try:
+                block = data[ysym]
+                if "Close" in block.columns:
+                    return block["Close"].dropna()
+            except Exception:  # noqa: BLE001
+                pass
+        # Layout B: price field first
+        if "Close" in level0:
+            try:
+                close_block = data["Close"]
+                # DataFrame of tickers, or single Series
+                if hasattr(close_block, "columns"):
+                    if ysym in close_block.columns:
+                        return close_block[ysym].dropna()
+                    if len(close_block.columns) == 1:
+                        return close_block.iloc[:, 0].dropna()
+                else:
+                    return close_block.dropna()
+            except Exception:  # noqa: BLE001
+                pass
+        return None
+
+    # Flat columns
+    if "Close" in cols:
+        close = data["Close"]
+        if hasattr(close, "columns"):
+            return close.iloc[:, 0].dropna()
+        return close.dropna()
+    return None
+
+
+def _series_from_close(close: Any, *, intraday: bool) -> list[SeriesPoint]:
+    series: list[SeriesPoint] = []
+    if close is None:
+        return series
+    # Ensure row iteration (Series), not column iteration (DataFrame.items)
+    if hasattr(close, "columns"):
+        close = close.iloc[:, 0]
+    try:
+        close = close.dropna()
+    except Exception:  # noqa: BLE001
+        return series
+    for idx, val in close.items():
+        px = _scalar_decimal(val)
+        if px is None:
+            continue
+        try:
+            ts = _index_to_iso(idx, intraday=intraday)
+        except Exception:  # noqa: BLE001
+            continue
+        series.append((ts, px))
+    return series
+
+
 def _yfinance_history_batch(
     yahoo_symbols: list[str],
     yahoo_to_our: dict[str, str],
@@ -124,8 +213,9 @@ def _yfinance_history_batch(
     intraday = interval != "1d"
     out: dict[str, list[SeriesPoint]] = {}
     try:
+        # Always group_by ticker so multi-symbol layout is consistent.
         data = yf.download(
-            tickers=" ".join(yahoo_symbols),
+            tickers=yahoo_symbols if len(yahoo_symbols) > 1 else yahoo_symbols[0],
             period=period,
             interval=interval,
             group_by="ticker",
@@ -141,28 +231,14 @@ def _yfinance_history_batch(
         our = yahoo_to_our[ysym]
         series: list[SeriesPoint] = []
         try:
-            if data is not None and not data.empty:
-                if len(yahoo_symbols) == 1:
-                    close = data["Close"].dropna()
-                else:
-                    if ysym not in data.columns.get_level_values(0):
-                        close = None
-                    else:
-                        close = data[ysym]["Close"].dropna()
-                if close is not None:
-                    for idx, val in close.items():
-                        try:
-                            ts = _index_to_iso(idx, intraday=intraday)
-                            series.append((ts, Decimal(str(float(val)))))
-                        except Exception:  # noqa: BLE001
-                            continue
+            close = _extract_close_series(data, ysym)
+            series = _series_from_close(close, intraday=intraday)
             if not series:
                 t = yf.Ticker(ysym)
                 hist = t.history(period=period, interval=interval, auto_adjust=True)
-                if hist is not None and not hist.empty and "Close" in hist.columns:
-                    for idx, val in hist["Close"].dropna().items():
-                        ts = _index_to_iso(idx, intraday=intraday)
-                        series.append((ts, Decimal(str(float(val)))))
+                if hist is not None and not hist.empty:
+                    hclose = hist["Close"] if "Close" in hist.columns else None
+                    series = _series_from_close(hclose, intraday=intraday)
         except Exception as exc:  # noqa: BLE001
             logger.warning("history failed for %s: %s", ysym, exc)
             continue
@@ -178,7 +254,11 @@ def aggregate_mv_series(
 ) -> list[SeriesPoint]:
     """
     Forward-fill closes per ticker; sum qty * close on each union timestamp.
-    Skip timestamps where no ticker has a known close yet.
+
+    Only emit points once **every successfully priced ticker** has a first
+    close (avoids ridiculously low early MV when only 1 of N names has data).
+    Tickers with no Yahoo series are excluded from the required set (reported
+    as missing by the service).
     """
     if not qty_by_ticker:
         return []
@@ -198,6 +278,7 @@ def aggregate_mv_series(
     if not all_ts or not price_maps:
         return []
 
+    required = set(price_maps.keys())
     ordered = sorted(all_ts)
     last: dict[str, Decimal] = {}
     result: list[SeriesPoint] = []
@@ -206,20 +287,16 @@ def aggregate_mv_series(
         for t, m in price_maps.items():
             if ts in m:
                 last[t] = m[ts]
-        if not last:
+        # Wait until full coverage of tickers that returned history
+        if not required.issubset(last.keys()):
             continue
         total = Decimal("0")
-        any_qty = False
-        for t, qty in qty_by_ticker.items():
+        for t in required:
+            qty = qty_by_ticker.get(t, Decimal("0"))
             if qty <= 0:
                 continue
-            px = last.get(t)
-            if px is None:
-                continue
-            total += qty * px
-            any_qty = True
-        if any_qty:
-            result.append((ts, _q2(total)))
+            total += qty * last[t]
+        result.append((ts, _q2(total)))
     return result
 
 

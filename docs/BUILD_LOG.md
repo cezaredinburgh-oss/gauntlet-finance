@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-09 — Fix: empty stock history + low collective MV start
+
+- Root cause: yfinance MultiIndex columns (`(Ticker,Close)` / `(Close,Ticker)`); single-ticker path treated Close as flat Series → empty history.
+- Root cause 2: aggregate MV emitted partial sums before all priced names had a first bar → ridiculously low early values.
+- Fix: robust Close extraction + start series only once every successfully fetched ticker has a price.
+
 ## 2026-08-09 — Chart v2: 1D, pop-out, Analysis MV without snapshots
 
 - History ranges add **1D** (5m bars); meta includes **today** open/last/change for any range.

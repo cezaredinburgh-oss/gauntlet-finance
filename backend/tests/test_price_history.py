@@ -79,9 +79,9 @@ def test_aggregate_mv_forward_fill():
         ],
     }
     series = aggregate_mv_series(qty, closes)
-    assert series[0] == ("2026-01-01", Decimal("10.00"))
-    assert series[1] == ("2026-01-02", Decimal("220.00"))
-    assert series[2] == ("2026-01-03", Decimal("240.00"))
+    # Day1 skipped: BBB not yet priced (avoids ridiculously low partial MV)
+    assert series[0] == ("2026-01-02", Decimal("220.00"))
+    assert series[1] == ("2026-01-03", Decimal("240.00"))
 
 
 def test_history_ticker_mocked():
