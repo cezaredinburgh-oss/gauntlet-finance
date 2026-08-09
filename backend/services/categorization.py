@@ -40,6 +40,7 @@ from backend.schema.default_categories import (
     CAT_RENT,
     CAT_RESTAURANTS,
     CAT_SALARY,
+    CAT_SELF_EDUCATION,
     CAT_SHOP_GENERAL,
     CAT_SOFTWARE,
     CAT_SPOTIFY,
@@ -95,11 +96,91 @@ def ensure_default_categories(repo: SheetsRepository) -> dict[str, Any]:
             updated += 1
     if to_write:
         repo.upsert_rows("Categories", to_write)
+    # Seed Self-education exact-message rule (course payment) + Digital Assets pot rule
+    from backend.schema.ensure_defaults import (
+        ensure_digital_assets_rule,
+        ensure_self_education_rule,
+    )
+
+    se_rule = ensure_self_education_rule(repo)
+    da_rule = ensure_digital_assets_rule(repo)
+    se_applied = apply_self_education_course_payments(repo)
     cache_invalidate()
     return {
         "created": created,
         "updated": updated,
         "total_defaults": len(DEFAULT_CATEGORIES),
+        "self_education_rule": se_rule,
+        "digital_assets_rule": da_rule,
+        "self_education_category_id": str(CAT_SELF_EDUCATION),
+        "self_education_txs_updated": se_applied.get("updated", 0),
+    }
+
+
+def apply_self_education_course_payments(repo: SheetsRepository) -> dict[str, Any]:
+    """
+    Assign Self-education only when message is ALL-CAPS ``CEZARY BIERNAT``.
+
+    Title-case ``Cezary Biernat`` (common RB message noise) is not a course.
+    Also clears false positives that were previously force-assigned.
+    Skips category_override.
+    """
+    needle = "CEZARY BIERNAT"  # case-sensitive
+    now = utc_now()
+    dirty: list[Transaction] = []
+    matched = 0
+    cleared = 0
+    skipped_override = 0
+    already = 0
+    for tx in repo.list_rows("Transactions"):
+        if not isinstance(tx, Transaction) or tx.archived:
+            continue
+        orig = (tx.original_description or "").strip()
+        desc = (tx.description or "").strip()
+        hit = orig == needle or desc == f"Outgoing instant payment — {needle}"
+        if hit:
+            matched += 1
+            if tx.category_override:
+                skipped_override += 1
+                continue
+            if tx.category_id == CAT_SELF_EDUCATION:
+                already += 1
+                continue
+            dirty.append(
+                tx.model_copy(
+                    update={
+                        "category_id": CAT_SELF_EDUCATION,
+                        "is_internal_transfer": False,
+                        "updated_at": now,
+                    }
+                )
+            )
+            continue
+        # Clear false positives: title-case / other messages wrongly set to Self-education
+        if (
+            tx.category_id == CAT_SELF_EDUCATION
+            and not tx.category_override
+            and orig != needle
+        ):
+            dirty.append(
+                tx.model_copy(
+                    update={
+                        "category_id": None,
+                        "updated_at": now,
+                    }
+                )
+            )
+            cleared += 1
+    if dirty:
+        repo.upsert_rows("Transactions", dirty)
+        cache_invalidate()
+    return {
+        "matched": matched,
+        "updated": matched - already - skipped_override if matched else 0,
+        "assigned": len([1 for t in dirty if t.category_id == CAT_SELF_EDUCATION]),
+        "cleared_false_positives": cleared,
+        "already": already,
+        "skipped_override": skipped_override,
     }
 
 

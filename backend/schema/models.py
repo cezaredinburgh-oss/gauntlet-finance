@@ -90,6 +90,7 @@ class LifeDomain(str, Enum):
     CASH = "Cash"
     SHOPPING = "Shopping"
     ENTERTAINMENT = "Entertainment"
+    EDUCATION = "Education"
     FEES = "Fees"
     OTHER = "Other"
 
@@ -104,6 +105,7 @@ class MatchField(str, Enum):
 
 class MatchType(str, Enum):
     EXACT = "exact"
+    EXACT_CASE = "exact_case"  # case-sensitive exact (e.g. ALL-CAPS payment message)
     CONTAINS = "contains"
     STARTS_WITH = "starts_with"
     REGEX = "regex"

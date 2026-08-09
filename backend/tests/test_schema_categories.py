@@ -14,12 +14,15 @@ from backend.schema.default_categories import (
     CAT_CRYPTO_FUND,
     CAT_FITNESS,
     CAT_HEALTH,
+    CAT_SELF_EDUCATION,
     DEFAULT_CATEGORIES,
 )
 from backend.schema.ensure_defaults import (
     ensure_default_categories,
     ensure_digital_assets_rule,
+    ensure_self_education_rule,
 )
+from backend.schema.models import LifeDomain
 from backend.schema.models import Category, CategoryRule, SHEET_HEADERS, TAB_MODEL
 from backend.schema.seed_data import RULE_DIGITAL_ASSETS, SEED_CATEGORY_RULES
 from backend.sheets.repository import InMemorySheetsRepository
@@ -37,6 +40,7 @@ def test_sheet_tabs_complete() -> None:
         "StatementFiles",
         "Settings",
         "Prices",
+        "PortfolioSnapshots",
     }
     assert set(SHEET_HEADERS.keys()) == expected
     assert set(TAB_MODEL.keys()) == expected
@@ -71,6 +75,15 @@ def test_crypto_funding_category() -> None:
     assert by_id[CAT_CRYPTO_FUND].name == "Crypto funding"
 
 
+def test_self_education_category() -> None:
+    by_id = {c.id: c for c in DEFAULT_CATEGORIES}
+    se = by_id[CAT_SELF_EDUCATION]
+    assert se.name == "Self-education"
+    assert se.parent_id is None
+    assert se.life_domain == LifeDomain.EDUCATION
+    assert se.is_transfer is False
+
+
 def test_digital_assets_seed_rule() -> None:
     rule = next(r for r in SEED_CATEGORY_RULES if r.id == RULE_DIGITAL_ASSETS)
     assert rule.priority == 6
@@ -103,6 +116,21 @@ def test_ensure_digital_assets_rule() -> None:
     assert r.set_internal_transfer is True
     assert r.category_id == CAT_CRYPTO_FUND
     assert r.id == RULE_DIGITAL_ASSETS
+
+
+def test_ensure_self_education_rule() -> None:
+    repo = InMemorySheetsRepository()
+    assert ensure_self_education_rule(repo) is True
+    assert ensure_self_education_rule(repo) is False
+    rules = [r for r in repo.list_rows("CategoryRules") if isinstance(r, CategoryRule)]
+    assert len(rules) == 1
+    r = rules[0]
+    assert r.category_id == CAT_SELF_EDUCATION
+    assert r.match_type.value == "exact_case"
+    assert r.match_value == "CEZARY BIERNAT"
+    assert r.priority == 12
+    cats = {c.id: c for c in repo.list_rows("Categories") if isinstance(c, Category)}
+    assert CAT_SELF_EDUCATION in cats
 
 
 def test_inmemory_upsert_and_hash() -> None:

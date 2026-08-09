@@ -99,6 +99,9 @@ CAT_BIZ_SHIPPING = _id(153)
 CAT_BIZ_OTHER = _id(154)
 CAT_BIZ_INCOME = _id(155)
 
+# Self-education (courses, training — not business materials)
+CAT_SELF_EDUCATION = _id(160)
+
 
 def _cat(
     id_: UUID,
@@ -198,6 +201,15 @@ DEFAULT_CATEGORIES: list[Category] = [
     _cat(CAT_BIZ_SHIPPING, "Biz shipping / logistics", parent_id=CAT_BUSINESS, necessity=Necessity.VARIABLE_NECESSITY, life_domain=LifeDomain.BUSINESS, sort_order=153),
     _cat(CAT_BIZ_OTHER, "Biz other expenses", parent_id=CAT_BUSINESS, necessity=Necessity.DISCRETIONARY, life_domain=LifeDomain.BUSINESS, sort_order=154),
     _cat(CAT_BIZ_INCOME, "Business income", parent_id=CAT_INCOME, necessity=Necessity.FIXED, life_domain=LifeDomain.INCOME, sort_order=4, is_income=True),
+    # Self-education (courses / training)
+    _cat(
+        CAT_SELF_EDUCATION,
+        "Self-education",
+        parent_id=None,
+        necessity=Necessity.DISCRETIONARY,
+        life_domain=LifeDomain.EDUCATION,
+        sort_order=160,
+    ),
     # Other
     _cat(CAT_OTHER, "Other", parent_id=None, necessity=Necessity.DISCRETIONARY, life_domain=LifeDomain.OTHER, sort_order=900),
     _cat(CAT_UNCATEGORIZED, "Uncategorized", parent_id=CAT_OTHER, necessity=Necessity.DISCRETIONARY, life_domain=LifeDomain.OTHER, sort_order=901),

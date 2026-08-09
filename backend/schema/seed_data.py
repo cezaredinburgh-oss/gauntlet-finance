@@ -310,6 +310,8 @@ SEED_CATEGORIES: list[Category] = [
 
 # Stable ID for Digital Assets Europe rule (seeded in PR2, not deferred to repair)
 RULE_DIGITAL_ASSETS = UUID("aa100001-0000-4000-8000-000000000006")
+# Exact RB message for 2026-06-04 course payment (not account-holder name)
+RULE_SELF_EDUCATION_BIERNAT = UUID("aa100001-0000-4000-8000-000000000007")
 
 SEED_CATEGORY_RULES: list[CategoryRule] = [
     # Priority 6 — crypto pot cash legs (Current ↔ Digital Assets Europe)

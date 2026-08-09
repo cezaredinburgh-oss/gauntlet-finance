@@ -52,6 +52,8 @@ def rule_matches(tx: Transaction, rule: CategoryRule) -> bool:
 
     if mt == MatchType.EXACT:
         return hay.lower() == needle.lower()
+    if mt == MatchType.EXACT_CASE:
+        return hay == needle
     if mt == MatchType.CONTAINS:
         return needle.lower() in hay.lower()
     if mt == MatchType.STARTS_WITH:

@@ -185,7 +185,10 @@ async def delete_category(
 
 @router.post("/categories/ensure-defaults")
 async def ensure_defaults(repo: RepoDep, _user: UserDep) -> dict[str, Any]:
-    return ensure_default_categories(repo)
+    """Ensure default categories + seed rules; fill blanks so new rules apply."""
+    cat_stats = ensure_default_categories(repo)
+    fill = apply_rules_fill_blanks(repo)
+    return {**cat_stats, "fill_blanks": fill}
 
 
 @router.get("/categories/coverage")
