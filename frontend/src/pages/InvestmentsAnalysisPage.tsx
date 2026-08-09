@@ -40,6 +40,23 @@ export function InvestmentsAnalysisPage() {
     };
   }, []);
 
+  // Soft-refresh health / staking marks when Layout live-marks or Update prices fires
+  useEffect(() => {
+    const onPrices = () => {
+      void api
+        .investmentsSnapshot()
+        .then((s) => {
+          setSnap(s);
+          setError(null);
+        })
+        .catch(() => {
+          /* keep last snap */
+        });
+    };
+    window.addEventListener("prices-updated", onPrices);
+    return () => window.removeEventListener("prices-updated", onPrices);
+  }, []);
+
   if (loading) return <PageLoader label="Loading analysis…" />;
   if (error) {
     return <EmptyState title="Couldn’t load analysis" description={error} />;

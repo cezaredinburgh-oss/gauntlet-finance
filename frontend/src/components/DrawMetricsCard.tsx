@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import type { DrawMetrics } from "../api/types";
 import { d, formatUsd } from "../lib/money";
@@ -21,43 +21,58 @@ type Props = {
 export function DrawMetricsCard({ compact = false, className }: Props) {
   const [data, setData] = useState<DrawMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [softUpdating, setSoftUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasDataRef = useRef(false);
+  hasDataRef.current = data != null;
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const m = await api.drawMetrics();
-        if (!cancelled) {
-          setData(m);
-          setError(null);
-        }
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Failed");
-      } finally {
-        if (!cancelled) setLoading(false);
+  const load = useCallback(async (opts?: { soft?: boolean }) => {
+    const soft = opts?.soft ?? hasDataRef.current;
+    if (soft) setSoftUpdating(true);
+    else setLoading(true);
+    try {
+      const m = await api.drawMetrics();
+      setData(m);
+      setError(null);
+    } catch (e) {
+      if (!soft) {
+        setError(e instanceof Error ? e.message : "Failed");
+        setData(null);
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      // soft failures keep last good metrics
+    } finally {
+      setLoading(false);
+      setSoftUpdating(false);
+    }
   }, []);
 
-  if (loading) {
+  useEffect(() => {
+    void load({ soft: false });
+  }, [load]);
+
+  useEffect(() => {
+    const onPrices = () => {
+      void load({ soft: true });
+    };
+    window.addEventListener("prices-updated", onPrices);
+    return () => window.removeEventListener("prices-updated", onPrices);
+  }, [load]);
+
+  if (loading && !data) {
     return (
       <div className={cn("card flex items-center justify-center p-5", className)}>
         <Spinner className="h-5 w-5" />
       </div>
     );
   }
-  if (error || !data) {
+  if ((error || !data) && !data) {
     return (
       <div className={cn("card p-4 text-sm text-ink-muted", className)}>
         {error || "Draw metrics unavailable"}
       </div>
     );
   }
+  if (!data) return null;
 
   const living = d(data.living_draw_12m_usd);
   const safe = d(data.safe_draw_annual_usd);
@@ -77,6 +92,9 @@ export function DrawMetricsCard({ compact = false, className }: Props) {
               Trailing 12m investment cash (sells − buys) vs capacity{" "}
               <span className="text-ink-muted">min(4% × MV, tax-free now)</span>
             </p>
+          )}
+          {softUpdating && (
+            <p className="text-[11px] text-ink-faint">Updating marks…</p>
           )}
         </div>
         <span

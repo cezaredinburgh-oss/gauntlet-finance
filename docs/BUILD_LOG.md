@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-09 — Live marks for all wealth KPIs
+
+- `DrawMetricsCard` + Analysis snapshot soft-reload on `prices-updated` (no blank spinner).
+- Dashboard already reloads snapshot (MV, unrealized, tax-free runway); draw/safe capacity now track 60s soft price poll too.
+
 ## 2026-08-09 — Chart polish: soft 1D refresh, 7D, live dashboard MV
 
 - Soft re-fetch keeps prior series (no blank flash); larger total/change/cost type.
