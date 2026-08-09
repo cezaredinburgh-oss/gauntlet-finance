@@ -505,6 +505,10 @@ export type PriceHistory = {
     quantity_basis?: string;
     note?: string;
     point_kind?: string;
+    yahoo_symbol?: string | null;
+    coverage_threshold?: number | null;
+    series_start?: string | null;
+    short_history_tickers?: Array<{ ticker: string; first_bar: string }>;
   };
 };
 

@@ -89,21 +89,43 @@ def clear_history_cache() -> None:
 
 
 def _index_to_iso(idx: Any, *, intraday: bool) -> str:
+    """Normalize index to date (daily) or UTC ISO (intraday) for stable sorting."""
+    dt: datetime | None = None
     if hasattr(idx, "to_pydatetime"):
         dt = idx.to_pydatetime()
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        if intraday:
-            return dt.isoformat()
-        return dt.date().isoformat()
-    if isinstance(idx, datetime):
-        if idx.tzinfo is None:
-            idx = idx.replace(tzinfo=timezone.utc)
-        return idx.isoformat() if intraday else idx.date().isoformat()
-    if isinstance(idx, date) and not isinstance(idx, datetime):
+    elif isinstance(idx, datetime):
+        dt = idx
+    elif isinstance(idx, date) and not isinstance(idx, datetime):
         return idx.isoformat()
-    s = str(idx)
-    return s[:19] if intraday and "T" in s else s[:10]
+    else:
+        s = str(idx)
+        if not intraday:
+            return s[:10]
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except Exception:  # noqa: BLE001
+            return s[:19] if "T" in s else s[:10]
+
+    if dt is None:
+        return str(idx)[:10]
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    if intraday:
+        return dt.isoformat()
+    return dt.date().isoformat()
+
+
+def _parse_ts(ts: str) -> datetime:
+    """Parse series timestamp for chronological sort."""
+    if "T" in ts:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    return datetime(int(ts[0:4]), int(ts[5:7]), int(ts[8:10]), tzinfo=timezone.utc)
+
+
+# Default: emit MV once this fraction of the book (by latest mark) is priced.
+COVERAGE_THRESHOLD = Decimal("0.90")
 
 
 def _scalar_decimal(val: Any) -> Decimal | None:
@@ -251,19 +273,30 @@ def _yfinance_history_batch(
 def aggregate_mv_series(
     qty_by_ticker: dict[str, Decimal],
     closes_by_ticker: dict[str, list[SeriesPoint]],
-) -> list[SeriesPoint]:
+    *,
+    coverage_threshold: Decimal = COVERAGE_THRESHOLD,
+) -> tuple[list[SeriesPoint], dict[str, Any]]:
     """
     Forward-fill closes per ticker; sum qty * close on each union timestamp.
 
-    Only emit points once **every successfully priced ticker** has a first
-    close (avoids ridiculously low early MV when only 1 of N names has data).
-    Tickers with no Yahoo series are excluded from the required set (reported
-    as missing by the service).
+    Emit a point when priced names cover ``coverage_threshold`` of the book
+    (weights = qty × each ticker's **latest** known close). This prevents:
+      - ridiculously low early MV (tiny subset of names), and
+      - long ranges collapsing to the shortest IPO (e.g. SPCX clips 1Y→6 weeks).
+
+    Tickers with no Yahoo series are omitted (caller reports missing).
     """
+    empty_meta: dict[str, Any] = {
+        "coverage_threshold": float(coverage_threshold),
+        "short_history_tickers": [],
+        "series_start": None,
+    }
     if not qty_by_ticker:
-        return []
+        return [], empty_meta
 
     price_maps: dict[str, dict[str, Decimal]] = {}
+    first_bar: dict[str, str] = {}
+    latest_px: dict[str, Decimal] = {}
     all_ts: set[str] = set()
     for t, series in closes_by_ticker.items():
         if t not in qty_by_ticker:
@@ -274,12 +307,26 @@ def aggregate_mv_series(
             all_ts.add(ts)
         if m:
             price_maps[t] = m
+            ordered_ts = sorted(m.keys(), key=_parse_ts)
+            first_bar[t] = ordered_ts[0]
+            latest_px[t] = m[ordered_ts[-1]]
 
     if not all_ts or not price_maps:
-        return []
+        return [], empty_meta
 
-    required = set(price_maps.keys())
-    ordered = sorted(all_ts)
+    # Weight by latest mark so small penny names don't dominate the gate
+    weights: dict[str, Decimal] = {}
+    for t in price_maps:
+        qty = qty_by_ticker.get(t, Decimal("0"))
+        if qty <= 0:
+            continue
+        weights[t] = qty * latest_px[t]
+    total_weight = sum(weights.values(), Decimal("0"))
+    if total_weight <= 0:
+        return [], empty_meta
+
+    threshold = coverage_threshold
+    ordered = sorted(all_ts, key=_parse_ts)
     last: dict[str, Decimal] = {}
     result: list[SeriesPoint] = []
 
@@ -287,17 +334,34 @@ def aggregate_mv_series(
         for t, m in price_maps.items():
             if ts in m:
                 last[t] = m[ts]
-        # Wait until full coverage of tickers that returned history
-        if not required.issubset(last.keys()):
+        if not last:
+            continue
+        covered = sum((weights[t] for t in last if t in weights), Decimal("0"))
+        if covered / total_weight < threshold:
             continue
         total = Decimal("0")
-        for t in required:
+        for t, px in last.items():
             qty = qty_by_ticker.get(t, Decimal("0"))
             if qty <= 0:
                 continue
-            total += qty * last[t]
+            total += qty * px
         result.append((ts, _q2(total)))
-    return result
+
+    series_start = result[0][0] if result else None
+    short: list[dict[str, str]] = []
+    if series_start is not None:
+        for t, fb in first_bar.items():
+            # Joins after the chart has already started (late listing / short Yahoo)
+            if _parse_ts(fb) > _parse_ts(series_start):
+                short.append({"ticker": t, "first_bar": fb})
+        short.sort(key=lambda x: x["ticker"])
+
+    meta = {
+        "coverage_threshold": float(threshold),
+        "short_history_tickers": short,
+        "series_start": series_start,
+    }
+    return result, meta
 
 
 def _change_meta(
@@ -437,17 +501,21 @@ class PriceHistoryService:
         places: int = 2,
     ) -> dict[str, Any]:
         """Day open→last change; reuse main series when already on 1d."""
-        if main_range == "1d" and main_series is not None:
-            return _day_change_from_series(main_series, places=places)
-        tickers = sorted(qty_map.keys())
-        if not tickers:
+        try:
+            if main_range == "1d" and main_series is not None:
+                return _day_change_from_series(main_series, places=places)
+            tickers = sorted(qty_map.keys())
+            if not tickers:
+                return _day_change_from_series([], places=places)
+            closes = self._fetch_closes(tickers, ac_map, "1d", "5m")
+            if series_kind == "price":
+                t = tickers[0]
+                return _day_change_from_series(closes.get(t, []), places=places)
+            mv, _agg_meta = aggregate_mv_series(qty_map, closes)
+            return _day_change_from_series(mv, places=places)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("day change resolve failed: %s", exc)
             return _day_change_from_series([], places=places)
-        closes = self._fetch_closes(tickers, ac_map, "1d", "5m")
-        if series_kind == "price":
-            t = tickers[0]
-            return _day_change_from_series(closes.get(t, []), places=places)
-        mv = aggregate_mv_series(qty_map, closes)
-        return _day_change_from_series(mv, places=places)
 
     def history(
         self,
@@ -492,11 +560,14 @@ class PriceHistoryService:
                 main_series=series if range_norm == "1d" else None,
                 places=places,
             )
+            ysym = _normalize_yahoo_symbol(t, ac_map.get(t))
             note = (
                 "Intraday (5m) USD. Avg cost from open lots."
                 if point_kind == "intraday"
                 else "Daily close (USD). Avg cost from open lots."
             )
+            if missing:
+                note = f"No Yahoo history for {ysym}. " + note
             return HistoryResult(
                 scope="ticker",
                 label=t,
@@ -509,6 +580,7 @@ class PriceHistoryService:
                 meta={
                     "tickers": [t],
                     "missing_tickers": missing,
+                    "yahoo_symbol": ysym,
                     "cost_basis_usd": _str_dec(cost),
                     "avg_cost_usd": _str_dec(avg_cost, 4) if avg_cost is not None else None,
                     "quantity": str(_q4(qty)),
@@ -553,7 +625,7 @@ class PriceHistoryService:
         tickers = sorted(qty_map.keys())
         closes = self._fetch_closes(tickers, ac_map, period, interval)
         missing = [t for t in tickers if t not in closes or not closes[t]]
-        mv_series = aggregate_mv_series(qty_map, closes)
+        mv_series, agg_meta = aggregate_mv_series(qty_map, closes)
         points = [{"date": d_ts, "value": _str_dec(v)} for d_ts, v in mv_series]
         first = mv_series[0][1] if mv_series else None
         last = mv_series[-1][1] if mv_series else None
@@ -569,8 +641,14 @@ class PriceHistoryService:
         note = (
             "Current holdings marked at historical prices (intraday 5m)."
             if point_kind == "intraday"
-            else "Mark of current holdings at historical closes."
+            else "Mark of current holdings at historical closes (names with ≥90% book coverage)."
         )
+        short = agg_meta.get("short_history_tickers") or []
+        if short:
+            bits = [f"{s['ticker']} from {s['first_bar']}" for s in short[:8]]
+            note += " Late listings: " + ", ".join(bits)
+            if len(short) > 8:
+                note += "…"
         return HistoryResult(
             scope="all" if scope == "all" else "asset_class",
             label=label,
@@ -583,6 +661,9 @@ class PriceHistoryService:
             meta={
                 "tickers": tickers,
                 "missing_tickers": missing,
+                "coverage_threshold": agg_meta.get("coverage_threshold"),
+                "short_history_tickers": short,
+                "series_start": agg_meta.get("series_start"),
                 "cost_basis_usd": _str_dec(cost),
                 "avg_cost_usd": None,
                 "quantity": None,

@@ -15,6 +15,7 @@ from backend.services.price_history import (
     clear_history_cache,
     range_to_yfinance_period,
     range_to_yfinance_spec,
+    _parse_ts,
 )
 from backend.sheets.repository import InMemorySheetsRepository
 
@@ -65,23 +66,77 @@ def test_range_to_period():
         range_to_yfinance_period("2w")
 
 
-def test_aggregate_mv_forward_fill():
-    qty = {"AAA": Decimal("10"), "BBB": Decimal("2")}
+def test_parse_ts_timezone_order():
+    a = _parse_ts("2026-08-07T15:55:00-04:00")
+    b = _parse_ts("2026-08-07T19:55:00+00:00")
+    # Same instant (approx) — both should parse; -04 15:55 == UTC 19:55
+    assert a.astimezone(timezone.utc).hour == 19
+    assert b.astimezone(timezone.utc).hour == 19
+
+
+def test_aggregate_skips_until_coverage():
+    """Tiny early name alone must not emit; wait for 90% book weight."""
+    qty = {"HEAVY": Decimal("10"), "TINY": Decimal("1")}
     closes = {
-        "AAA": [
-            ("2026-01-01", Decimal("1")),
-            ("2026-01-02", Decimal("2")),
-            ("2026-01-03", Decimal("2")),
+        "TINY": [
+            ("2026-01-01", Decimal("1")),  # weight 1
+            ("2026-01-02", Decimal("1")),
+            ("2026-01-03", Decimal("1")),
         ],
-        "BBB": [
-            ("2026-01-02", Decimal("100")),
+        "HEAVY": [
+            ("2026-01-02", Decimal("100")),  # weight 1000
             ("2026-01-03", Decimal("110")),
         ],
     }
-    series = aggregate_mv_series(qty, closes)
-    # Day1 skipped: BBB not yet priced (avoids ridiculously low partial MV)
-    assert series[0] == ("2026-01-02", Decimal("220.00"))
-    assert series[1] == ("2026-01-03", Decimal("240.00"))
+    series, meta = aggregate_mv_series(qty, closes)
+    # Day1: only TINY (weight 1/1001 < 90%) — skipped
+    assert series[0][0] == "2026-01-02"
+    # 10*100 + 1*1 = 1001
+    assert series[0][1] == Decimal("1001.00")
+    assert series[1][1] == Decimal("1101.00")
+
+
+def test_aggregate_short_ipo_does_not_clip_long_range():
+    """SPCX-like short history must not force the whole series to start at IPO."""
+    qty = {
+        "PLTR": Decimal("10"),  # weight ~1720 at last
+        "SPCX": Decimal("1"),  # weight ~100
+    }
+    # PLTR full year of monthly-ish points; SPCX only last two
+    pltr = [(f"2025-{m:02d}-15", Decimal("100") + Decimal(m)) for m in range(1, 13)]
+    pltr.append(("2026-06-15", Decimal("150")))
+    pltr.append(("2026-07-15", Decimal("160")))
+    spcx = [
+        ("2026-06-15", Decimal("100")),
+        ("2026-07-15", Decimal("110")),
+    ]
+    series, meta = aggregate_mv_series(
+        qty, {"PLTR": pltr, "SPCX": spcx}, coverage_threshold=Decimal("0.90")
+    )
+    assert series[0][0] == "2025-01-15"  # starts with PLTR alone
+    assert any(p[0] == "2026-06-15" for p in series)
+    short = {s["ticker"] for s in meta["short_history_tickers"]}
+    assert "SPCX" in short
+
+
+def test_aggregate_heavy_short_still_waits():
+    """If short name is majority of book weight, series waits for it."""
+    qty = {"OLD": Decimal("1"), "NEW": Decimal("100")}
+    closes = {
+        "OLD": [
+            ("2025-01-01", Decimal("10")),  # weight 10
+            ("2026-06-01", Decimal("10")),
+            ("2026-07-01", Decimal("10")),
+        ],
+        "NEW": [
+            ("2026-06-01", Decimal("10")),  # weight 1000
+            ("2026-07-01", Decimal("11")),
+        ],
+    }
+    series, meta = aggregate_mv_series(
+        qty, closes, coverage_threshold=Decimal("0.90")
+    )
+    assert series[0][0] == "2026-06-01"
 
 
 def test_history_ticker_mocked():
@@ -211,9 +266,7 @@ def test_history_all_portfolio():
     result = svc.history(scope="all", range_key="1y")
     assert result.scope == "all"
     assert result.label == "Portfolio"
-    # Day1: 100*0.10 + 10*20 = 210
     assert result.points[0]["value"] == "210.00"
-    # Day2: 100*0.20 + 10*25 = 270
     assert result.points[1]["value"] == "270.00"
 
 

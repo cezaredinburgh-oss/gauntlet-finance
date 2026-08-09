@@ -4,11 +4,17 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-09 — Fix: timeframes collapsed by short-history tickers
+
+- Root cause: requiring **all** priced names before any MV point made SPCX-like listings (first bar mid-2026) clip 3M–MAX to ~39 days.
+- Fix: emit when **≥90% of book weight** (qty × latest px) is marked; late listings join mid-series; meta `short_history_tickers`.
+- UTC-normalize intraday timestamps for stable sort (stock vs crypto TZ).
+
 ## 2026-08-09 — Fix: empty stock history + low collective MV start
 
 - Root cause: yfinance MultiIndex columns (`(Ticker,Close)` / `(Close,Ticker)`); single-ticker path treated Close as flat Series → empty history.
 - Root cause 2: aggregate MV emitted partial sums before all priced names had a first bar → ridiculously low early values.
-- Fix: robust Close extraction + start series only once every successfully fetched ticker has a price.
+- Fix: robust Close extraction + coverage-threshold aggregate (superseded all-names wait).
 
 ## 2026-08-09 — Chart v2: 1D, pop-out, Analysis MV without snapshots
 

@@ -501,6 +501,18 @@ export function PositionHistoryChart({
           {missing.length > 12 ? "…" : ""}
         </p>
       )}
+      {(data?.meta.short_history_tickers?.length ?? 0) > 0 && (
+        <p className="text-[11px] text-ink-muted">
+          Late listings (join series when listed):{" "}
+          {data!.meta.short_history_tickers!.slice(0, 8).map((s, i) => (
+            <span key={s.ticker}>
+              {i > 0 ? ", " : ""}
+              {s.ticker} from {s.first_bar.slice(0, 10)}
+            </span>
+          ))}
+          {data!.meta.short_history_tickers!.length > 8 ? "…" : ""}
+        </p>
+      )}
       {data?.meta.note && (
         <p className="text-[11px] text-ink-faint">{data.meta.note}</p>
       )}
