@@ -16,6 +16,7 @@ from backend.api.schemas import (
     CategoryOverrideResponse,
 )
 from backend.common.timeutil import utc_now
+from backend.schema.default_categories import CAT_INTERNAL
 from backend.schema.models import Category, Transaction
 from backend.services.categorization import (
     apply_match_to_all_transactions,
@@ -37,6 +38,20 @@ from backend.services.categorization import (
 from backend.services.response_cache import cache_invalidate
 
 router = APIRouter(tags=["categories"])
+
+
+def _category_implies_internal_transfer(cat: Category) -> bool:
+    """
+    Assigning this category should also set is_internal_transfer=True.
+
+    Only true Internal transfer (not External transfer / Broker funding).
+    """
+    if cat.id == CAT_INTERNAL:
+        return True
+    name = (cat.name or "").strip().lower()
+    if cat.is_transfer and "internal" in name and "external" not in name:
+        return True
+    return False
 
 
 class RuleBody(BaseModel):
@@ -334,13 +349,14 @@ async def override_category(
     tx = repo.get_by_id("Transactions", body.transaction_id)
     if tx is None or not isinstance(tx, Transaction):
         raise HTTPException(status_code=404, detail="Transaction not found")
-    updated = tx.model_copy(
-        update={
-            "category_id": category_id,
-            "category_override": True,
-            "updated_at": utc_now(),
-        }
-    )
+    updates: dict[str, Any] = {
+        "category_id": category_id,
+        "category_override": True,
+        "updated_at": utc_now(),
+    }
+    if _category_implies_internal_transfer(cat):
+        updates["is_internal_transfer"] = True
+    updated = tx.model_copy(update=updates)
     repo.upsert_rows("Transactions", [updated])
     cache_invalidate()
     return CategoryOverrideResponse(
@@ -380,19 +396,19 @@ async def bulk_override_category(
     ts = utc_now()
     updated_rows: list[Transaction] = []
     updated_ids: list[UUID] = []
+    force_internal = _category_implies_internal_transfer(cat)
     for tid in ids:
         tx = by_id.get(tid)
         if tx is None or tx.archived:
             continue
-        updated_rows.append(
-            tx.model_copy(
-                update={
-                    "category_id": body.category_id,
-                    "category_override": True,
-                    "updated_at": ts,
-                }
-            )
-        )
+        updates: dict[str, Any] = {
+            "category_id": body.category_id,
+            "category_override": True,
+            "updated_at": ts,
+        }
+        if force_internal:
+            updates["is_internal_transfer"] = True
+        updated_rows.append(tx.model_copy(update=updates))
         updated_ids.append(tid)
 
     if updated_rows:

@@ -291,11 +291,26 @@ export function CategorizePage() {
     }
 
     if (filterFlag === "transfer_leak") {
+      // Match backend alerts.transfer_leak_resolved: hide flagged internal and
+      // rows already bucketed into Transfers/Investments (or any is_transfer cat).
       const re =
-        /\b(transfer|top-?up|sent to|from revolut|to revolut|own account|me to me|p[rř]evod)\b/i;
+        /\b(transfer|top-?up|topup|sent to|from revolut|to revolut|own account|me to me|me2me|p[rř]evod)\b/i;
+      const resolvedDomains = new Set(["Transfers", "Investments"]);
       rows = rows.filter((t) => {
         if (t.is_internal_transfer) return false;
-        const blob = [t.merchant, t.description, t.original_description]
+        if (t.category_id) {
+          const cat = catMap.get(t.category_id);
+          if (cat) {
+            if (cat.is_transfer) return false;
+            if (resolvedDomains.has(cat.life_domain)) return false;
+          }
+        }
+        const blob = [
+          t.merchant,
+          t.description,
+          t.original_description,
+          t.counterparty_name,
+        ]
           .filter(Boolean)
           .join(" ");
         return re.test(blob);
@@ -519,20 +534,32 @@ export function CategorizePage() {
     }
   }
 
+  function categoryImpliesInternal(categoryId: string): boolean {
+    const cat = catMap.get(categoryId);
+    if (!cat) return false;
+    if (cat.is_transfer) {
+      const name = cat.name.toLowerCase();
+      if (name.includes("internal") && !name.includes("external")) return true;
+    }
+    return false;
+  }
+
   async function onOverride(txId: string, categoryId: string) {
     if (!categoryId) return;
     setSavingId(txId);
     try {
       await api.overrideCategory(categoryId, txId);
+      const forceInternal = categoryImpliesInternal(categoryId);
       const tx = items.find((t) => t.id === txId);
+      const patch = {
+        category_id: categoryId,
+        category_override: true as const,
+        ...(forceInternal ? { is_internal_transfer: true } : {}),
+      };
       setItems((prev) =>
-        prev.map((t) =>
-          t.id === txId
-            ? { ...t, category_id: categoryId, category_override: true }
-            : t,
-        ),
+        prev.map((t) => (t.id === txId ? { ...t, ...patch } : t)),
       );
-      if (tx) openRuleProposal([{ ...tx, category_id: categoryId, category_override: true }], categoryId);
+      if (tx) openRuleProposal([{ ...tx, ...patch }], categoryId);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Override failed");
     } finally {
@@ -547,20 +574,18 @@ export function CategorizePage() {
       const ids = [...selected];
       const r = await api.bulkOverrideCategory(bulkCategoryId, ids);
       const idSet = new Set(r.transaction_ids);
+      const forceInternal = categoryImpliesInternal(bulkCategoryId);
+      const patch = {
+        category_id: bulkCategoryId,
+        category_override: true as const,
+        ...(forceInternal ? { is_internal_transfer: true } : {}),
+      };
       setItems((prev) =>
-        prev.map((t) =>
-          idSet.has(t.id)
-            ? { ...t, category_id: bulkCategoryId, category_override: true }
-            : t,
-        ),
+        prev.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t)),
       );
       const affected = items.filter((t) => idSet.has(t.id));
       openRuleProposal(
-        affected.map((t) => ({
-          ...t,
-          category_id: bulkCategoryId,
-          category_override: true,
-        })),
+        affected.map((t) => ({ ...t, ...patch })),
         bulkCategoryId,
       );
       setSelected(new Set());

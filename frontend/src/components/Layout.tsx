@@ -12,6 +12,7 @@ import {
   Tags,
   Wallet,
   ChevronDown,
+  Receipt,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -65,6 +66,7 @@ const nav: NavItem[] = [
     children: [
       { kind: "leaf", to: "/investments", label: "Holdings", icon: LineChart, end: true },
       { kind: "leaf", to: "/investments/analysis", label: "Analysis", icon: LineChart },
+      { kind: "leaf", to: "/investments/tax", label: "Tax", icon: Receipt },
     ],
   },
   { kind: "leaf", to: "/upload", label: "Upload", icon: Upload },

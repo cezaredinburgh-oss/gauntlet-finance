@@ -26,6 +26,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 - `GET /api/investments/mv-series`, `draw-metrics`; Analysis charts; Dashboard compact draw card.
 - Safe draw = min(4% × MV, tax_free_now_usd) vs 12m living draw (sells − buys).
 
+## 2026-08-08 — Tax nav + transfer-leak alerts
+
+- **Nav:** Investments → **Tax** leaf in main sidebar (`Layout.tsx`).
+- **Alerts:** `transfer_leak` no longer sticks after review — clears when row is internal **or** categorized into Transfers/Investments / `is_transfer` category (not only when `is_internal_transfer`).
+- **Categorize:** drill-down filter matches that rule; assigning **Internal transfer** also sets `is_internal_transfer=true` (single + bulk override).
+- Tests: `backend/tests/test_alerts_transfer_leak.py`.
+
 ## 2026-08-08 — Wave 1: Tax UI + import reliability
 
 - Tax: `/tax-report/years`, `/summary-by-year`, CSV export; UI at **Investments → Tax**.

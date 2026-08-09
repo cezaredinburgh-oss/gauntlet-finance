@@ -30,6 +30,37 @@ _TRANSFER_LEAK = re.compile(
     re.I,
 )
 
+# Domains where a transfer-like narrative has been deliberately bucketed.
+_TRANSFER_LEAK_RESOLVED_DOMAINS = frozenset({"Transfers", "Investments"})
+
+
+def transfer_leak_resolved(tx: Transaction, cat: Category | None) -> bool:
+    """
+    True when a transfer-like expense no longer needs the unflagged-transfer alert.
+
+    Resolved if already flagged internal, or the user/rules assigned a transfer
+    or investments category (including external transfers — reviewed, not a leak).
+    """
+    if tx.is_internal_transfer:
+        return True
+    if cat is None:
+        return False
+    if cat.is_transfer:
+        return True
+    domain = cat.life_domain.value if cat.life_domain else ""
+    return domain in _TRANSFER_LEAK_RESOLVED_DOMAINS
+
+
+def looks_like_transfer_narrative(tx: Transaction) -> bool:
+    """True if merchant/description/etc. match the transfer-leak keyword pattern."""
+    blob = " ".join(
+        filter(
+            None,
+            [tx.merchant, tx.description, tx.original_description, tx.counterparty_name],
+        )
+    )
+    return bool(_TRANSFER_LEAK.search(blob or ""))
+
 
 def _cat_url(
     *,
@@ -379,21 +410,20 @@ def build_alerts(
             )
 
     # --- 5.5 Internal-transfer leak ---
+    # Fire only for transfer-like expenses that are still unreviewed: not flagged
+    # internal and not assigned to Transfers/Investments (or any is_transfer cat).
     leak_count = 0
     leak_usd = Decimal("0")
     sample = ""
     for t in txs:
-        if t.archived or t.is_internal_transfer or t.amount >= 0:
+        if t.archived or t.amount >= 0:
             continue
         if t.booking_date < d180_from or t.booking_date > today:
             continue
-        blob = " ".join(
-            filter(
-                None,
-                [t.merchant, t.description, t.original_description, t.counterparty_name],
-            )
-        )
-        if not _TRANSFER_LEAK.search(blob or ""):
+        cat = cats.get(t.category_id) if t.category_id else None
+        if transfer_leak_resolved(t, cat):
+            continue
+        if not looks_like_transfer_narrative(t):
             continue
         signed = tx_signed_usd(t, fx)
         if signed is None:
@@ -413,8 +443,9 @@ def build_alerts(
                 "title": "Possible unflagged internal transfers",
                 "body": (
                     f"{leak_count} expense row(s) look like own-account moves "
-                    f"(~${leak_usd:,.0f}) but are not marked internal "
-                    f"(e.g. “{sample}”). Review in Categorize / repair tools."
+                    f"(~${leak_usd:,.0f}) but are not marked internal and not yet "
+                    f"in Transfers/Investments (e.g. “{sample}”). "
+                    f"Flag as Internal transfer or categorize, then the alert clears."
                 ),
                 "href": _cat_url(
                     date_from=d180_from,
