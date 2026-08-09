@@ -26,6 +26,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 - `GET /api/investments/mv-series`, `draw-metrics`; Analysis charts; Dashboard compact draw card.
 - Safe draw = min(4% × MV, tax_free_now_usd) vs 12m living draw (sells − buys).
 
+## 2026-08-09 — Spending chart residual bar rename
+
+- Chart rollup of categories outside top‑N was labeled **Other (N)**, colliding with Uncategorized/Other domain.
+- Renamed to **Smaller categories (N)**; tooltip clarifies; top N raised to 25; Categorize chips match.
+
 ## 2026-08-09 — Self-education category
 
 - New top-level **Self-education** (`LifeDomain.Education`), stable id `CAT_SELF_EDUCATION`.

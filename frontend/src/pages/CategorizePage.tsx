@@ -360,7 +360,8 @@ export function CategorizePage() {
 
   const categoryFilterLabel = useMemo(() => {
     if (multiCategoryIds.length > 0) {
-      return `Other (${multiCategoryIds.length} categories)`;
+      // Chart residual rollup (outside top-N) — not life-domain "Other"
+      return `Smaller categories (${multiCategoryIds.length})`;
     }
     if (categoryIdParam === "uncategorized") return "Uncategorized";
     if (categoryIdParam && isUuid(categoryIdParam)) {
@@ -1167,7 +1168,9 @@ export function CategorizePage() {
             >
               <option value="">All categories</option>
               {multiCategoryIds.length > 0 && (
-                <option value="__multi__">Other ({multiCategoryIds.length})</option>
+                <option value="__multi__">
+                  Smaller categories ({multiCategoryIds.length})
+                </option>
               )}
               <option value="uncategorized">Uncategorized</option>
               {catsSorted.map((c) => (

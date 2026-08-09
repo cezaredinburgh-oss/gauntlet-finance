@@ -30,8 +30,10 @@ type CategoryBar = {
   life_domain: string;
   necessity: string;
   pct: number;
-  /** For Other rollup: underlying category ids */
+  /** For residual rollup: underlying category ids (outside top-N by spend) */
   rollupIds?: string[];
+  /** Short names included in residual bar (for tooltip) */
+  rollupNames?: string[];
 };
 
 /** Build /expenses/categorize query matching dashboard category-chart filters. */
@@ -67,7 +69,8 @@ const NECESSITY_LABEL: Record<string, string> = {
   Discretionary: "Discretionary",
 };
 
-const CATEGORY_TOP_N = 20;
+/** Show top N categories as own bars; remainder → "Smaller categories" rollup. */
+const CATEGORY_TOP_N = 25;
 
 function deltaText(pct: number | null | undefined, invertGood = false): { text: string; cls: string } {
   if (pct === null || pct === undefined) return { text: "vs prior: —", cls: "text-ink-faint" };
@@ -179,16 +182,18 @@ export function SpendingPage() {
     const rest = categoryMapped.slice(CATEGORY_TOP_N);
     const otherVal = rest.reduce((s, r) => s + r.value, 0);
     const otherPct = rest.reduce((s, r) => s + r.pct, 0);
+    // Named "Smaller categories" — not life-domain "Other" / Uncategorized.
     categoryData = [
       ...top,
       {
         id: "other_rollup",
-        name: `Other (${rest.length})`,
+        name: `Smaller categories (${rest.length})`,
         value: otherVal,
-        life_domain: "Other",
+        life_domain: "Mixed",
         necessity: "Discretionary",
         pct: Math.round(otherPct * 10) / 10,
         rollupIds: rest.map((r) => r.id),
+        rollupNames: rest.map((r) => r.name),
       },
     ];
   }
@@ -240,6 +245,7 @@ export function SpendingPage() {
             <h2 className="text-sm font-semibold">Spending by category</h2>
             <p className="text-xs text-ink-faint">
               USD · {tf.label} · excludes internal transfers · bars colored by necessity
+              · top {CATEGORY_TOP_N} by spend · remainder as “Smaller categories”
               · click a bar to open matching transactions
             </p>
           </div>
@@ -280,7 +286,7 @@ export function SpendingPage() {
                   dataKey="name"
                   stroke="#6b7a90"
                   fontSize={11}
-                  width={120}
+                  width={148}
                   tick={{ fill: "#9aa8bc" }}
                 />
                 <Tooltip
@@ -304,6 +310,20 @@ export function SpendingPage() {
                   }}
                   formatter={(v: number, _n: string, item: { payload?: CategoryBar }) => {
                     const p = item?.payload;
+                    if (p?.id === "other_rollup") {
+                      const names = p.rollupNames?.slice(0, 8) ?? [];
+                      const more =
+                        (p.rollupNames?.length ?? 0) > 8
+                          ? ` +${(p.rollupNames!.length - 8)} more`
+                          : "";
+                      const list = names.length
+                        ? ` · ${names.join(", ")}${more}`
+                        : "";
+                      return [
+                        `${formatUsd(v)} · ${p.pct}% · outside top ${CATEGORY_TOP_N} by spend (not Uncategorized)${list}`,
+                        "Spend",
+                      ];
+                    }
                     const nec = p ? NECESSITY_LABEL[p.necessity] || p.necessity : "";
                     const domain = p?.life_domain || "";
                     const pct = p?.pct != null ? `${p.pct}%` : "";
