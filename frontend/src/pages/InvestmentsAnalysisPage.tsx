@@ -52,7 +52,7 @@ export function InvestmentsAnalysisPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Investments analysis</h1>
         <p className="text-sm text-ink-muted">
-          Portfolio health · cashflow · fees · staking · draw · MV history · CZK/USD
+          Portfolio health · cashflow · fees · staking · draw · live MV history · CZK/USD
         </p>
         <InvestmentsSubNav active="analysis" />
       </div>

@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     # Prices
     price_cache_ttl_seconds: int = 60
     price_history_cache_ttl_seconds: int = 3600
+    price_history_intraday_cache_ttl_seconds: int = 90
     yfinance_enabled: bool = True
 
     # Domain defaults

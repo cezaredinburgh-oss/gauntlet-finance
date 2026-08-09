@@ -209,9 +209,14 @@ def run_fx_full_pipeline(
 def run_portfolio_snapshot_job(
     repo: SheetsRepository, params: dict[str, Any]
 ) -> dict[str, Any]:
-    from backend.services.portfolio_history import run_portfolio_snapshot_job as _run
-
-    return _run(repo, params)
+    """Deprecated: MV charts use GET /prices/history (no snapshot table writes)."""
+    return {
+        "status": "deprecated",
+        "message": (
+            "portfolio-snapshot is no longer needed; "
+            "use /prices/history scope=all for portfolio MV series"
+        ),
+    }
 
 
 KIND_RUNNERS: dict[str, JobFn] = {

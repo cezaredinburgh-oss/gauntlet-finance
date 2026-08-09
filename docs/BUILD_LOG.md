@@ -4,12 +4,19 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-09 — Chart v2: 1D, pop-out, Analysis MV without snapshots
+
+- History ranges add **1D** (5m bars); meta includes **today** open/last/change for any range.
+- Scope **`all`** = full portfolio mark series; Analysis `PortfolioMvChart` uses `/prices/history` (not `PortfolioSnapshots`).
+- **Pop out** → `/investments/chart` chrome-free window; auto-refresh 60s on 1D.
+- Price refresh **no longer writes** portfolio snapshots; job `portfolio-snapshot` returns deprecated.
+
 ## 2026-08-09 — Position price history chart (Google Finance–style)
 
-- `GET /api/prices/history?scope=ticker|asset_class&range=…` — yfinance daily bars, in-process 1h cache.
-- Scopes: individual open ticker; **all Stock** / **all Crypto** as current holdings × historical closes (not event-replay path).
-- Holdings page chart: Stocks | Crypto | ticker chips + 1M…MAX ranges; avg-cost / cost-basis reference line.
-- Digest rows include `asset_class` for scope chips. No OHLCV stored in Sheets.
+- `GET /api/prices/history?scope=ticker|asset_class|all&range=…` — yfinance daily/5m bars, process cache.
+- Scopes: ticker; Stock/Crypto books; full portfolio — current holdings × historical prices.
+- Holdings chart + pop-out; avg-cost / cost-basis reference line. No OHLCV in Sheets.
+
 
 ## 2026-08-08 — Fix: PortfolioSnapshots missing tab 500
 

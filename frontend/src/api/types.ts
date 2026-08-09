@@ -469,14 +469,23 @@ export type TickerDigest = {
   missing_price: boolean;
 };
 
-export type PriceHistoryRange = "1m" | "3m" | "6m" | "ytd" | "1y" | "5y" | "max";
+export type PriceHistoryRange =
+  | "1d"
+  | "1m"
+  | "3m"
+  | "6m"
+  | "ytd"
+  | "1y"
+  | "5y"
+  | "max";
 
 export type PriceHistory = {
-  scope: "ticker" | "asset_class" | string;
+  scope: "ticker" | "asset_class" | "all" | string;
   label: string;
   range: string;
   currency: string;
   series_kind: "price" | "market_value" | string;
+  interval?: string;
   as_of: string;
   points: Array<{ date: string; value: string }>;
   meta: {
@@ -488,8 +497,14 @@ export type PriceHistory = {
     first_value?: string | null;
     last_value?: string | null;
     change_pct?: number | null;
+    change_abs?: string | null;
+    day_open?: string | null;
+    day_last?: string | null;
+    day_change_pct?: number | null;
+    day_change_abs?: string | null;
     quantity_basis?: string;
     note?: string;
+    point_kind?: string;
   };
 };
 

@@ -20,23 +20,24 @@ async def price_history(
     repo: RepoDep,
     settings: SettingsDep,
     _user: UserDep,
-    scope: Literal["ticker", "asset_class"] = Query(...),
+    scope: Literal["ticker", "asset_class", "all"] = Query(...),
     range_key: str = Query(
         "1y",
         alias="range",
-        description="1m|3m|6m|ytd|1y|5y|max",
+        description="1d|1m|3m|6m|ytd|1y|5y|max",
     ),
     ticker: str | None = Query(None),
     asset_class: str | None = Query(
         None, description="Stock or Crypto when scope=asset_class"
     ),
 ) -> PriceHistoryResponse:
-    """Google Finance–style daily history for open positions (yfinance)."""
+    """Google Finance–style history for open positions (yfinance daily / 5m)."""
     if not settings.yfinance_enabled:
         raise HTTPException(status_code=503, detail="yfinance disabled")
     svc = PriceHistoryService(
         repo,
         cache_ttl_seconds=settings.price_history_cache_ttl_seconds,
+        intraday_cache_ttl_seconds=settings.price_history_intraday_cache_ttl_seconds,
         enabled=True,
     )
     try:
@@ -63,6 +64,7 @@ async def price_history(
         range=result.range,
         currency=result.currency,
         series_kind=result.series_kind,
+        interval=result.interval,
         as_of=result.as_of.isoformat(),
         points=[{"date": p["date"], "value": p["value"]} for p in result.points],
         meta=result.meta,
@@ -88,22 +90,8 @@ async def refresh_prices(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Price fetch failed: {exc}") from exc
 
-    # Point-in-time MV history (one row per day; best-effort)
-    try:
-        from backend.services.portfolio_history import record_portfolio_snapshot
-        from backend.services.portfolio_snapshot import portfolio_snapshot
-
-        snap = portfolio_snapshot(
-            repo, exemption_days=settings.holding_period_exemption_days
-        )
-        record_portfolio_snapshot(
-            repo,
-            source="price_refresh",
-            snap=snap,
-            exemption_days=settings.holding_period_exemption_days,
-        )
-    except Exception:  # noqa: BLE001
-        pass
+    # Portfolio MV charts use /prices/history (current holdings × market series).
+    # No longer write PortfolioSnapshots on refresh.
 
     cache_invalidate("snap:")
     cache_invalidate("dash:")

@@ -20,6 +20,7 @@ import { TaxPage } from "./pages/TaxPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { UploadPage } from "./pages/UploadPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { ChartPopoutPage } from "./pages/ChartPopoutPage";
 
 const SESSION_BOOT_KEY = "gauntlet.session_boot";
 
@@ -82,6 +83,15 @@ export default function App() {
       <BrowserRouter>
         <PreferDashboardOnLaunch />
         <Routes>
+          {/* Chart-only pop-out window (no app chrome) */}
+          <Route
+            path="investments/chart"
+            element={
+              <Protected>
+                <ChartPopoutPage />
+              </Protected>
+            }
+          />
           <Route
             element={
               <Protected>

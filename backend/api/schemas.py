@@ -88,6 +88,7 @@ class PriceHistoryResponse(BaseModel):
     range: str
     currency: str
     series_kind: str
+    interval: str = "1d"
     as_of: str
     points: list[PriceHistoryPoint]
     meta: dict[str, Any] = Field(default_factory=dict)

@@ -14,6 +14,7 @@ from backend.services.price_history import (
     aggregate_mv_series,
     clear_history_cache,
     range_to_yfinance_period,
+    range_to_yfinance_spec,
 )
 from backend.sheets.repository import InMemorySheetsRepository
 
@@ -59,6 +60,7 @@ def test_range_to_period():
     assert range_to_yfinance_period("1y") == "1y"
     assert range_to_yfinance_period("1m") == "1mo"
     assert range_to_yfinance_period("YTD") == "ytd"
+    assert range_to_yfinance_spec("1d") == ("1d", "5m", "intraday")
     with pytest.raises(ValueError):
         range_to_yfinance_period("2w")
 
@@ -67,22 +69,19 @@ def test_aggregate_mv_forward_fill():
     qty = {"AAA": Decimal("10"), "BBB": Decimal("2")}
     closes = {
         "AAA": [
-            (date(2026, 1, 1), Decimal("1")),
-            (date(2026, 1, 2), Decimal("2")),
-            (date(2026, 1, 3), Decimal("2")),
+            ("2026-01-01", Decimal("1")),
+            ("2026-01-02", Decimal("2")),
+            ("2026-01-03", Decimal("2")),
         ],
         "BBB": [
-            (date(2026, 1, 2), Decimal("100")),
-            (date(2026, 1, 3), Decimal("110")),
+            ("2026-01-02", Decimal("100")),
+            ("2026-01-03", Decimal("110")),
         ],
     }
     series = aggregate_mv_series(qty, closes)
-    # Day1: only AAA → 10*1 = 10
-    assert series[0] == (date(2026, 1, 1), Decimal("10.00"))
-    # Day2: 10*2 + 2*100 = 220
-    assert series[1] == (date(2026, 1, 2), Decimal("220.00"))
-    # Day3: 10*2 + 2*110 = 240
-    assert series[2] == (date(2026, 1, 3), Decimal("240.00"))
+    assert series[0] == ("2026-01-01", Decimal("10.00"))
+    assert series[1] == ("2026-01-02", Decimal("220.00"))
+    assert series[2] == ("2026-01-03", Decimal("240.00"))
 
 
 def test_history_ticker_mocked():
@@ -92,25 +91,60 @@ def test_history_ticker_mocked():
         [_lot(ticker="DOGE", asset_class=AssetClass.CRYPTO, qty="100", cost_usd="10")],
     )
 
-    def fake_fetch(yahoo_symbols, yahoo_map, period):
-        assert period == "1y"
-        assert any("DOGE" in s for s in yahoo_symbols)
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
         our = yahoo_map[yahoo_symbols[0]]
+        if period == "1d":
+            return {
+                our: [
+                    ("2026-08-09T14:00:00+00:00", Decimal("0.15")),
+                    ("2026-08-09T15:00:00+00:00", Decimal("0.16")),
+                ]
+            }
+        assert period == "1y"
+        assert interval == "1d"
         return {
             our: [
-                (date(2026, 1, 1), Decimal("0.10")),
-                (date(2026, 6, 1), Decimal("0.20")),
+                ("2026-01-01", Decimal("0.10")),
+                ("2026-06-01", Decimal("0.20")),
             ]
         }
 
     svc = PriceHistoryService(repo, fetcher=fake_fetch)
     result = svc.history(scope="ticker", range_key="1y", ticker="DOGE")
     assert result.series_kind == "price"
+    assert result.interval == "1d"
     assert result.label == "DOGE"
     assert len(result.points) == 2
     assert result.meta["change_pct"] == 100.0
     assert result.meta["avg_cost_usd"] == "0.1000"
+    assert result.meta["day_change_pct"] == pytest.approx(6.67, abs=0.02)
     assert result.meta["missing_tickers"] == []
+
+
+def test_history_1d_intraday():
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [_lot(ticker="PLTR", asset_class=AssetClass.STOCK, qty="10", cost_usd="100")],
+    )
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        assert period == "1d"
+        assert interval == "5m"
+        our = yahoo_map[yahoo_symbols[0]]
+        return {
+            our: [
+                ("2026-08-09T14:30:00+00:00", Decimal("20")),
+                ("2026-08-09T15:30:00+00:00", Decimal("22")),
+            ]
+        }
+
+    svc = PriceHistoryService(repo, fetcher=fake_fetch)
+    result = svc.history(scope="ticker", range_key="1d", ticker="PLTR")
+    assert result.interval == "5m"
+    assert result.meta["point_kind"] == "intraday"
+    assert result.meta["day_change_pct"] == 10.0
+    assert result.meta["change_pct"] == 10.0
 
 
 def test_history_crypto_class_mocked():
@@ -124,18 +158,23 @@ def test_history_crypto_class_mocked():
         ],
     )
 
-    def fake_fetch(yahoo_symbols, yahoo_map, period):
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
         out = {}
         for ysym, our in yahoo_map.items():
             if our == "DOGE":
                 out[our] = [
-                    (date(2026, 1, 1), Decimal("0.10")),
-                    (date(2026, 1, 2), Decimal("0.20")),
+                    ("2026-01-01", Decimal("0.10")),
+                    ("2026-01-02", Decimal("0.20")),
                 ]
             elif our == "BTC":
                 out[our] = [
-                    (date(2026, 1, 1), Decimal("40000")),
-                    (date(2026, 1, 2), Decimal("42000")),
+                    ("2026-01-01", Decimal("40000")),
+                    ("2026-01-02", Decimal("42000")),
+                ]
+            elif our == "PLTR":
+                out[our] = [
+                    ("2026-01-01", Decimal("20")),
+                    ("2026-01-02", Decimal("21")),
                 ]
         return out
 
@@ -144,11 +183,38 @@ def test_history_crypto_class_mocked():
     assert result.series_kind == "market_value"
     assert result.label == "Crypto"
     assert set(result.meta["tickers"]) == {"BTC", "DOGE"}
-    # Day1: 100*0.10 + 0.5*40000 = 10 + 20000 = 20010
     assert result.points[0]["value"] == "20010.00"
-    # Day2: 100*0.20 + 0.5*42000 = 20 + 21000 = 21020
     assert result.points[1]["value"] == "21020.00"
     assert Decimal(result.meta["cost_basis_usd"]) == Decimal("20010.00")
+
+
+def test_history_all_portfolio():
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [
+            _lot(ticker="DOGE", asset_class=AssetClass.CRYPTO, qty="100", cost_usd="10"),
+            _lot(ticker="PLTR", asset_class=AssetClass.STOCK, qty="10", cost_usd="200"),
+        ],
+    )
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        out = {}
+        for ysym, our in yahoo_map.items():
+            if our == "DOGE":
+                out[our] = [("2026-01-01", Decimal("0.10")), ("2026-01-02", Decimal("0.20"))]
+            elif our == "PLTR":
+                out[our] = [("2026-01-01", Decimal("20")), ("2026-01-02", Decimal("25"))]
+        return out
+
+    svc = PriceHistoryService(repo, fetcher=fake_fetch)
+    result = svc.history(scope="all", range_key="1y")
+    assert result.scope == "all"
+    assert result.label == "Portfolio"
+    # Day1: 100*0.10 + 10*20 = 210
+    assert result.points[0]["value"] == "210.00"
+    # Day2: 100*0.20 + 10*25 = 270
+    assert result.points[1]["value"] == "270.00"
 
 
 def test_history_missing_open_ticker():

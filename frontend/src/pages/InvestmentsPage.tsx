@@ -90,14 +90,8 @@ function comparePerformance(a: TickerDigest, b: TickerDigest): number {
 }
 
 function defaultChartScope(tickers: TickerDigest[]): ChartScope | null {
-  if (tickers.some((t) => (t.asset_class || "").toLowerCase() === "crypto")) {
-    return { kind: "asset_class", asset_class: "Crypto" };
-  }
-  if (tickers.some((t) => (t.asset_class || "").toLowerCase() === "stock")) {
-    return { kind: "asset_class", asset_class: "Stock" };
-  }
-  const best = [...tickers].sort(comparePerformance)[0];
-  return best ? { kind: "ticker", ticker: best.ticker } : null;
+  if (tickers.length > 0) return { kind: "all" };
+  return null;
 }
 
 export function InvestmentsPage() {
@@ -148,6 +142,7 @@ export function InvestmentsPage() {
       });
       setChartScope((prev) => {
         if (preserveSelection && prev) {
+          if (prev.kind === "all" && digR.tickers.length > 0) return prev;
           if (prev.kind === "ticker" && digR.tickers.some((t) => t.ticker === prev.ticker)) {
             return prev;
           }

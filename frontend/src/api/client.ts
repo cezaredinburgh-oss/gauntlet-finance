@@ -442,7 +442,7 @@ export const api = {
     request<PriceRefresh>(`/prices/refresh${qs({ force })}`, { method: "POST" }),
 
   priceHistory: (params: {
-    scope: "ticker" | "asset_class";
+    scope: "ticker" | "asset_class" | "all";
     range?: PriceHistoryRange | string;
     ticker?: string;
     asset_class?: string;
