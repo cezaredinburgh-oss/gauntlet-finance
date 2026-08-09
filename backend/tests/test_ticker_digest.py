@@ -120,6 +120,7 @@ def test_multi_platform_qty_and_tax_tranches():
     assert Decimal(pltr["market_value_usd"]) == Decimal("2213.40")
     # Cost 1200 → unrealized 1013.4 → ROI ~84.45% → grade A
     assert pltr["roi_grade"] == "A"
+    assert pltr["asset_class"] == "Stock"
 
     now_tr = next(t for t in pltr["tax_tranches"] if t["key"] == "now")
     assert Decimal(now_tr["quantity"]) == Decimal("100.0000")

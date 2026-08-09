@@ -77,6 +77,22 @@ class PriceRefreshResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class PriceHistoryPoint(BaseModel):
+    date: str
+    value: str
+
+
+class PriceHistoryResponse(BaseModel):
+    scope: str
+    label: str
+    range: str
+    currency: str
+    series_kind: str
+    as_of: str
+    points: list[PriceHistoryPoint]
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
 class AuthMeResponse(BaseModel):
     email: str
     name: str | None = None

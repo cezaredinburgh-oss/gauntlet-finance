@@ -17,6 +17,8 @@ import type {
   Paginated,
   PeriodKey,
   PortfolioSnapshot,
+  PriceHistory,
+  PriceHistoryRange,
   PriceRefresh,
   SheetsStatus,
   TickerDigestsResponse,
@@ -438,4 +440,19 @@ export const api = {
 
   refreshPrices: (force = false) =>
     request<PriceRefresh>(`/prices/refresh${qs({ force })}`, { method: "POST" }),
+
+  priceHistory: (params: {
+    scope: "ticker" | "asset_class";
+    range?: PriceHistoryRange | string;
+    ticker?: string;
+    asset_class?: string;
+  }) =>
+    request<PriceHistory>(
+      `/prices/history${qs({
+        scope: params.scope,
+        range: params.range ?? "1y",
+        ticker: params.ticker,
+        asset_class: params.asset_class,
+      })}`,
+    ),
 };

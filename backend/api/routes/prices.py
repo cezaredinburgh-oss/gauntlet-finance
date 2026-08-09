@@ -1,15 +1,72 @@
-"""Price refresh endpoint (UI button)."""
+"""Price refresh + historical series endpoints."""
 
 from __future__ import annotations
+
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.api.deps import RepoDep, SettingsDep, UserDep
-from backend.api.schemas import PriceRefreshResponse
+from backend.api.schemas import PriceHistoryResponse, PriceRefreshResponse
+from backend.services.price_history import PriceHistoryService
 from backend.services.prices import PriceService
 from backend.services.response_cache import cache_invalidate
 
 router = APIRouter(tags=["prices"])
+
+
+@router.get("/prices/history", response_model=PriceHistoryResponse)
+async def price_history(
+    repo: RepoDep,
+    settings: SettingsDep,
+    _user: UserDep,
+    scope: Literal["ticker", "asset_class"] = Query(...),
+    range_key: str = Query(
+        "1y",
+        alias="range",
+        description="1m|3m|6m|ytd|1y|5y|max",
+    ),
+    ticker: str | None = Query(None),
+    asset_class: str | None = Query(
+        None, description="Stock or Crypto when scope=asset_class"
+    ),
+) -> PriceHistoryResponse:
+    """Google Finance–style daily history for open positions (yfinance)."""
+    if not settings.yfinance_enabled:
+        raise HTTPException(status_code=503, detail="yfinance disabled")
+    svc = PriceHistoryService(
+        repo,
+        cache_ttl_seconds=settings.price_history_cache_ttl_seconds,
+        enabled=True,
+    )
+    try:
+        result = svc.history(
+            scope=scope,
+            range_key=range_key,
+            ticker=ticker,
+            asset_class=asset_class,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Price history fetch failed: {exc}"
+        ) from exc
+
+    return PriceHistoryResponse(
+        scope=result.scope,
+        label=result.label,
+        range=result.range,
+        currency=result.currency,
+        series_kind=result.series_kind,
+        as_of=result.as_of.isoformat(),
+        points=[{"date": p["date"], "value": p["value"]} for p in result.points],
+        meta=result.meta,
+    )
 
 
 @router.post("/prices/refresh", response_model=PriceRefreshResponse)

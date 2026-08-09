@@ -22,7 +22,11 @@ import { HoverPanel } from "../components/HoverPanel";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import { d, formatQty, formatUsd } from "../lib/money";
 import { cn } from "../lib/cn";
-import { InvestmentsSubNav } from "../features/investments";
+import {
+  InvestmentsSubNav,
+  PositionHistoryChart,
+  type ChartScope,
+} from "../features/investments";
 
 const TAX_TRANCHE_COLORS: Record<string, string> = {
   now: "#2dd4a8",
@@ -85,6 +89,17 @@ function comparePerformance(a: TickerDigest, b: TickerDigest): number {
   return a.ticker.localeCompare(b.ticker);
 }
 
+function defaultChartScope(tickers: TickerDigest[]): ChartScope | null {
+  if (tickers.some((t) => (t.asset_class || "").toLowerCase() === "crypto")) {
+    return { kind: "asset_class", asset_class: "Crypto" };
+  }
+  if (tickers.some((t) => (t.asset_class || "").toLowerCase() === "stock")) {
+    return { kind: "asset_class", asset_class: "Stock" };
+  }
+  const best = [...tickers].sort(comparePerformance)[0];
+  return best ? { kind: "ticker", ticker: best.ticker } : null;
+}
+
 export function InvestmentsPage() {
   const [searchParams] = useSearchParams();
   const focus = searchParams.get("focus") || "";
@@ -94,9 +109,22 @@ export function InvestmentsPage() {
   const [snap, setSnap] = useState<PortfolioSnapshot | null>(null);
   const [digests, setDigests] = useState<TickerDigest[]>([]);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [chartScope, setChartScope] = useState<ChartScope | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  function selectTicker(ticker: string) {
+    setSelectedTicker(ticker);
+    setChartScope({ kind: "ticker", ticker });
+  }
+
+  function onChartScope(scope: ChartScope) {
+    setChartScope(scope);
+    if (scope.kind === "ticker") {
+      setSelectedTicker(scope.ticker);
+    }
+  }
 
   const load = async (opts?: { quiet?: boolean; preserveSelection?: boolean }) => {
     const quiet = opts?.quiet ?? false;
@@ -117,6 +145,20 @@ export function InvestmentsPage() {
         if (prev && digR.tickers.some((t) => t.ticker === prev)) return prev;
         const best = [...digR.tickers].sort(comparePerformance)[0];
         return best?.ticker ?? null;
+      });
+      setChartScope((prev) => {
+        if (preserveSelection && prev) {
+          if (prev.kind === "ticker" && digR.tickers.some((t) => t.ticker === prev.ticker)) {
+            return prev;
+          }
+          if (prev.kind === "asset_class") {
+            const ac = prev.asset_class.toLowerCase();
+            if (digR.tickers.some((t) => (t.asset_class || "").toLowerCase() === ac)) {
+              return prev;
+            }
+          }
+        }
+        return defaultChartScope(digR.tickers);
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
@@ -139,6 +181,7 @@ export function InvestmentsPage() {
           setDigests(digR.tickers);
           const best = [...digR.tickers].sort(comparePerformance)[0];
           setSelectedTicker(best?.ticker ?? null);
+          setChartScope(defaultChartScope(digR.tickers));
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed");
@@ -297,6 +340,14 @@ export function InvestmentsPage() {
         />
       ) : (
         <>
+          {digests.length > 0 && chartScope && (
+            <PositionHistoryChart
+              digests={sortedDigests}
+              scope={chartScope}
+              onScopeChange={onChartScope}
+            />
+          )}
+
           {/* Verify holdings first — primary desk-check workflow */}
           {digests.length > 0 && (
             <div className="card p-5">
@@ -324,7 +375,7 @@ export function InvestmentsPage() {
                       title={`${t.ticker} · grade ${t.roi_grade} (${t.roi_grade_label})${
                         t.missing_price ? " · no quote" : ""
                       }`}
-                      onClick={() => setSelectedTicker(t.ticker)}
+                      onClick={() => selectTicker(t.ticker)}
                       className={cn(
                         "rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition",
                         active ? chip.active : chip.idle,

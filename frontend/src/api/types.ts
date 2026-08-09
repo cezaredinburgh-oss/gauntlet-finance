@@ -439,6 +439,8 @@ export type TaxTranche = {
 
 export type TickerDigest = {
   ticker: string;
+  /** Stock | Crypto when known from open lots */
+  asset_class?: string | null;
   quantity_total: string;
   by_platform: TickerPlatformSplit[];
   multi_platform: boolean;
@@ -465,6 +467,30 @@ export type TickerDigest = {
   last_acquired: string | null;
   open_lot_count: number;
   missing_price: boolean;
+};
+
+export type PriceHistoryRange = "1m" | "3m" | "6m" | "ytd" | "1y" | "5y" | "max";
+
+export type PriceHistory = {
+  scope: "ticker" | "asset_class" | string;
+  label: string;
+  range: string;
+  currency: string;
+  series_kind: "price" | "market_value" | string;
+  as_of: string;
+  points: Array<{ date: string; value: string }>;
+  meta: {
+    tickers?: string[];
+    missing_tickers?: string[];
+    cost_basis_usd?: string | null;
+    avg_cost_usd?: string | null;
+    quantity?: string | null;
+    first_value?: string | null;
+    last_value?: string | null;
+    change_pct?: number | null;
+    quantity_basis?: string;
+    note?: string;
+  };
 };
 
 export type TickerDigestsResponse = {

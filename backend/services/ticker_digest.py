@@ -156,6 +156,13 @@ def build_ticker_digests(
         next_unlock: date | None = None
         next_unlock_qty = Decimal("0")
 
+        # Prefer first non-null asset class among open lots for this ticker
+        asset_class_val: str | None = None
+        for lot in t_lots:
+            if lot.asset_class is not None:
+                asset_class_val = lot.asset_class.value
+                break
+
         for lot in t_lots:
             qty = lot.quantity_remaining
             if qty <= 0:
@@ -246,6 +253,7 @@ def build_ticker_digests(
         raw_rows.append(
             {
                 "ticker": ticker,
+                "asset_class": asset_class_val,
                 "quantity_total": qty_total,
                 "cost_basis_usd": cost_total,
                 "market_value_usd": mv,
@@ -326,6 +334,7 @@ def build_ticker_digests(
         digests.append(
             {
                 "ticker": r["ticker"],
+                "asset_class": r.get("asset_class"),
                 "quantity_total": _str_dec(r["quantity_total"], 4),
                 "by_platform": r["by_platform"],
                 "multi_platform": r["multi_platform"],

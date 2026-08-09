@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-09 — Position price history chart (Google Finance–style)
+
+- `GET /api/prices/history?scope=ticker|asset_class&range=…` — yfinance daily bars, in-process 1h cache.
+- Scopes: individual open ticker; **all Stock** / **all Crypto** as current holdings × historical closes (not event-replay path).
+- Holdings page chart: Stocks | Crypto | ticker chips + 1M…MAX ranges; avg-cost / cost-basis reference line.
+- Digest rows include `asset_class` for scope chips. No OHLCV stored in Sheets.
+
 ## 2026-08-08 — Fix: PortfolioSnapshots missing tab 500
 
 - Root cause: `PortfolioSnapshots` not in live spreadsheet; `list_rows` raised on parse range.
