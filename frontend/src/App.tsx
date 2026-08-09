@@ -1,4 +1,12 @@
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { useEffect } from "react";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { Layout } from "./components/Layout";
 import { LoginPage } from "./components/LoginPage";
@@ -12,6 +20,35 @@ import { TaxPage } from "./pages/TaxPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { UploadPage } from "./pages/UploadPage";
 import { SettingsPage } from "./pages/SettingsPage";
+
+const SESSION_BOOT_KEY = "gauntlet.session_boot";
+
+/**
+ * Prefer Dashboard on cold open.
+ *
+ * iOS "Add to Home Screen" and browser restore often reopen the last URL
+ * (frequently /settings after deploy/setup). Force home once per tab session
+ * so the app feels like it starts on the executive dashboard. In-session
+ * visits to Settings still work.
+ */
+function PreferDashboardOnLaunch() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(SESSION_BOOT_KEY)) return;
+      sessionStorage.setItem(SESSION_BOOT_KEY, "1");
+    } catch {
+      /* private mode / blocked storage — still try to home from settings */
+    }
+    if (location.pathname === "/settings") {
+      navigate("/", { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
+  return null;
+}
 
 function Protected({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -43,6 +80,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <PreferDashboardOnLaunch />
         <Routes>
           <Route
             element={
@@ -52,6 +90,7 @@ export default function App() {
             }
           >
             <Route index element={<DashboardPage />} />
+            <Route path="dashboard" element={<Navigate to="/" replace />} />
             <Route path="expenses">
               <Route index element={<Navigate to="spending" replace />} />
               <Route path="spending" element={<SpendingPage />} />

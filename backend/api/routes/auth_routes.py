@@ -59,8 +59,11 @@ async def callback(
         raise HTTPException(status_code=400, detail="Google account has no email")
 
     token = create_session_token(settings, session_user)
-    # Redirect to API docs or configured frontend
-    dest = settings.cors_origin_list[0] if settings.cors_origin_list else "/docs"
+    # Always land on the SPA dashboard (not /settings, /docs, or a deep link).
+    if settings.cors_origin_list:
+        dest = settings.cors_origin_list[0].rstrip("/") + "/"
+    else:
+        dest = "/"
     resp = RedirectResponse(url=dest, status_code=302)
     resp.set_cookie(
         settings.session_cookie_name,

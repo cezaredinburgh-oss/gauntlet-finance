@@ -26,6 +26,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 - `GET /api/investments/mv-series`, `draw-metrics`; Analysis charts; Dashboard compact draw card.
 - Safe draw = min(4% × MV, tax_free_now_usd) vs 12m living draw (sells − buys).
 
+## 2026-08-09 — Open app on Dashboard
+
+- Cold session landing on `/settings` (common iOS home-screen / tab restore after setup) redirects once to `/`.
+- Brand header links home; OAuth callback → site root; PWA manifest `scope`/`id` set to `/`.
+
 ## 2026-08-09 — Transfer-leak false positives (peer P2P)
 
 - Live diagnosis: remaining “unflagged transfers” were **peer** Revolut rows (`Transfer to NAME`) already in **Going out / Fitness**.

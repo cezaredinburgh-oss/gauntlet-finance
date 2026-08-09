@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   LineChart,
@@ -328,10 +328,12 @@ export function Layout() {
       {/* Desktop sidebar — sticky so it stays visible while main scrolls */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-500/20 bg-surface-raised/95 backdrop-blur-md lg:sticky lg:top-0 lg:flex lg:h-screen lg:max-h-screen">
         <div className="safe-top border-b border-slate-500/20 px-4 py-5">
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-faint">
-            Gauntlet
-          </div>
-          <div className="text-lg font-bold tracking-tight">Finance</div>
+          <Link to="/" className="block rounded-lg outline-none ring-brand/40 focus-visible:ring-2">
+            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-faint">
+              Gauntlet
+            </div>
+            <div className="text-lg font-bold tracking-tight">Finance</div>
+          </Link>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           <NavItems />
@@ -364,7 +366,9 @@ export function Layout() {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <span className="font-semibold">Gauntlet</span>
+            <Link to="/" className="font-semibold">
+              Gauntlet
+            </Link>
           </div>
           <div className="hidden text-sm text-ink-muted lg:block">
             Personal finance · USD primary

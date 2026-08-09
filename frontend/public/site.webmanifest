@@ -3,6 +3,8 @@
   "short_name": "Gauntlet",
   "description": "Personal statements-only finance desk",
   "start_url": "/",
+  "scope": "/",
+  "id": "/",
   "display": "standalone",
   "background_color": "#0b1220",
   "theme_color": "#0b1220",
