@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
   CartesianGrid,
@@ -21,13 +21,13 @@ import {
 
 const RANGES: { key: PriceHistoryRange; label: string }[] = [
   { key: "1d", label: "1D" },
+  { key: "7d", label: "7D" },
   { key: "1m", label: "1M" },
   { key: "3m", label: "3M" },
   { key: "6m", label: "6M" },
   { key: "ytd", label: "YTD" },
   { key: "1y", label: "1Y" },
   { key: "5y", label: "5Y" },
-  { key: "max", label: "MAX" },
 ];
 
 const TF_KEY = "gauntlet.mvSeries.historyRange";
@@ -37,6 +37,7 @@ type BookScope = "all" | "Stock" | "Crypto";
 function loadRange(): PriceHistoryRange {
   try {
     const raw = localStorage.getItem(TF_KEY);
+    if (raw === "max") return "5y";
     if (raw && RANGES.some((r) => r.key === raw)) return raw as PriceHistoryRange;
   } catch {
     /* ignore */
@@ -70,8 +71,11 @@ export function PortfolioMvChart() {
   const [book, setBook] = useState<BookScope>("all");
   const [data, setData] = useState<PriceHistory | null>(null);
   const [loading, setLoading] = useState(true);
+  const [softUpdating, setSoftUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const hasDataRef = useRef(false);
+  hasDataRef.current = data != null && (data.points?.length ?? 0) > 0;
 
   const onRange = (key: PriceHistoryRange) => {
     setRange(key);
@@ -85,8 +89,12 @@ export function PortfolioMvChart() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
-      setError(null);
+      const isSoft = hasDataRef.current;
+      if (isSoft) setSoftUpdating(true);
+      else {
+        setLoading(true);
+        setError(null);
+      }
       try {
         const res =
           book === "all"
@@ -96,14 +104,22 @@ export function PortfolioMvChart() {
                 asset_class: book,
                 range,
               });
-        if (!cancelled) setData(res);
+        if (!cancelled) {
+          setData(res);
+          setError(null);
+        }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load MV series");
-          setData(null);
+          if (!isSoft) {
+            setError(e instanceof Error ? e.message : "Failed to load MV series");
+            setData(null);
+          }
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setSoftUpdating(false);
+        }
       }
     })();
     return () => {
@@ -160,13 +176,13 @@ export function PortfolioMvChart() {
           </p>
         </div>
         <div className="flex flex-wrap items-start gap-3">
-          {last && !loading && (
+          {last && (
             <div className="text-right">
-              <div className="text-lg font-semibold tabular-nums text-brand">
+              <div className="text-2xl font-semibold tabular-nums tracking-tight text-brand sm:text-3xl">
                 {formatUsd(last.mv)}
               </div>
               {changePct != null && (
-                <div className={cn("text-xs", positive ? "text-ok" : "text-danger")}>
+                <div className={cn("text-sm font-medium", positive ? "text-ok" : "text-danger")}>
                   {changePct >= 0 ? "+" : ""}
                   {changePct.toFixed(1)}% in window
                 </div>
@@ -174,7 +190,7 @@ export function PortfolioMvChart() {
               {dayPct != null && range !== "1d" && (
                 <div
                   className={cn(
-                    "text-[11px] tabular-nums",
+                    "text-xs tabular-nums",
                     dayPositive ? "text-ok" : "text-danger",
                   )}
                 >
@@ -188,6 +204,17 @@ export function PortfolioMvChart() {
                   ({dayPct >= 0 ? "+" : ""}
                   {dayPct.toFixed(1)}%)
                 </div>
+              )}
+              {costRef != null && (
+                <div className="text-sm text-ink-muted">
+                  Cost basis{" "}
+                  <span className="font-medium tabular-nums text-ink">
+                    {formatUsd(costRef)}
+                  </span>
+                </div>
+              )}
+              {softUpdating && (
+                <div className="text-[11px] text-ink-faint">Updating…</div>
               )}
             </div>
           )}
@@ -245,12 +272,12 @@ export function PortfolioMvChart() {
         ))}
       </div>
 
-      {loading && (
+      {loading && rows.length === 0 && (
         <div className="flex h-56 items-center justify-center text-sm text-ink-muted">
           Loading market series…
         </div>
       )}
-      {error && !loading && (
+      {error && rows.length === 0 && !loading && (
         <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
           {error}
         </div>
@@ -260,8 +287,13 @@ export function PortfolioMvChart() {
           No market history yet. Import holdings and ensure yfinance can quote your tickers.
         </div>
       )}
-      {!loading && rows.length > 0 && (
-        <div className="h-64 w-full sm:h-72">
+      {rows.length > 0 && (
+        <div
+          className={cn(
+            "h-64 w-full sm:h-72 transition-opacity duration-300",
+            softUpdating && "opacity-80",
+          )}
+        >
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <defs>

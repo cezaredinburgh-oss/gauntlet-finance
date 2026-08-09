@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-09 — Chart polish: soft 1D refresh, 7D, live dashboard MV
+
+- Soft re-fetch keeps prior series (no blank flash); larger total/change/cost type.
+- Ranges: drop MAX; add **7D**. Layout soft-polls `refreshPrices(false)` every 60s on Dashboard/Investments when tab visible.
+
 ## 2026-08-09 — Fix: timeframes collapsed by short-history tickers
 
 - Root cause: requiring **all** priced names before any MV point made SPCX-like listings (first bar mid-2026) clip 3M–MAX to ~39 days.

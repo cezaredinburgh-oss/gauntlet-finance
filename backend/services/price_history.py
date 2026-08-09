@@ -28,19 +28,19 @@ from backend.sheets.repository import SheetsRepository
 
 logger = logging.getLogger(__name__)
 
-RangeKey = Literal["1d", "1m", "3m", "6m", "ytd", "1y", "5y", "max"]
+RangeKey = Literal["1d", "7d", "1m", "3m", "6m", "ytd", "1y", "5y"]
 ScopeKey = Literal["ticker", "asset_class", "all"]
 
 # (yfinance period, interval, point_kind)
 _RANGE_SPEC: dict[str, tuple[str, str, str]] = {
     "1d": ("1d", "5m", "intraday"),
+    "7d": ("7d", "1d", "daily"),
     "1m": ("1mo", "1d", "daily"),
     "3m": ("3mo", "1d", "daily"),
     "6m": ("6mo", "1d", "daily"),
     "ytd": ("ytd", "1d", "daily"),
     "1y": ("1y", "1d", "daily"),
     "5y": ("5y", "1d", "daily"),
-    "max": ("max", "1d", "daily"),
 }
 
 # Process cache: key -> (fetched_monotonic, closes_by_our_ticker)

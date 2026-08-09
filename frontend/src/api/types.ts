@@ -471,13 +471,13 @@ export type TickerDigest = {
 
 export type PriceHistoryRange =
   | "1d"
+  | "7d"
   | "1m"
   | "3m"
   | "6m"
   | "ytd"
   | "1y"
-  | "5y"
-  | "max";
+  | "5y";
 
 export type PriceHistory = {
   scope: "ticker" | "asset_class" | "all" | string;

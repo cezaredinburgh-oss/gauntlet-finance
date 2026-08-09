@@ -62,8 +62,11 @@ def test_range_to_period():
     assert range_to_yfinance_period("1m") == "1mo"
     assert range_to_yfinance_period("YTD") == "ytd"
     assert range_to_yfinance_spec("1d") == ("1d", "5m", "intraday")
+    assert range_to_yfinance_spec("7d") == ("7d", "1d", "daily")
     with pytest.raises(ValueError):
         range_to_yfinance_period("2w")
+    with pytest.raises(ValueError):
+        range_to_yfinance_period("max")
 
 
 def test_parse_ts_timezone_order():

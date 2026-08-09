@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
   CartesianGrid,
@@ -18,13 +18,13 @@ import { cn } from "../../lib/cn";
 
 const RANGES: { key: PriceHistoryRange; label: string }[] = [
   { key: "1d", label: "1D" },
+  { key: "7d", label: "7D" },
   { key: "1m", label: "1M" },
   { key: "3m", label: "3M" },
   { key: "6m", label: "6M" },
   { key: "ytd", label: "YTD" },
   { key: "1y", label: "1Y" },
   { key: "5y", label: "5Y" },
-  { key: "max", label: "MAX" },
 ];
 
 const RANGE_KEY = "gauntlet.priceHistory.range";
@@ -49,6 +49,7 @@ type Props = {
 function loadRange(preferIntraday?: boolean): PriceHistoryRange {
   try {
     const raw = localStorage.getItem(RANGE_KEY);
+    if (raw === "max") return "5y";
     if (raw && RANGES.some((r) => r.key === raw)) return raw as PriceHistoryRange;
   } catch {
     /* ignore */
@@ -127,8 +128,11 @@ export function PositionHistoryChart({
   const [range, setRange] = useState<PriceHistoryRange>(() => loadRange(preferIntraday));
   const [data, setData] = useState<PriceHistory | null>(null);
   const [loading, setLoading] = useState(true);
+  const [softUpdating, setSoftUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const hasDataRef = useRef(false);
+  hasDataRef.current = data != null && (data.points?.length ?? 0) > 0;
 
   const hasStock = digests.some((t) => (t.asset_class || "").toLowerCase() === "stock");
   const hasCrypto = digests.some((t) => (t.asset_class || "").toLowerCase() === "crypto");
@@ -156,18 +160,32 @@ export function PositionHistoryChart({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
-      setError(null);
+      // Keep prior series visible during 60s polls / scope flips (no blank flash)
+      const isSoft = hasDataRef.current;
+      if (isSoft) {
+        setSoftUpdating(true);
+      } else {
+        setLoading(true);
+        setError(null);
+      }
       try {
         const res = await fetchHistory();
-        if (!cancelled) setData(res);
+        if (!cancelled) {
+          setData(res);
+          setError(null);
+        }
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load history");
-          setData(null);
+          if (!isSoft) {
+            setError(e instanceof Error ? e.message : "Failed to load history");
+            setData(null);
+          }
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setSoftUpdating(false);
+        }
       }
     })();
     return () => {
@@ -266,13 +284,13 @@ export function PositionHistoryChart({
           </p>
         </div>
         <div className="flex flex-wrap items-start gap-3">
-          {last && !loading && (
+          {last && (
             <div className="text-right">
-              <div className="text-lg font-semibold tabular-nums text-brand">
+              <div className="text-2xl font-semibold tabular-nums tracking-tight text-brand sm:text-3xl">
                 {fmt(last.value)}
               </div>
               {changePct != null && (
-                <div className={cn("text-xs", positive ? "text-ok" : "text-danger")}>
+                <div className={cn("text-sm font-medium", positive ? "text-ok" : "text-danger")}>
                   {changeAbs != null && (
                     <span className="mr-1.5 tabular-nums">
                       {changeAbs >= 0 ? "+" : ""}
@@ -286,7 +304,7 @@ export function PositionHistoryChart({
               {dayPct != null && range !== "1d" && (
                 <div
                   className={cn(
-                    "text-[11px] tabular-nums",
+                    "text-xs tabular-nums",
                     dayPositive ? "text-ok" : "text-danger",
                   )}
                 >
@@ -302,10 +320,15 @@ export function PositionHistoryChart({
                 </div>
               )}
               {costRef != null && (
-                <div className="text-[11px] text-ink-faint">
+                <div className="text-sm text-ink-muted">
                   {isPrice ? "Avg cost " : "Cost basis "}
-                  {fmt(costRef)}
+                  <span className="font-medium tabular-nums text-ink">
+                    {fmt(costRef)}
+                  </span>
                 </div>
+              )}
+              {softUpdating && (
+                <div className="text-[11px] text-ink-faint">Updating…</div>
               )}
             </div>
           )}
@@ -375,12 +398,12 @@ export function PositionHistoryChart({
         ))}
       </div>
 
-      {loading && (
+      {loading && rows.length === 0 && (
         <div className={cn("flex items-center justify-center text-sm text-ink-muted", chartH)}>
           Loading chart…
         </div>
       )}
-      {error && !loading && (
+      {error && rows.length === 0 && !loading && (
         <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
           {error}
         </div>
@@ -391,8 +414,14 @@ export function PositionHistoryChart({
           may be closed.
         </div>
       )}
-      {!loading && rows.length > 0 && (
-        <div className={cn("w-full", chartH)}>
+      {rows.length > 0 && (
+        <div
+          className={cn(
+            "w-full transition-opacity duration-300",
+            chartH,
+            softUpdating && "opacity-80",
+          )}
+        >
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <defs>

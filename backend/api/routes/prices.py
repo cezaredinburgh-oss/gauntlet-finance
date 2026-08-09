@@ -24,7 +24,7 @@ async def price_history(
     range_key: str = Query(
         "1y",
         alias="range",
-        description="1d|1m|3m|6m|ytd|1y|5y|max",
+        description="1d|7d|1m|3m|6m|ytd|1y|5y",
     ),
     ticker: str | None = Query(None),
     asset_class: str | None = Query(

@@ -188,6 +188,51 @@ export function Layout() {
     };
   }, []);
 
+  /**
+   * Soft live marks (~60s) on Dashboard + Investments so portfolio MV tracks
+   * the same cadence as 1D charts. Uses force=false (server quote TTL).
+   * Skips when tab hidden or a manual refresh is in flight.
+   */
+  useEffect(() => {
+    const path = location.pathname;
+    const wealth =
+      path === "/" ||
+      path === "/dashboard" ||
+      path.startsWith("/investments");
+    if (!wealth) return;
+
+    let busy = false;
+    const tick = async () => {
+      if (busy) return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      busy = true;
+      try {
+        const r = await api.refreshPrices(false);
+        window.dispatchEvent(
+          new CustomEvent("prices-updated", {
+            detail: { quote_count: r.quote_count, as_of: r.as_of, soft: true },
+          }),
+        );
+      } catch {
+        /* quiet — manual Update prices still available */
+      } finally {
+        busy = false;
+      }
+    };
+
+    const id = window.setInterval(() => void tick(), 60_000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") void tick();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [location.pathname]);
+
   async function refreshPrices() {
     setPriceBusy(true);
     setPriceMsg(null);
