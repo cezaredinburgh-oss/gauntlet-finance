@@ -17,9 +17,14 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Callable, Literal
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    ZoneInfo = None  # type: ignore[misc, assignment]
 
 from backend.common.timeutil import utc_now
 from backend.schema.models import (
@@ -42,8 +47,9 @@ ScopeKey = Literal["ticker", "asset_class", "all"]
 _MAX_TRADE_MARKERS = 300
 
 # (yfinance period, interval, point_kind)
+# 1d uses 5d of 5m bars then trims to session/24h — bare period=1d is empty/fragile at open.
 _RANGE_SPEC: dict[str, tuple[str, str, str]] = {
-    "1d": ("1d", "5m", "intraday"),
+    "1d": ("5d", "5m", "intraday"),
     "7d": ("7d", "1d", "daily"),
     "1m": ("1mo", "1d", "daily"),
     "3m": ("3mo", "1d", "daily"),
@@ -136,6 +142,111 @@ def _parse_ts(ts: str) -> datetime:
 
 # Default: emit MV once this fraction of the book (by latest mark) is priced.
 COVERAGE_THRESHOLD = Decimal("0.90")
+# Early session: partial Yahoo coverage is normal — allow thinner book marks.
+COVERAGE_THRESHOLD_INTRADAY = Decimal("0.50")
+
+
+def _et_zone():
+    if ZoneInfo is not None:
+        try:
+            return ZoneInfo("America/New_York")
+        except Exception:  # noqa: BLE001
+            pass
+    return timezone(timedelta(hours=-4))  # EDT fallback
+
+
+def _to_et(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_et_zone())
+
+
+def trim_intraday_series(
+    series: list[SeriesPoint],
+    *,
+    mode: Literal["rth_today_or_prior", "last_24h"],
+    now: datetime | None = None,
+) -> tuple[list[SeriesPoint], str]:
+    """
+    Trim 5m bars for 1D display.
+
+    rth_today_or_prior — US regular session today; if none yet, prior RTH day.
+    last_24h — rolling 24h (portfolio / crypto).
+    """
+    if not series:
+        return [], "empty"
+
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    if mode == "last_24h":
+        cutoff = now - timedelta(hours=24)
+        out = [(ts, px) for ts, px in series if _parse_ts(ts) >= cutoff]
+        return (out if out else series[-min(12, len(series)) :], "last_24h")
+
+    # US RTH: 09:30–16:00 America/New_York
+    et = _to_et(now)
+    today = et.date()
+    session_open = datetime(today.year, today.month, today.day, 9, 30, tzinfo=_et_zone())
+
+    today_bars: list[SeriesPoint] = []
+    for ts, px in series:
+        tdt = _parse_ts(ts)
+        tet = _to_et(tdt)
+        if tet.date() == today and tet >= session_open:
+            # Keep through session; after-hours 5m usually absent without prepost
+            today_bars.append((ts, px))
+
+    if today_bars:
+        return today_bars, "regular"
+
+    # Prior complete RTH day: last calendar date before today that has bars in 09:30–16:00 ET
+    by_day: dict[date, list[SeriesPoint]] = {}
+    for ts, px in series:
+        tdt = _parse_ts(ts)
+        tet = _to_et(tdt)
+        if tet.date() >= today:
+            continue
+        if tet.hour > 16 or (tet.hour == 16 and tet.minute > 0):
+            continue
+        if tet.hour < 9 or (tet.hour == 9 and tet.minute < 30):
+            continue
+        by_day.setdefault(tet.date(), []).append((ts, px))
+
+    if not by_day:
+        # Fall back to last 78 bars (~RTH length) of whatever we have
+        return series[-min(78, len(series)) :], "prior_session"
+
+    last_day = max(by_day.keys())
+    return by_day[last_day], "prior_session"
+
+
+def trim_closes_map(
+    closes: dict[str, list[SeriesPoint]],
+    *,
+    mode: Literal["rth_today_or_prior", "last_24h"],
+    now: datetime | None = None,
+) -> tuple[dict[str, list[SeriesPoint]], str]:
+    """Trim each ticker; session_status is worst/best summary across tickers."""
+    out: dict[str, list[SeriesPoint]] = {}
+    statuses: list[str] = []
+    for t, series in closes.items():
+        trimmed, st = trim_intraday_series(series, mode=mode, now=now)
+        if trimmed:
+            out[t] = trimmed
+            statuses.append(st)
+    if not statuses:
+        return {}, "empty"
+    if all(s == "regular" for s in statuses):
+        status = "regular"
+    elif any(s == "regular" for s in statuses):
+        status = "regular"  # mixed: some names open
+    elif any(s == "last_24h" for s in statuses):
+        status = "last_24h"
+    else:
+        status = "prior_session"
+    return out, status
 
 
 def _scalar_decimal(val: Any) -> Decimal | None:
@@ -706,20 +817,44 @@ class PriceHistoryService:
         interval: str,
     ) -> dict[str, list[SeriesPoint]]:
         yahoo_map: dict[str, str] = {}
+        equity_syms: list[str] = []
+        crypto_syms: list[str] = []
         for t in tickers:
-            ysym = _normalize_yahoo_symbol(t, asset_classes.get(t))
+            ac = asset_classes.get(t)
+            ysym = _normalize_yahoo_symbol(t, ac)
             yahoo_map[ysym] = t.upper()
+            is_crypto = (ac or "").lower() == "crypto" or ysym.endswith("-USD")
+            (crypto_syms if is_crypto else equity_syms).append(ysym)
+
+        # Split equity vs crypto batches — mixed 1d/5m MultiIndex NaNs crypto at RTH stamps
         yahoo_symbols = list(yahoo_map.keys())
-        cache_key = f"{period}|{interval}|{'|'.join(sorted(yahoo_symbols))}"
-        ttl = self.intraday_cache_ttl if interval != "1d" else self.cache_ttl
+        session_tag = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        cache_key = (
+            f"{period}|{interval}|{session_tag}|{'|'.join(sorted(yahoo_symbols))}"
+        )
+        is_intraday = interval != "1d"
+        ttl = self.intraday_cache_ttl if is_intraday else self.cache_ttl
         now_m = time.monotonic()
         if cache_key in _HISTORY_CACHE:
             fetched, payload = _HISTORY_CACHE[cache_key]
             if now_m - fetched <= ttl:
                 return payload
 
-        payload = self._fetcher(yahoo_symbols, yahoo_map, period, interval)
-        _HISTORY_CACHE[cache_key] = (time.monotonic(), payload)
+        payload: dict[str, list[SeriesPoint]] = {}
+        for group in (equity_syms, crypto_syms):
+            if not group:
+                continue
+            sub_map = {ys: yahoo_map[ys] for ys in group}
+            part = self._fetcher(group, sub_map, period, interval)
+            payload.update(part)
+
+        # Don't pin empty / near-empty intraday results for full TTL (open-flash)
+        max_len = max((len(s) for s in payload.values()), default=0)
+        if is_intraday and max_len < 3:
+            # Short negative cache only
+            _HISTORY_CACHE[cache_key] = (time.monotonic() - max(0, ttl - 15), payload)
+        else:
+            _HISTORY_CACHE[cache_key] = (time.monotonic(), payload)
         return payload
 
     def _resolve_day_change(
@@ -765,6 +900,10 @@ class PriceHistoryService:
         lots = self._open_lots()
         ts = utc_now()
         places = 4 if scope == "ticker" else 2
+        is_intraday = point_kind == "intraday"
+        cov_threshold = (
+            COVERAGE_THRESHOLD_INTRADAY if is_intraday else COVERAGE_THRESHOLD
+        )
 
         if scope == "ticker":
             if not ticker or not ticker.strip():
@@ -774,6 +913,13 @@ class PriceHistoryService:
             if not qty_map:
                 raise LookupError(f"No open position for {t}")
             closes = self._fetch_closes([t], ac_map, period, interval)
+            session_status = "regular"
+            if is_intraday:
+                ac = (ac_map.get(t) or "").lower()
+                mode: Literal["rth_today_or_prior", "last_24h"] = (
+                    "last_24h" if ac == "crypto" else "rth_today_or_prior"
+                )
+                closes, session_status = trim_closes_map(closes, mode=mode)
             series = closes.get(t, [])
             missing = [] if series else [t]
             qty = qty_map[t]
@@ -798,6 +944,10 @@ class PriceHistoryService:
                 if point_kind == "intraday"
                 else "Daily close (USD). Avg cost from open lots · buy/sell markers."
             )
+            if is_intraday and session_status == "prior_session":
+                note = "Prior regular session (today’s open not in Yahoo yet). " + note
+            elif is_intraday and session_status == "regular" and len(series) <= 3:
+                note = f"Session open · {len(series)} bar(s). " + note
             if missing:
                 note = f"No Yahoo history for {ysym}. " + note
             trades = collect_trade_markers(
@@ -823,6 +973,7 @@ class PriceHistoryService:
                     "quantity": str(_q4(qty)),
                     "quantity_basis": "current_open_lots",
                     "trades": trades,
+                    "session_status": session_status if is_intraday else None,
                     "note": note,
                     "point_kind": point_kind,
                     **ch,
@@ -875,8 +1026,18 @@ class PriceHistoryService:
                 )
             tickers = sorted(qty_map.keys())
             closes = self._fetch_closes(tickers, ac_map, period, interval)
+            session_status = "regular"
+            if is_intraday:
+                trim_mode: Literal["rth_today_or_prior", "last_24h"] = (
+                    "last_24h"
+                    if ac_filter is None or ac_filter == AssetClass.CRYPTO
+                    else "rth_today_or_prior"
+                )
+                closes, session_status = trim_closes_map(closes, mode=trim_mode)
             missing = [t for t in tickers if t not in closes or not closes[t]]
-            mv_series, agg_meta = aggregate_mv_series(qty_map, closes)
+            mv_series, agg_meta = aggregate_mv_series(
+                qty_map, closes, coverage_threshold=cov_threshold
+            )
             quantity_basis = "current_open_lots"
             note = (
                 "Fallback: current holdings × historical prices (no event timeline)."
@@ -894,9 +1055,20 @@ class PriceHistoryService:
                 if ac_map.get(t) is None:
                     ac_map[t] = ac
             closes = self._fetch_closes(tickers, ac_map, period, interval)
+            session_status = "regular"
+            if is_intraday:
+                trim_mode = (
+                    "last_24h"
+                    if ac_filter is None or ac_filter == AssetClass.CRYPTO
+                    else "rth_today_or_prior"
+                )
+                closes, session_status = trim_closes_map(closes, mode=trim_mode)
             missing = [t for t in tickers if t not in closes or not closes[t]]
             mv_series, agg_meta = aggregate_mv_series_time_aware(
-                timeline, closes, tickers=tickers
+                timeline,
+                closes,
+                tickers=tickers,
+                coverage_threshold=cov_threshold,
             )
             quantity_basis = "holdings_as_of_each_date"
             note = (
@@ -945,6 +1117,12 @@ class PriceHistoryService:
             note += " Late listings: " + ", ".join(bits)
             if len(short) > 8:
                 note += "…"
+        if is_intraday and session_status == "prior_session":
+            note = "Prior regular session (today’s open not in Yahoo yet). " + note
+        elif is_intraday and session_status == "last_24h":
+            note = "Last 24h (5m). " + note
+        elif is_intraday and len(mv_series) <= 3:
+            note = f"Session open · {len(mv_series)} bar(s). " + note
         trades = collect_trade_markers(
             events,
             points,
@@ -971,6 +1149,7 @@ class PriceHistoryService:
                 "quantity": None,
                 "quantity_basis": quantity_basis,
                 "trades": trades,
+                "session_status": session_status if is_intraday else None,
                 "note": note,
                 "point_kind": point_kind,
                 **ch,

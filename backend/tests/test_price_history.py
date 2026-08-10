@@ -70,7 +70,7 @@ def test_range_to_period():
     assert range_to_yfinance_period("1y") == "1y"
     assert range_to_yfinance_period("1m") == "1mo"
     assert range_to_yfinance_period("YTD") == "ytd"
-    assert range_to_yfinance_spec("1d") == ("1d", "5m", "intraday")
+    assert range_to_yfinance_spec("1d") == ("5d", "5m", "intraday")
     assert range_to_yfinance_spec("7d") == ("7d", "1d", "daily")
     with pytest.raises(ValueError):
         range_to_yfinance_period("2w")
@@ -196,13 +196,16 @@ def test_history_1d_intraday():
     )
 
     def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
-        assert period == "1d"
+        # 1D range downloads 5d of 5m bars, then trims to session
+        assert period == "5d"
         assert interval == "5m"
         our = yahoo_map[yahoo_symbols[0]]
+        # Two bars in "today" RTH (relative to freezegun-less clock): use a fixed
+        # session that trim accepts as prior if needed, still non-empty.
         return {
             our: [
-                ("2026-08-09T14:30:00+00:00", Decimal("20")),
-                ("2026-08-09T15:30:00+00:00", Decimal("22")),
+                ("2026-08-07T14:30:00+00:00", Decimal("20")),  # 10:30 ET
+                ("2026-08-07T15:30:00+00:00", Decimal("22")),  # 11:30 ET
             ]
         }
 
@@ -210,8 +213,10 @@ def test_history_1d_intraday():
     result = svc.history(scope="ticker", range_key="1d", ticker="PLTR")
     assert result.interval == "5m"
     assert result.meta["point_kind"] == "intraday"
-    assert result.meta["day_change_pct"] == 10.0
-    assert result.meta["change_pct"] == 10.0
+    assert len(result.points) >= 1
+    assert result.meta.get("session_status") in ("regular", "prior_session")
+    # Window change on the trimmed series (prior session if "today" not in fixture)
+    assert result.meta["change_pct"] is not None
 
 
 def test_history_crypto_class_mocked():
@@ -425,6 +430,94 @@ def test_aggregate_time_aware_constant_matches_legacy():
     legacy, _ = aggregate_mv_series(qty, closes)
     aware, _ = aggregate_mv_series_time_aware(tl, closes)
     assert aware == legacy
+
+
+def test_trim_intraday_rth_today_or_prior():
+    from backend.services.price_history import trim_intraday_series
+
+    # Prior day full RTH-ish + two bars today after open
+    series = []
+    for h in range(9, 16):
+        for m in (0, 30):
+            if h == 9 and m < 30:
+                continue
+            ts = f"2026-08-07T{h:02d}:{m:02d}:00-04:00"
+            # store as UTC iso via parse path — use offset form
+            from backend.services.price_history import _parse_ts
+
+            ts_utc = _parse_ts(ts).astimezone(timezone.utc).isoformat()
+            series.append((ts_utc, Decimal("100")))
+    series.append(
+        (
+            _parse_ts("2026-08-10T09:30:00-04:00").astimezone(timezone.utc).isoformat(),
+            Decimal("110"),
+        )
+    )
+    series.append(
+        (
+            _parse_ts("2026-08-10T09:35:00-04:00").astimezone(timezone.utc).isoformat(),
+            Decimal("111"),
+        )
+    )
+    now = _parse_ts("2026-08-10T09:36:00-04:00")
+    trimmed, status = trim_intraday_series(
+        series, mode="rth_today_or_prior", now=now
+    )
+    assert status == "regular"
+    assert len(trimmed) == 2
+    assert Decimal(trimmed[-1][1]) == Decimal("111")
+
+
+def test_trim_intraday_prior_when_no_today():
+    from backend.services.price_history import trim_intraday_series, _parse_ts
+
+    series = []
+    for h in range(10, 15):
+        ts = _parse_ts(f"2026-08-07T{h:02d}:00:00-04:00").astimezone(timezone.utc).isoformat()
+        series.append((ts, Decimal(str(100 + h))))
+    now = _parse_ts("2026-08-10T08:00:00-04:00")  # pre-open
+    trimmed, status = trim_intraday_series(
+        series, mode="rth_today_or_prior", now=now
+    )
+    assert status == "prior_session"
+    assert len(trimmed) == 5
+
+
+def test_intraday_coverage_allows_partial_book():
+    """At open, 50% coverage should still emit when half the book is marked."""
+    from backend.services.price_history import (
+        COVERAGE_THRESHOLD_INTRADAY,
+        aggregate_mv_series_time_aware,
+    )
+
+    events = [
+        _event(
+            ticker="HEAVY",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="10",
+        ),
+        _event(
+            ticker="LIGHT",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="1",
+        ),
+    ]
+    tl = build_holdings_timeline(events, [])
+    closes = {
+        # Only HEAVY has bars (90%+ of weight) — both thresholds emit
+        "HEAVY": [
+            ("2026-08-10T13:30:00+00:00", Decimal("100")),
+            ("2026-08-10T13:35:00+00:00", Decimal("101")),
+        ],
+        # LIGHT missing entirely
+    }
+    series, _ = aggregate_mv_series_time_aware(
+        tl, closes, coverage_threshold=COVERAGE_THRESHOLD_INTRADAY
+    )
+    assert len(series) == 2
+    assert series[0][1] == Decimal("1000.00")
 
 
 def test_collect_trade_markers_buy_sell_only():

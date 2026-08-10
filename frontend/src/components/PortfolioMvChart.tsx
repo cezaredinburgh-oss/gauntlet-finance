@@ -201,7 +201,11 @@ export function PortfolioMvChart() {
         <div>
           <h2 className="text-sm font-semibold">{title}</h2>
           <p className="text-xs text-ink-faint">
-            Holdings as of each day × market prices · free Yahoo data
+            {data?.meta?.session_status === "prior_session"
+              ? "Prior session · waiting for today’s open"
+              : data?.meta?.session_status === "last_24h"
+                ? "Last 24h · holdings as-of × market prices"
+                : "Holdings as of each day × market prices · free Yahoo data"}
             {showTrades ? " · buy/sell markers" : ""}
             {range === "1d" ? " · auto-refresh 60s" : ""}
           </p>
@@ -351,7 +355,9 @@ export function PortfolioMvChart() {
       )}
       {!loading && !error && rows.length === 0 && (
         <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-6 text-center text-sm text-ink-muted">
-          No market history yet. Import holdings and ensure yfinance can quote your tickers.
+          {range === "1d"
+            ? "No bars yet for this session — Yahoo may still be catching up after the open. Auto-refresh will retry."
+            : "No market history yet. Import holdings and ensure yfinance can quote your tickers."}
         </div>
       )}
       {rows.length > 0 && (

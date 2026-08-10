@@ -555,6 +555,7 @@ export type PriceHistory = {
     series_start?: string | null;
     short_history_tickers?: Array<{ ticker: string; first_bar: string }>;
     trades?: PriceHistoryTrade[];
+    session_status?: string | null;
   };
 };
 

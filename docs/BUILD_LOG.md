@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — Fix 1D chart at market open
+
+- 1D fetch uses **5d×5m** then trims (US RTH today / prior session; portfolio+crypto last 24h).
+- Split equity vs crypto Yahoo batches; softer **50%** intraday coverage; don’t long-cache empty/short 1D.
+- UI: session_status copy + clearer empty-session message.
+
 ## 2026-08-10 — Buy/sell markers on live portfolio chart
 
 - `/prices/history` meta.trades: statement Buy/Sell in window (no staking); `series_value` snaps to MV/price line.

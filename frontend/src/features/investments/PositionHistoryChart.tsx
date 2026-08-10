@@ -328,9 +328,17 @@ export function PositionHistoryChart({
           <p className="text-xs text-ink-faint">
             {scope.kind === "ticker"
               ? intraday
-                ? "Today · 5m bars (USD)"
+                ? data?.meta?.session_status === "prior_session"
+                  ? "Prior session · waiting for today’s open · 5m"
+                  : data?.meta?.session_status === "last_24h"
+                    ? "Last 24h · 5m bars (USD)"
+                    : "Today · 5m bars (USD)"
                 : "Daily close (USD) · avg cost from open lots"
-              : "Holdings as of each day × market prices · free Yahoo data"}
+              : data?.meta?.session_status === "prior_session"
+                ? "Prior session · waiting for today’s open"
+                : data?.meta?.session_status === "last_24h"
+                  ? "Last 24h · holdings as-of × market prices"
+                  : "Holdings as of each day × market prices · free Yahoo data"}
             {showTrades ? " · buy/sell markers" : ""}
             {range === "1d" && " · auto-refresh 60s"}
           </p>
@@ -489,8 +497,9 @@ export function PositionHistoryChart({
       )}
       {!loading && !error && rows.length === 0 && (
         <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-6 text-center text-sm text-ink-muted">
-          No history returned for this scope. Yahoo may not cover this symbol, or markets
-          may be closed.
+          {range === "1d"
+            ? "No bars yet for this session — Yahoo may still be catching up after the open. Auto-refresh will retry."
+            : "No history returned for this scope. Yahoo may not cover this symbol, or markets may be closed."}
         </div>
       )}
       {rows.length > 0 && (
