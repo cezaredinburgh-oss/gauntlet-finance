@@ -10,12 +10,14 @@ from typing import Any
 
 from backend.schema.models import (
     Category,
+    InvestmentEvent,
     InvestmentLot,
     LotStatus,
     Price,
     Transaction,
 )
 from backend.services.dashboard import _expense_usd_in_window
+from backend.services.dca_opportunities import build_dca_alerts
 from backend.services.fx_amounts import (
     build_fx_service,
     enrich_and_backfill_transactions,
@@ -469,6 +471,31 @@ def build_alerts(
                 ),
             }
         )
+
+    # --- DCA opportunities on existing open positions ---
+    # Signal A: mark clearly below avg cost. Signal B: 3M pullback and/or
+    # drawdown below 52-week average (Yahoo history, fail-open).
+    try:
+        price_by_ticker = {
+            p.ticker.upper(): p
+            for p in repo.list_rows("Prices")
+            if isinstance(p, Price) and not p.archived
+        }
+        events = [
+            r
+            for r in repo.list_rows("InvestmentEvents")
+            if isinstance(r, InvestmentEvent)
+        ]
+        dca_items = build_dca_alerts(
+            lots,
+            events,
+            price_by_ticker,
+            as_of=today,
+            fetch_history=True,
+        )
+        alerts.extend(dca_items)
+    except Exception:  # noqa: BLE001 — never break spend/tax alerts
+        pass
 
     warn_count = sum(1 for a in alerts if a["level"] in ("warn", "danger"))
     danger_count = sum(1 for a in alerts if a["level"] == "danger")

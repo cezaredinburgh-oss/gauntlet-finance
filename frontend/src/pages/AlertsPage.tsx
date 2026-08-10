@@ -38,7 +38,8 @@ export function AlertsPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Alerts</h1>
         <p className="text-sm text-ink-muted">
-          Spend pace, categorization gaps, tax unlocks, prices, and data-quality notes
+          Spend pace, categorization gaps, tax unlocks, DCA opportunities on holdings,
+          prices, and data-quality notes
         </p>
       </div>
 

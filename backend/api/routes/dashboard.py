@@ -68,7 +68,7 @@ async def get_alerts(
 ) -> dict[str, Any]:
     days = settings.holding_period_exemption_days
     return cached(
-        f"alerts:v2:{days}",
+        f"alerts:v3:{days}",
         _ALERTS_TTL,
         lambda: build_alerts(repo, persist_fx=False, exemption_days=days),
     )

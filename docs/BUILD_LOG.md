@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — DCA opportunity alerts
+
+- New alerts on open holdings: **Signal A** mark clearly below avg cost (stock ≥10% / crypto ≥18%); **Signal B** 3M pullback and/or **drawdown below 52-week average** (stock ≥5% / crypto ≥10% under mean), while not extended >5% above book cost.
+- Gates: min position $400, 21d buy cooldown, skip if weight >35%, stale price >7d. Top 3 by score; deep discounts → `warn`.
+- Yahoo 1y history fail-open (process cache); statement lots + Prices only required for Signal A.
+- Tests: `backend/tests/test_alerts_dca.py`. Cache key `alerts:v3`.
+
 ## 2026-08-09 — Live marks for all wealth KPIs
 
 - `DrawMetricsCard` + Analysis snapshot soft-reload on `prices-updated` (no blank spinner).
