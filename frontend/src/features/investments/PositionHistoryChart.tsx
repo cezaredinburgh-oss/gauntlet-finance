@@ -387,13 +387,17 @@ export function PositionHistoryChart({
                   ? "Prior session · waiting for today’s open · 5m"
                   : data?.meta?.session_status === "last_24h"
                     ? "Last 24h · 5m bars (USD)"
-                    : "Today · 5m bars (USD)"
+                    : "US regular session · 5m bars (USD)"
                 : "Daily close (USD) · avg cost from open lots"
               : data?.meta?.session_status === "prior_session"
                 ? "Prior session · waiting for today’s open"
                 : data?.meta?.session_status === "last_24h"
-                  ? "Last 24h · holdings as-of × market prices"
-                  : "Holdings as of each day × market prices · free Yahoo data"}
+                  ? scope.kind === "all"
+                    ? "Last 24h · equities flat overnight at prior close · free Yahoo"
+                    : "Last 24h · holdings as-of × market prices"
+                  : data?.meta?.session_status === "regular"
+                    ? "US regular session · holdings as-of × market prices"
+                    : "Holdings as of each day × market prices · free Yahoo data"}
             {showTrades ? " · buy/sell markers" : ""}
             {range === "1d" && " · auto-refresh 60s"}
           </p>

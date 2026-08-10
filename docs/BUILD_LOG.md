@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — Fix 1D portfolio vs stocks/crypto window math
+
+- Portfolio 1D was “Last 24h” but series started at stock open (coverage) → Δ excluded overnight crypto.
+- Inject equity **prior RTH close** at T−24h so overnight crypto is in portfolio window; Δ ≈ stocks session + crypto 24h.
+- Clearer session subtitles (US RTH vs last 24h).
+
 ## 2026-08-10 — Annualized open ROI (cost-weighted)
 
 - Digest: `holding_years` (cost-weighted lot age) + `annualized_unrealized_pct` (CAGR cost→MV, min 90d).

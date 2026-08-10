@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
@@ -562,6 +562,75 @@ def test_collect_trade_markers_buy_sell_only():
     assert not any(m["date"] == "2021-09-01" for m in marks)
     buy = next(m for m in marks if m["side"] == "buy")
     assert buy["series_value"] == "100.00"
+
+
+def test_inject_equity_prior_close_makes_portfolio_span_24h():
+    """Overnight crypto move enters portfolio window when equities carry prior close."""
+    from backend.services.price_history import (
+        COVERAGE_THRESHOLD_INTRADAY,
+        inject_equity_prior_close_for_24h,
+        trim_closes_map,
+        aggregate_mv_series_time_aware,
+        _change_meta,
+    )
+
+    now = datetime(2026, 8, 10, 21, 30, 0, tzinfo=timezone.utc)
+    cutoff = now - timedelta(hours=24)
+
+    # Prior RTH bar for stock (yesterday afternoon ET)
+    stock_full = [
+        ("2026-08-09T19:55:00+00:00", Decimal("100")),  # prior close ~3:55pm ET
+        ("2026-08-10T13:30:00+00:00", Decimal("100")),  # open flat
+        ("2026-08-10T21:25:00+00:00", Decimal("110")),  # +10/sh session
+    ]
+    # Crypto declines over 24h
+    crypto_full = []
+    t0 = cutoff
+    for i in range(0, 24 * 12 + 1):
+        ts = (t0 + timedelta(minutes=5 * i)).replace(microsecond=0).isoformat()
+        px = Decimal("1000") - Decimal(i) * Decimal("0.5")  # −144 over 24h
+        crypto_full.append((ts, px))
+
+    closes_raw = {"STK": stock_full, "CRY": crypto_full}
+    ac_map = {"STK": "Stock", "CRY": "Crypto"}
+    trimmed, _ = trim_closes_map(closes_raw, mode="last_24h", now=now)
+    seeded = inject_equity_prior_close_for_24h(
+        closes_raw, trimmed, ac_map, now=now
+    )
+    assert seeded["STK"][0][1] == Decimal("100")
+    # Seed should be at/near window start, before RTH open
+    assert _parse_ts(seeded["STK"][0][0]) < _parse_ts("2026-08-10T13:30:00+00:00")
+
+    events = [
+        _event(
+            ticker="STK",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="10",
+            asset_class=AssetClass.STOCK,
+        ),
+        _event(
+            ticker="CRY",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="1",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    tl = build_holdings_timeline(events, [])
+    series, _ = aggregate_mv_series_time_aware(
+        tl, seeded, coverage_threshold=COVERAGE_THRESHOLD_INTRADAY
+    )
+    assert len(series) > 10
+    # Series should start near 24h window (not only at stock open)
+    assert _parse_ts(series[0][0]) < _parse_ts("2026-08-10T13:00:00+00:00")
+
+    ch = _change_meta(series[0][1], series[-1][1])
+    # Stock +10*10 = +100; crypto first≈1000 last≈1000-144 = −144 → net ≈ −44
+    assert ch["change_abs"] is not None
+    net = Decimal(ch["change_abs"])
+    assert net < Decimal("0")  # crypto loss dominates overnight+session
+    assert net > Decimal("-200")  # not only stock session (+100)
 
 
 def test_window_performance_mocked():

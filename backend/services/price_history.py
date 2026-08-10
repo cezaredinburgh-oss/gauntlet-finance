@@ -249,6 +249,94 @@ def trim_closes_map(
     return out, status
 
 
+def _prior_rth_close(
+    series: list[SeriesPoint],
+    *,
+    before: datetime,
+) -> Decimal | None:
+    """Last US RTH close strictly before ``before`` (for overnight carry)."""
+    best_px: Decimal | None = None
+    best_ts: datetime | None = None
+    for ts, px in series:
+        tdt = _parse_ts(ts)
+        if tdt.tzinfo is None:
+            tdt = tdt.replace(tzinfo=timezone.utc)
+        if tdt >= before:
+            continue
+        tet = _to_et(tdt)
+        if tet.hour < 9 or (tet.hour == 9 and tet.minute < 30):
+            continue
+        if tet.hour > 16 or (tet.hour == 16 and tet.minute > 0):
+            continue
+        if best_ts is None or tdt > best_ts:
+            best_ts = tdt
+            best_px = px
+    return best_px
+
+
+def inject_equity_prior_close_for_24h(
+    closes_full: dict[str, list[SeriesPoint]],
+    closes_trimmed: dict[str, list[SeriesPoint]],
+    asset_classes: dict[str, str | None],
+    *,
+    now: datetime | None = None,
+) -> dict[str, list[SeriesPoint]]:
+    """
+    Seed equity series at (now−24h) with previous RTH close so portfolio MV
+    spans a true 24h window (stocks flat overnight, crypto live).
+
+    Without this, coverage skips overnight (stocks unpriced) and portfolio
+    first→last Δ only covers the co-session with equities — crypto 24h loss
+    is excluded from portfolio window change.
+    """
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    cutoff = now - timedelta(hours=24)
+    # Align seed to a stable ISO used in sort
+    cutoff_iso = cutoff.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
+    out: dict[str, list[SeriesPoint]] = {
+        t: list(series) for t, series in closes_trimmed.items()
+    }
+
+    for t, full in closes_full.items():
+        ac = (asset_classes.get(t) or "").lower()
+        if ac == "crypto":
+            continue
+        prior = _prior_rth_close(full, before=cutoff)
+        if prior is None and full:
+            # Fall back: last RTH bar before first bar in trimmed window
+            trimmed = out.get(t) or []
+            if trimmed:
+                prior = _prior_rth_close(full, before=_parse_ts(trimmed[0][0]))
+        if prior is None:
+            # Last resort: first available close in full series before cutoff
+            for ts, px in reversed(full):
+                if _parse_ts(ts) < cutoff:
+                    prior = px
+                    break
+        if prior is None:
+            continue
+
+        trimmed = out.get(t) or []
+        if not trimmed:
+            out[t] = [(cutoff_iso, prior)]
+            continue
+        first_ts = _parse_ts(trimmed[0][0])
+        if first_ts.tzinfo is None:
+            first_ts = first_ts.replace(tzinfo=timezone.utc)
+        # Only inject if first real bar is well after window start
+        if first_ts > cutoff + timedelta(minutes=10):
+            # Avoid duplicate if already seeded
+            if trimmed[0][0] != cutoff_iso:
+                out[t] = [(cutoff_iso, prior)] + trimmed
+        elif t not in out:
+            out[t] = [(cutoff_iso, prior)]
+
+    return out
+
+
 def _scalar_decimal(val: Any) -> Decimal | None:
     try:
         if val is None:
@@ -1025,7 +1113,7 @@ class PriceHistoryService:
                     else "No open positions"
                 )
             tickers = sorted(qty_map.keys())
-            closes = self._fetch_closes(tickers, ac_map, period, interval)
+            closes_raw = self._fetch_closes(tickers, ac_map, period, interval)
             session_status = "regular"
             if is_intraday:
                 trim_mode: Literal["rth_today_or_prior", "last_24h"] = (
@@ -1033,7 +1121,15 @@ class PriceHistoryService:
                     if ac_filter is None or ac_filter == AssetClass.CRYPTO
                     else "rth_today_or_prior"
                 )
-                closes, session_status = trim_closes_map(closes, mode=trim_mode)
+                closes, session_status = trim_closes_map(
+                    closes_raw, mode=trim_mode
+                )
+                if ac_filter is None and trim_mode == "last_24h":
+                    closes = inject_equity_prior_close_for_24h(
+                        closes_raw, closes, ac_map
+                    )
+            else:
+                closes = closes_raw
             missing = [t for t in tickers if t not in closes or not closes[t]]
             mv_series, agg_meta = aggregate_mv_series(
                 qty_map, closes, coverage_threshold=cov_threshold
@@ -1054,7 +1150,7 @@ class PriceHistoryService:
             for t, ac in ac_open.items():
                 if ac_map.get(t) is None:
                     ac_map[t] = ac
-            closes = self._fetch_closes(tickers, ac_map, period, interval)
+            closes_raw = self._fetch_closes(tickers, ac_map, period, interval)
             session_status = "regular"
             if is_intraday:
                 trim_mode = (
@@ -1062,7 +1158,16 @@ class PriceHistoryService:
                     if ac_filter is None or ac_filter == AssetClass.CRYPTO
                     else "rth_today_or_prior"
                 )
-                closes, session_status = trim_closes_map(closes, mode=trim_mode)
+                closes, session_status = trim_closes_map(
+                    closes_raw, mode=trim_mode
+                )
+                # Portfolio only: carry equity prior close so overnight crypto is in window
+                if ac_filter is None and trim_mode == "last_24h":
+                    closes = inject_equity_prior_close_for_24h(
+                        closes_raw, closes, ac_map
+                    )
+            else:
+                closes = closes_raw
             missing = [t for t in tickers if t not in closes or not closes[t]]
             mv_series, agg_meta = aggregate_mv_series_time_aware(
                 timeline,
@@ -1120,7 +1225,15 @@ class PriceHistoryService:
         if is_intraday and session_status == "prior_session":
             note = "Prior regular session (today’s open not in Yahoo yet). " + note
         elif is_intraday and session_status == "last_24h":
-            note = "Last 24h (5m). " + note
+            if ac_filter is None:
+                note = (
+                    "Last 24h (5m); equities carried at prior close overnight "
+                    "so window matches stocks session + crypto 24h. "
+                ) + note
+            else:
+                note = "Last 24h (5m). " + note
+        elif is_intraday and session_status == "regular":
+            note = "US regular session (5m). " + note
         elif is_intraday and len(mv_series) <= 3:
             note = f"Session open · {len(mv_series)} bar(s). " + note
         trades = collect_trade_markers(
