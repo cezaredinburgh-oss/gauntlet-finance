@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   ArrowLeftRight,
   ChevronDown,
+  ChevronUp,
   Filter,
   Search,
   Sparkles,
@@ -48,6 +49,29 @@ function txIsExpense(t: Transaction): boolean {
   const raw = t.amount_usd != null && t.amount_usd !== "" ? t.amount_usd : t.amount;
   const n = Number(raw);
   return Number.isFinite(n) && n < 0;
+}
+
+type TxSortKey = "date" | "description" | "category" | "source" | "amount";
+type SortDir = "asc" | "desc";
+
+const SORT_DEFAULT_DIR: Record<TxSortKey, SortDir> = {
+  date: "desc",
+  description: "asc",
+  category: "asc",
+  source: "asc",
+  amount: "desc",
+};
+
+/** Prefer amount_usd for consistent size across mixed currencies; else statement amount. */
+function txSortAmount(t: Transaction): number {
+  const raw =
+    t.amount_usd != null && t.amount_usd !== "" ? t.amount_usd : t.amount;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function txSortDescription(t: Transaction): string {
+  return (t.merchant || t.description || "").trim();
 }
 
 type RuleDraft = {
@@ -118,6 +142,8 @@ export function CategorizePage() {
   const [dismissedSuggest, setDismissedSuggest] = useState<Set<string>>(
     () => new Set(),
   );
+  const [sortKey, setSortKey] = useState<TxSortKey>("date");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const dateFrom = searchParams.get("date_from") || "";
   const dateTo = searchParams.get("date_to") || "";
@@ -357,6 +383,56 @@ export function CategorizePage() {
     filterFlag,
     catMap,
   ]);
+
+  const sortedRows = useMemo(() => {
+    const rows = filtered.slice();
+    const dir = sortDir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case "date":
+          cmp = (a.booking_date || "").localeCompare(b.booking_date || "");
+          break;
+        case "description":
+          cmp = txSortDescription(a).localeCompare(txSortDescription(b), undefined, {
+            sensitivity: "base",
+          });
+          break;
+        case "category": {
+          const an = a.category_id
+            ? catMap.get(a.category_id)?.name || ""
+            : "Uncategorized";
+          const bn = b.category_id
+            ? catMap.get(b.category_id)?.name || ""
+            : "Uncategorized";
+          cmp = an.localeCompare(bn, undefined, { sensitivity: "base" });
+          break;
+        }
+        case "source":
+          cmp = (a.source_institution || "").localeCompare(
+            b.source_institution || "",
+            undefined,
+            { sensitivity: "base" },
+          );
+          break;
+        case "amount":
+          cmp = txSortAmount(a) - txSortAmount(b);
+          break;
+      }
+      if (cmp !== 0) return cmp * dir;
+      return a.id.localeCompare(b.id);
+    });
+    return rows;
+  }, [filtered, sortKey, sortDir, catMap]);
+
+  function toggleSort(key: TxSortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDir(SORT_DEFAULT_DIR[key]);
+  }
 
   const categoryFilterLabel = useMemo(() => {
     if (multiCategoryIds.length > 0) {
@@ -1507,15 +1583,59 @@ export function CategorizePage() {
                       aria-label="Select all in view"
                     />
                   </th>
-                  <th className="px-4 py-3 font-medium">Date</th>
-                  <th className="px-4 py-3 font-medium">Description</th>
-                  <th className="px-4 py-3 font-medium">Category</th>
-                  <th className="px-4 py-3 font-medium">Source</th>
-                  <th className="px-4 py-3 font-medium text-right">Amount</th>
+                  {(
+                    [
+                      { key: "date", label: "Date", align: "left" },
+                      { key: "description", label: "Description", align: "left" },
+                      { key: "category", label: "Category", align: "left" },
+                      { key: "source", label: "Source", align: "left" },
+                      { key: "amount", label: "Amount", align: "right" },
+                    ] as const
+                  ).map((col) => {
+                    const active = sortKey === col.key;
+                    const ariaSort = active
+                      ? sortDir === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : "none";
+                    return (
+                      <th
+                        key={col.key}
+                        className={cn(
+                          "px-4 py-3 font-medium",
+                          col.align === "right" && "text-right",
+                        )}
+                        aria-sort={ariaSort}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleSort(col.key)}
+                          className={cn(
+                            "inline-flex items-center gap-1 font-medium uppercase tracking-wide transition-colors",
+                            col.align === "right" && "w-full justify-end",
+                            active
+                              ? "text-ink"
+                              : "text-ink-faint hover:text-ink-muted",
+                          )}
+                        >
+                          {col.label}
+                          {active ? (
+                            sortDir === "asc" ? (
+                              <ChevronUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                            ) : (
+                              <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                            )
+                          ) : (
+                            <span className="inline-block h-3.5 w-3.5 shrink-0 opacity-0" aria-hidden />
+                          )}
+                        </button>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {filtered.map((t) => {
+                {sortedRows.map((t) => {
                   const cat = t.category_id ? catMap.get(t.category_id) : undefined;
                   const isSel = selected.has(t.id);
                   return (
