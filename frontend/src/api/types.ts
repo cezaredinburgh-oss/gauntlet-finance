@@ -524,6 +524,23 @@ export type PriceHistoryTrade = {
   series_value?: string | null;
 };
 
+export type WindowPerformanceItem = {
+  ticker: string;
+  asset_class?: string | null;
+  first_value?: string | null;
+  last_value?: string | null;
+  change_pct?: number | null;
+  change_abs?: string | null;
+  currency?: string;
+  session_status?: string | null;
+};
+
+export type WindowPerformanceResponse = {
+  range: string;
+  as_of: string;
+  items: WindowPerformanceItem[];
+};
+
 export type PriceHistory = {
   scope: "ticker" | "asset_class" | "all" | string;
   label: string;

@@ -18,6 +18,7 @@ import type {
   PriceHistoryRange,
   PriceHistoryTrade,
   TickerDigest,
+  WindowPerformanceItem,
 } from "../../api/types";
 import { d, formatUsd } from "../../lib/money";
 import { cn } from "../../lib/cn";
@@ -137,6 +138,10 @@ export function PositionHistoryChart({
 }: Props) {
   const [range, setRange] = useState<PriceHistoryRange>(() => loadRange(preferIntraday));
   const [data, setData] = useState<PriceHistory | null>(null);
+  const [perfByTicker, setPerfByTicker] = useState<Record<string, WindowPerformanceItem>>(
+    {},
+  );
+  const [perfLoading, setPerfLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [softUpdating, setSoftUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -224,6 +229,32 @@ export function PositionHistoryChart({
     };
   }, [fetchHistory, refreshTick]);
 
+  // Per-ticker performance for selected range (strip under chart)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setPerfLoading(true);
+      try {
+        const res = await api.priceWindowPerformance({ range });
+        if (cancelled) return;
+        const map: Record<string, WindowPerformanceItem> = {};
+        for (const it of res.items || []) {
+          map[it.ticker.toUpperCase()] = it;
+        }
+        setPerfByTicker(map);
+      } catch {
+        if (!cancelled) {
+          /* keep prior strip */
+        }
+      } finally {
+        if (!cancelled) setPerfLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [range, refreshTick]);
+
   // Soft refetch on prices-updated
   useEffect(() => {
     const onPrices = () => setRefreshTick((n) => n + 1);
@@ -275,6 +306,30 @@ export function PositionHistoryChart({
   }, [data, intraday]);
 
   const tradeCount = data?.meta.trades?.length ?? 0;
+
+  /** Tickers in strip: filter by book when Stocks/Crypto selected; else all. */
+  const stripTickers = useMemo(() => {
+    let list = digests.slice();
+    if (scope.kind === "asset_class") {
+      const want = scope.asset_class.toLowerCase();
+      list = list.filter((t) => (t.asset_class || "").toLowerCase() === want);
+    }
+    // Prefer API sort (best first); fall back to digest order with perf overlay
+    return list
+      .map((t) => {
+        const p = perfByTicker[t.ticker.toUpperCase()];
+        return { digest: t, perf: p };
+      })
+      .sort((a, b) => {
+        const ap = a.perf?.change_pct;
+        const bp = b.perf?.change_pct;
+        if (ap == null && bp == null) return a.digest.ticker.localeCompare(b.digest.ticker);
+        if (ap == null) return 1;
+        if (bp == null) return -1;
+        if (bp !== ap) return bp - ap;
+        return a.digest.ticker.localeCompare(b.digest.ticker);
+      });
+  }, [digests, scope, perfByTicker]);
 
   const last = rows[rows.length - 1];
   const first = rows[0];
@@ -406,7 +461,7 @@ export function PositionHistoryChart({
         </div>
       </div>
 
-      {/* Scope chips */}
+      {/* Book filters only — tickers live under the chart with range performance */}
       <div className="flex flex-wrap gap-1.5">
         {hasAny && (
           <ScopeChip
@@ -429,14 +484,6 @@ export function PositionHistoryChart({
             label="Crypto"
           />
         )}
-        {digests.map((t) => (
-          <ScopeChip
-            key={t.ticker}
-            active={scope.kind === "ticker" && scope.ticker === t.ticker}
-            onClick={() => onScopeChange({ kind: "ticker", ticker: t.ticker })}
-            label={t.ticker}
-          />
-        ))}
       </div>
 
       {/* Range chips + trades toggle */}
@@ -689,6 +736,72 @@ export function PositionHistoryChart({
       )}
       {data?.meta.note && (
         <p className="text-[11px] text-ink-faint">{data.meta.note}</p>
+      )}
+
+      {/* Ticker strip: select series + window performance */}
+      {hasAny && (
+        <div className="space-y-2 border-t border-white/5 pt-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
+              Holdings · {range.toUpperCase()} performance
+            </h3>
+            {perfLoading && (
+              <span className="text-[11px] text-ink-faint">Updating returns…</span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+            {stripTickers.map(({ digest: t, perf }) => {
+              const active = scope.kind === "ticker" && scope.ticker === t.ticker;
+              const pct = perf?.change_pct;
+              const up = pct != null && pct >= 0;
+              const down = pct != null && pct < 0;
+              return (
+                <button
+                  key={t.ticker}
+                  type="button"
+                  onClick={() => onScopeChange({ kind: "ticker", ticker: t.ticker })}
+                  className={cn(
+                    "flex flex-col items-start rounded-lg px-2.5 py-2 text-left transition",
+                    active
+                      ? "bg-brand/20 ring-1 ring-brand/50"
+                      : "bg-white/[0.04] hover:bg-white/[0.08]",
+                  )}
+                  title={
+                    pct != null
+                      ? `${t.ticker}: ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% over ${range}`
+                      : `${t.ticker}: no price series for ${range}`
+                  }
+                >
+                  <span
+                    className={cn(
+                      "font-mono text-xs font-bold tracking-wide",
+                      active ? "text-brand" : "text-ink",
+                    )}
+                  >
+                    {t.ticker}
+                  </span>
+                  <span
+                    className={cn(
+                      "mt-0.5 text-sm font-semibold tabular-nums",
+                      pct == null && "text-ink-faint",
+                      up && "text-ok",
+                      down && "text-danger",
+                    )}
+                  >
+                    {pct == null
+                      ? "—"
+                      : `${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`}
+                  </span>
+                  {perf?.last_value != null && perf.last_value !== "" && (
+                    <span className="text-[10px] tabular-nums text-ink-faint">
+                      {formatPrice(d(perf.last_value))}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );

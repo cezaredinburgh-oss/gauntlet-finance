@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — Live chart ticker strip with range performance
+
+- `GET /prices/window-performance?range=` — per open ticker first→last % for chart window.
+- Holdings + pop-out: tickers listed under chart with colored range return; click selects series.
+
 ## 2026-08-10 — Fix 1D chart at market open
 
 - 1D fetch uses **5d×5m** then trims (US RTH today / prior session; portfolio+crypto last 24h).

@@ -564,6 +564,45 @@ def test_collect_trade_markers_buy_sell_only():
     assert buy["series_value"] == "100.00"
 
 
+def test_window_performance_mocked():
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [
+            _lot(ticker="AAA", asset_class=AssetClass.STOCK, qty="10", cost_usd="100"),
+            _lot(ticker="BBB", asset_class=AssetClass.STOCK, qty="5", cost_usd="50"),
+            _lot(ticker="CCC", asset_class=AssetClass.CRYPTO, qty="1", cost_usd="10"),
+        ],
+    )
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        out = {}
+        for y in yahoo_symbols:
+            our = yahoo_map[y]
+            if our == "AAA":
+                out[our] = [
+                    ("2025-01-01", Decimal("10")),
+                    ("2025-06-01", Decimal("15")),
+                ]
+            elif our == "BBB":
+                out[our] = [
+                    ("2025-01-01", Decimal("100")),
+                    ("2025-06-01", Decimal("80")),
+                ]
+            # CCC missing
+        return out
+
+    svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
+    result = svc.window_performance(range_key="1y")
+    assert result["range"] == "1y"
+    by_t = {i["ticker"]: i for i in result["items"]}
+    assert by_t["AAA"]["change_pct"] == 50.0
+    assert by_t["BBB"]["change_pct"] == -20.0
+    assert by_t["CCC"]["change_pct"] is None
+    # Sorted best first
+    assert result["items"][0]["ticker"] == "AAA"
+
+
 def test_history_all_uses_as_of_holdings():
     repo = InMemorySheetsRepository()
     repo.upsert_rows(

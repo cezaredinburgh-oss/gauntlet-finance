@@ -20,6 +20,7 @@ import type {
   PortfolioSnapshot,
   PriceHistory,
   PriceHistoryRange,
+  WindowPerformanceResponse,
   PriceRefresh,
   SheetsStatus,
   TickerDigestsResponse,
@@ -458,5 +459,10 @@ export const api = {
         ticker: params.ticker,
         asset_class: params.asset_class,
       })}`,
+    ),
+
+  priceWindowPerformance: (params: { range?: PriceHistoryRange | string } = {}) =>
+    request<WindowPerformanceResponse>(
+      `/prices/window-performance${qs({ range: params.range ?? "1y" })}`,
     ),
 };

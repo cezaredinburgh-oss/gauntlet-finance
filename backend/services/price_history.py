@@ -1156,3 +1156,89 @@ class PriceHistoryService:
                 **day,
             },
         )
+
+    def window_performance(
+        self,
+        *,
+        range_key: RangeKey | str = "1y",
+    ) -> dict[str, Any]:
+        """
+        Per open-ticker price performance over the same window as the live chart.
+        """
+        if not self.enabled:
+            raise RuntimeError("yfinance disabled")
+
+        period, interval, point_kind = range_to_yfinance_spec(str(range_key))
+        range_norm = str(range_key).strip().lower()
+        is_intraday = point_kind == "intraday"
+        lots = self._open_lots()
+        if not lots:
+            return {
+                "range": range_norm,
+                "as_of": utc_now().isoformat(),
+                "items": [],
+            }
+
+        tickers: list[str] = []
+        ac_map: dict[str, str | None] = {}
+        for lot in lots:
+            t = lot.ticker.upper()
+            if t not in ac_map:
+                ac_map[t] = lot.asset_class.value if lot.asset_class else None
+                tickers.append(t)
+        tickers = sorted(set(tickers))
+
+        closes = self._fetch_closes(tickers, ac_map, period, interval)
+        items: list[dict[str, Any]] = []
+        for t in tickers:
+            ac = ac_map.get(t)
+            series = closes.get(t) or []
+            session_status = None
+            if is_intraday and series:
+                mode: Literal["rth_today_or_prior", "last_24h"] = (
+                    "last_24h" if (ac or "").lower() == "crypto" else "rth_today_or_prior"
+                )
+                series, session_status = trim_intraday_series(series, mode=mode)
+            places = 4 if (ac or "").lower() == "crypto" else 2
+            if not series:
+                items.append(
+                    {
+                        "ticker": t,
+                        "asset_class": ac,
+                        "first_value": None,
+                        "last_value": None,
+                        "change_pct": None,
+                        "change_abs": None,
+                        "currency": "USD",
+                        "session_status": session_status,
+                    }
+                )
+                continue
+            first, last = series[0][1], series[-1][1]
+            ch = _change_meta(first, last, places=places)
+            items.append(
+                {
+                    "ticker": t,
+                    "asset_class": ac,
+                    "first_value": ch["first_value"],
+                    "last_value": ch["last_value"],
+                    "change_pct": ch["change_pct"],
+                    "change_abs": ch["change_abs"],
+                    "currency": "USD",
+                    "session_status": session_status,
+                }
+            )
+
+        # Best performers first; missing last
+        items.sort(
+            key=lambda x: (
+                x["change_pct"] is None,
+                -(x["change_pct"] if x["change_pct"] is not None else 0.0),
+                x["ticker"],
+            )
+        )
+        return {
+            "range": range_norm,
+            "as_of": utc_now().isoformat(),
+            "items": items,
+        }

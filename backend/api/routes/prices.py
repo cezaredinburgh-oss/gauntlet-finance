@@ -71,6 +71,38 @@ async def price_history(
     )
 
 
+@router.get("/prices/window-performance")
+async def window_performance(
+    repo: RepoDep,
+    settings: SettingsDep,
+    _user: UserDep,
+    range_key: str = Query(
+        "1y",
+        alias="range",
+        description="1d|7d|1m|3m|6m|ytd|1y|5y — same windows as live chart",
+    ),
+) -> dict:
+    """Per open-ticker price change over the selected chart range."""
+    if not settings.yfinance_enabled:
+        raise HTTPException(status_code=503, detail="yfinance disabled")
+    svc = PriceHistoryService(
+        repo,
+        cache_ttl_seconds=settings.price_history_cache_ttl_seconds,
+        intraday_cache_ttl_seconds=settings.price_history_intraday_cache_ttl_seconds,
+        enabled=True,
+    )
+    try:
+        return svc.window_performance(range_key=range_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Window performance fetch failed: {exc}"
+        ) from exc
+
+
 @router.post("/prices/refresh", response_model=PriceRefreshResponse)
 async def refresh_prices(
     repo: RepoDep,
