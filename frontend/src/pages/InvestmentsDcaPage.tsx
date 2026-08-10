@@ -65,18 +65,6 @@ function discountLabel(v: number): string {
   return `+${Math.abs(v).toFixed(0)}% vs cost`;
 }
 
-function gateLabel(blockers: string[]): string {
-  if (!blockers.length) return "";
-  const map: Record<string, string> = {
-    cooldown: "recent buy",
-    concentration: "concentrated",
-    materiality: "small size",
-    stale_price: "stale price",
-    unpriced: "unpriced",
-  };
-  return blockers.map((b) => map[b] || b).join(" · ");
-}
-
 function DcaColumn({
   title,
   items,
@@ -118,25 +106,6 @@ function DcaColumn({
                     >
                       {item.ticker}
                     </span>
-                    {item.eligible ? (
-                      <span
-                        className={cn(
-                          "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
-                          item.level === "warn" || tone === "hot"
-                            ? "bg-warn/20 text-warn"
-                            : "bg-ok/20 text-ok",
-                        )}
-                      >
-                        Active
-                      </span>
-                    ) : (
-                      <span
-                        className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-ink-faint"
-                        title={gateLabel(item.gate_blockers) || "Below alert thresholds"}
-                      >
-                        Watch
-                      </span>
-                    )}
                     <span className="text-[11px] tabular-nums text-ink-faint">
                       score {item.score.toFixed(1)}
                     </span>
@@ -172,12 +141,6 @@ function DcaColumn({
                     <span className="tabular-nums">MV {formatUsd(item.market_value_usd)}</span>
                     <span className="tabular-nums">{item.weight_pct.toFixed(1)}% book</span>
                   </div>
-
-                  {!item.eligible && item.gate_blockers.length > 0 && (
-                    <div className="mt-1 text-[10px] text-ink-faint">
-                      Gated: {gateLabel(item.gate_blockers)}
-                    </div>
-                  )}
                 </div>
               </div>
             </li>
@@ -194,7 +157,7 @@ function ToneLegend() {
     { tone: "hot", label: "Hot" },
     { tone: "strong", label: "Strong" },
     { tone: "warm", label: "Warm" },
-    { tone: "cool", label: "Watch" },
+    { tone: "cool", label: "Low" },
   ];
   return (
     <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink-faint">
@@ -255,8 +218,6 @@ export function InvestmentsDcaPage() {
 
   const stocks = board?.stocks ?? [];
   const crypto = board?.crypto ?? [];
-  const activeCount =
-    stocks.filter((x) => x.eligible).length + crypto.filter((x) => x.eligible).length;
 
   return (
     <div className="space-y-6">
@@ -265,16 +226,13 @@ export function InvestmentsDcaPage() {
         <p className="text-sm text-ink-muted">
           Rank existing holdings by add-size signal — below your cost, 3M pullback, and
           under 52-week average. Green / sky = stronger opportunity; amber = mid; muted =
-          weaker or watch.
+          weaker.
         </p>
         <InvestmentsSubNav active="dca" />
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-faint">
-        <span>
-          As of {board?.as_of ?? "—"}
-          {activeCount > 0 ? ` · ${activeCount} active` : " · no active alerts right now"}
-        </span>
+        <span>As of {board?.as_of ?? "—"}</span>
         <ToneLegend />
         {board?.meta?.history_available === false && (
           <span className="rounded bg-white/5 px-2 py-0.5">
@@ -300,10 +258,9 @@ export function InvestmentsDcaPage() {
       </div>
 
       <p className="text-[11px] leading-relaxed text-ink-faint">
-        Active = clears alert gates (material size, {board?.meta?.cooldown_days ?? 21}d since
-        last buy, weight ≤{board?.meta?.max_weight_pct ?? 35}%, fresh mark) and hits Signal A
-        or B. Watch = still ranked by continuous score but gated or below thresholds. Not
-        investment advice — statement lots + live marks only.
+        Ranked by continuous score (cost discount, pullback, 52-week average, days since
+        last buy, size). Color tracks opportunity strength only — alert eligibility lives on
+        the Alerts page. Not investment advice — statement lots + live marks only.
       </p>
     </div>
   );
