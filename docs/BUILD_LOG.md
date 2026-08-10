@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — DCA board view (Investments)
+
+- `/investments/dca` — dual lists (Stocks | Crypto) ranked by continuous opportunity score; monochrome ticker intensity (brighter = larger opportunity).
+- API `GET /investments/dca-opportunities`; shared scoring with alerts; Active vs Watch gates.
+
 ## 2026-08-10 — DCA opportunity alerts
 
 - New alerts on open holdings: **Signal A** mark clearly below avg cost (stock ≥10% / crypto ≥18%); **Signal B** 3M pullback and/or **drawdown below 52-week average** (stock ≥5% / crypto ≥10% under mean), while not extended >5% above book cost.

@@ -19,6 +19,7 @@ from backend.services.dca_opportunities import (
     DCA_MAX_ALERTS,
     PositionDcaRow,
     build_dca_alerts,
+    build_dca_board,
     build_position_dca_rows,
     evaluate_dca_opportunity,
     history_stats_from_closes,
@@ -358,6 +359,45 @@ def test_build_alerts_integration_includes_dca():
 
     dca = [a for a in result["items"] if str(a["id"]).startswith("dca_opportunity_")]
     assert any(a["id"] == "dca_opportunity_AAA" for a in dca)
+
+
+def test_build_dca_board_splits_and_ranks():
+    lots = [
+        _lot("AAA", qty="10", cost_usd="1000", acq=AS_OF - timedelta(days=40)),
+        _lot(
+            "BTC",
+            qty="1",
+            cost_usd="2000",
+            acq=AS_OF - timedelta(days=40),
+            asset_class=AssetClass.CRYPTO,
+        ),
+        _lot("BBB", qty="5", cost_usd="500", acq=AS_OF - timedelta(days=40)),
+    ]
+    prices = {
+        "AAA": _price("AAA", "70"),  # 30% under — strong
+        "BTC": _price("BTC", "1600"),  # 20% under crypto
+        "BBB": _price("BBB", "95"),  # 5% under — weak
+    }
+
+    def fake_hist(tickers, _ac):
+        return {t: {"high_3m": None, "avg_52w": None} for t in tickers}
+
+    board = build_dca_board(
+        lots,
+        [],
+        prices,
+        as_of=AS_OF,
+        history_fetcher=fake_hist,
+        fetch_history=True,
+    )
+    assert [x["ticker"] for x in board["stocks"]][0] == "AAA"
+    assert board["stocks"][0]["score"] >= board["stocks"][1]["score"]
+    assert len(board["crypto"]) == 1
+    assert board["crypto"][0]["ticker"] == "BTC"
+    assert board["stocks"][0]["eligible"] is True
+    # BBB shallow discount not eligible but still on board
+    bbb = next(x for x in board["stocks"] if x["ticker"] == "BBB")
+    assert bbb["eligible"] is False
 
 
 def test_build_position_rows_prefers_buy_event_date():

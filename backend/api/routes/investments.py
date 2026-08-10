@@ -15,6 +15,7 @@ from backend.schema.models import (
     InvestmentLot,
     LotStatus,
 )
+from backend.services.dca_opportunities import build_dca_board_from_repo
 from backend.services.portfolio_history import (
     compute_draw_metrics,
     list_mv_series,
@@ -120,6 +121,21 @@ async def get_ticker_digests(
             as_of=as_of,
             exemption_days=settings.holding_period_exemption_days,
         )
+
+    return cached(key, _SNAP_TTL, _build)
+
+
+@router.get("/investments/dca-opportunities")
+async def get_dca_opportunities(
+    repo: RepoDep,
+    _user: UserDep,
+    as_of: date | None = None,
+) -> dict[str, Any]:
+    """Ranked DCA board: stocks + crypto lists scored by opportunity size."""
+    key = f"dca-board:v1:{as_of}"
+
+    def _build() -> dict[str, Any]:
+        return build_dca_board_from_repo(repo, as_of=as_of, fetch_history=True)
 
     return cached(key, _SNAP_TTL, _build)
 

@@ -263,6 +263,42 @@ export type AlertsResponse = {
   total: number;
 };
 
+export type DcaOpportunityItem = {
+  ticker: string;
+  asset_class: string;
+  score: number;
+  eligible: boolean;
+  level: "info" | "warn" | null;
+  discount_vs_cost_pct: number;
+  pullback_pct: number | null;
+  below_52w_avg_pct: number | null;
+  signal_a: boolean;
+  signal_b: boolean;
+  mark: string;
+  avg_cost_usd: string;
+  market_value_usd: string;
+  cost_basis_usd: string;
+  days_since_buy: number;
+  last_buy: string;
+  weight_pct: number;
+  gate_blockers: string[];
+  high_3m?: string | null;
+  avg_52w?: string | null;
+};
+
+export type DcaBoardResponse = {
+  as_of: string;
+  stocks: DcaOpportunityItem[];
+  crypto: DcaOpportunityItem[];
+  meta: {
+    history_available: boolean;
+    board_min_position_usd?: string;
+    alert_min_position_usd?: string;
+    cooldown_days?: number;
+    max_weight_pct?: number;
+  };
+};
+
 export type LivingDraw12m = {
   window_days: number;
   window_start: string;

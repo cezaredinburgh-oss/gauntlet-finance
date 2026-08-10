@@ -11,6 +11,7 @@ import type {
   CleanupPreview,
   CleanupResult,
   DashboardSummary,
+  DcaBoardResponse,
   Health,
   Lot,
   LotSummary,
@@ -171,6 +172,9 @@ export const api = {
 
   tickerDigests: (params: { as_of?: string } = {}) =>
     request<TickerDigestsResponse>(`/investments/ticker-digests${qs(params)}`),
+
+  investmentsDcaOpportunities: (params: { as_of?: string } = {}) =>
+    request<DcaBoardResponse>(`/investments/dca-opportunities${qs(params)}`),
 
   mvSeries: (params: { date_from?: string | null; date_to?: string | null } = {}) =>
     request<MvSeries>(

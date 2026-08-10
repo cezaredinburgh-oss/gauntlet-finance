@@ -66,6 +66,7 @@ const nav: NavItem[] = [
     children: [
       { kind: "leaf", to: "/investments", label: "Holdings", icon: LineChart, end: true },
       { kind: "leaf", to: "/investments/analysis", label: "Analysis", icon: LineChart },
+      { kind: "leaf", to: "/investments/dca", label: "DCA", icon: LineChart },
       { kind: "leaf", to: "/investments/tax", label: "Tax", icon: Receipt },
     ],
   },

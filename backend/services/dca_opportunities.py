@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 # --- Tunable thresholds (single place) ---
 DCA_MIN_POSITION_USD = Decimal("400")
+# Board shows more names than alerts (still drops pure dust).
+DCA_BOARD_MIN_POSITION_USD = Decimal("100")
 DCA_COOLDOWN_DAYS = 21
 DCA_MAX_WEIGHT_PCT = 35.0
 DCA_MAX_ALERTS = 3
@@ -214,6 +216,94 @@ def _warn_discount_threshold(is_crypto: bool) -> float:
     return DCA_WARN_CRYPTO_DISCOUNT_PCT if is_crypto else DCA_WARN_STOCK_DISCOUNT_PCT
 
 
+def _q2_str(v: Decimal) -> str:
+    return str(v.quantize(Decimal("0.01")))
+
+
+@dataclass(frozen=True)
+class DcaMetrics:
+    discount_vs_cost_pct: float
+    premium_vs_cost_pct: float
+    near_or_below_cost: bool
+    pullback_pct: float | None
+    below_52w_avg_pct: float | None
+    signal_a: bool
+    signal_b1: bool
+    signal_b2: bool
+    signal_b: bool
+    score: float
+
+
+def compute_dca_metrics(
+    row: PositionDcaRow,
+    *,
+    high_3m: Decimal | None = None,
+    avg_52w: Decimal | None = None,
+) -> DcaMetrics:
+    """Continuous metrics + signal flags (no hard gates)."""
+    crypto = _is_crypto(row.asset_class)
+    discount = float((row.avg_cost - row.mark) / row.avg_cost * 100) if row.avg_cost > 0 else 0.0
+    premium = float((row.mark - row.avg_cost) / row.avg_cost * 100) if row.avg_cost > 0 else 0.0
+    near = premium <= DCA_PULLBACK_MAX_PREMIUM_VS_COST_PCT
+
+    pullback: float | None = None
+    if high_3m is not None and high_3m > 0:
+        pullback = float((high_3m - row.mark) / high_3m * 100)
+
+    below_52w: float | None = None
+    if avg_52w is not None and avg_52w > 0:
+        below_52w = float((avg_52w - row.mark) / avg_52w * 100)
+
+    signal_a = discount >= _cost_discount_threshold(crypto)
+    signal_b1 = (
+        pullback is not None
+        and pullback >= _pullback_threshold(crypto)
+        and near
+    )
+    signal_b2 = (
+        below_52w is not None
+        and below_52w >= _below_52w_threshold(crypto)
+        and near
+    )
+    signal_b = signal_b1 or signal_b2
+    score = (
+        1.0 * max(discount, 0.0)
+        + 0.6 * max(pullback or 0.0, 0.0)
+        + 0.5 * max(below_52w or 0.0, 0.0)
+        + 0.15 * float(min(row.days_since_buy, 120))
+        + 0.05 * min(math.log10(float(row.position_usd) + 1.0), 5.0)
+    )
+    return DcaMetrics(
+        discount_vs_cost_pct=discount,
+        premium_vs_cost_pct=premium,
+        near_or_below_cost=near,
+        pullback_pct=pullback,
+        below_52w_avg_pct=below_52w,
+        signal_a=signal_a,
+        signal_b1=signal_b1,
+        signal_b2=signal_b2,
+        signal_b=signal_b,
+        score=score,
+    )
+
+
+def gate_blockers(row: PositionDcaRow, *, as_of: date | None = None) -> list[str]:
+    """Hard-gate reasons that would suppress an alert (board still ranks)."""
+    as_of = as_of or date.today()
+    blockers: list[str] = []
+    if row.mark <= 0 or row.avg_cost <= 0:
+        blockers.append("unpriced")
+    if row.position_usd < DCA_MIN_POSITION_USD:
+        blockers.append("materiality")
+    if row.days_since_buy < DCA_COOLDOWN_DAYS:
+        blockers.append("cooldown")
+    if row.weight_pct > DCA_MAX_WEIGHT_PCT:
+        blockers.append("concentration")
+    if (as_of - row.price_as_of).days > DCA_STALE_PRICE_DAYS:
+        blockers.append("stale_price")
+    return blockers
+
+
 def evaluate_dca_opportunity(
     row: PositionDcaRow,
     *,
@@ -230,101 +320,53 @@ def evaluate_dca_opportunity(
         on a name you already hold), again while not chasing far above avg cost
     """
     as_of = as_of or date.today()
+    if gate_blockers(row, as_of=as_of):
+        return None
+
+    m = compute_dca_metrics(row, high_3m=high_3m, avg_52w=avg_52w)
+    if not (m.signal_a or m.signal_b):
+        return None
+
     crypto = _is_crypto(row.asset_class)
-
-    # --- Hard gates ---
-    if row.mark <= 0 or row.avg_cost <= 0:
-        return None
-    if row.position_usd < DCA_MIN_POSITION_USD:
-        return None
-    if row.days_since_buy < DCA_COOLDOWN_DAYS:
-        return None
-    if row.weight_pct > DCA_MAX_WEIGHT_PCT:
-        return None
-    if (as_of - row.price_as_of).days > DCA_STALE_PRICE_DAYS:
-        return None
-
-    discount_vs_cost = float((row.avg_cost - row.mark) / row.avg_cost * 100)
-    premium_vs_cost = float((row.mark - row.avg_cost) / row.avg_cost * 100)
-    near_or_below_cost = premium_vs_cost <= DCA_PULLBACK_MAX_PREMIUM_VS_COST_PCT
-
-    # Signal A: clearly below your average cost
-    signal_a = discount_vs_cost >= _cost_discount_threshold(crypto)
-
-    pullback_pct: float | None = None
-    if high_3m is not None and high_3m > 0:
-        pullback_pct = float((high_3m - row.mark) / high_3m * 100)
-
-    below_52w_avg_pct: float | None = None
-    if avg_52w is not None and avg_52w > 0:
-        below_52w_avg_pct = float((avg_52w - row.mark) / avg_52w * 100)
-
-    # Signal B1: pullback from 3M high
-    signal_b1 = (
-        pullback_pct is not None
-        and pullback_pct >= _pullback_threshold(crypto)
-        and near_or_below_cost
-    )
-    # Signal B2: drawdown below 52-week average of the asset
-    signal_b2 = (
-        below_52w_avg_pct is not None
-        and below_52w_avg_pct >= _below_52w_threshold(crypto)
-        and near_or_below_cost
-    )
-    signal_b = signal_b1 or signal_b2
-
-    if not (signal_a or signal_b):
-        return None
-
-    # Ranking score
-    score = (
-        1.0 * max(discount_vs_cost, 0.0)
-        + 0.6 * max(pullback_pct or 0.0, 0.0)
-        + 0.5 * max(below_52w_avg_pct or 0.0, 0.0)
-        + 0.15 * float(min(row.days_since_buy, 120))
-        + 0.05 * min(math.log10(float(row.position_usd) + 1.0), 5.0)
-    )
-
     level = "info"
-    if discount_vs_cost >= _warn_discount_threshold(crypto):
+    if m.discount_vs_cost_pct >= _warn_discount_threshold(crypto):
         level = "warn"
 
     parts: list[str] = []
-    if signal_a or discount_vs_cost > 0:
+    if m.signal_a or m.discount_vs_cost_pct > 0:
         parts.append(
-            f"Mark is {discount_vs_cost:.0f}% "
-            f"{'below' if discount_vs_cost >= 0 else 'above'} your average cost "
+            f"Mark is {m.discount_vs_cost_pct:.0f}% "
+            f"{'below' if m.discount_vs_cost_pct >= 0 else 'above'} your average cost "
             f"(${row.mark:,.2f} vs ${row.avg_cost:,.2f}/unit)."
         )
-    elif premium_vs_cost > 0:
+    elif m.premium_vs_cost_pct > 0:
         parts.append(
             f"Mark ${row.mark:,.2f} is near your average cost "
-            f"(${row.avg_cost:,.2f}/unit, +{premium_vs_cost:.0f}%)."
+            f"(${row.avg_cost:,.2f}/unit, +{m.premium_vs_cost_pct:.0f}%)."
         )
     parts.append(f"Last add {row.days_since_buy} days ago.")
-    if signal_b1 and pullback_pct is not None:
-        parts.append(f"3M pullback ~{pullback_pct:.0f}%.")
-    if signal_b2 and below_52w_avg_pct is not None:
+    if m.signal_b1 and m.pullback_pct is not None:
+        parts.append(f"3M pullback ~{m.pullback_pct:.0f}%.")
+    if m.signal_b2 and m.below_52w_avg_pct is not None and avg_52w is not None:
         parts.append(
-            f"Trading ~{below_52w_avg_pct:.0f}% below its 52-week average "
+            f"Trading ~{m.below_52w_avg_pct:.0f}% below its 52-week average "
             f"(${avg_52w:,.2f})."
         )
-    if not signal_a and signal_b:
+    if not m.signal_a and m.signal_b:
         parts.append("Dip on an existing holding — consider a disciplined add.")
 
-    body = " ".join(parts)
     return DcaCandidate(
         ticker=row.ticker,
         level=level,
-        score=score,
+        score=m.score,
         title=f"DCA opportunity: {row.ticker}",
-        body=body,
-        href=f"/investments?focus=holdings&ticker={row.ticker}",
-        discount_vs_cost_pct=discount_vs_cost,
-        pullback_pct=pullback_pct,
-        below_52w_avg_pct=below_52w_avg_pct,
-        signal_a=signal_a,
-        signal_b=signal_b,
+        body=" ".join(parts),
+        href="/investments/dca",
+        discount_vs_cost_pct=m.discount_vs_cost_pct,
+        pullback_pct=m.pullback_pct,
+        below_52w_avg_pct=m.below_52w_avg_pct,
+        signal_a=m.signal_a,
+        signal_b=m.signal_b,
     )
 
 
@@ -453,6 +495,127 @@ def fetch_history_stats_yfinance(
     return out
 
 
+def _normalize_stats(
+    stats_by_ticker: dict[str, HistoryStats],
+    ticker: str,
+) -> tuple[Decimal | None, Decimal | None]:
+    st = stats_by_ticker.get(ticker) or {}
+    high_3m = st.get("high_3m")
+    avg_52w = st.get("avg_52w")
+    if high_3m is not None and not isinstance(high_3m, Decimal):
+        high_3m = Decimal(str(high_3m))
+    if avg_52w is not None and not isinstance(avg_52w, Decimal):
+        avg_52w = Decimal(str(avg_52w))
+    return high_3m, avg_52w
+
+
+def _fetch_stats_for_rows(
+    rows: Sequence[PositionDcaRow],
+    *,
+    history_fetcher: HistoryStatsFetcher | None,
+    fetch_history: bool,
+) -> tuple[dict[str, HistoryStats], bool]:
+    if not fetch_history or not rows:
+        return {}, False
+    ac_map = {r.ticker: r.asset_class for r in rows}
+    tickers = [r.ticker for r in rows]
+    try:
+        if history_fetcher is not None:
+            return history_fetcher(tickers, ac_map), True
+        stats = fetch_history_stats_yfinance(tickers, ac_map)
+        return stats, bool(stats)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("DCA history fetch failed open: %s", exc)
+        return {}, False
+
+
+def board_item_dict(
+    row: PositionDcaRow,
+    m: DcaMetrics,
+    *,
+    as_of: date,
+    high_3m: Decimal | None,
+    avg_52w: Decimal | None,
+) -> dict[str, Any]:
+    blockers = gate_blockers(row, as_of=as_of)
+    eligible = not blockers and (m.signal_a or m.signal_b)
+    crypto = _is_crypto(row.asset_class)
+    level: str | None = None
+    if eligible:
+        level = "warn" if m.discount_vs_cost_pct >= _warn_discount_threshold(crypto) else "info"
+    return {
+        "ticker": row.ticker,
+        "asset_class": row.asset_class,
+        "score": round(m.score, 4),
+        "eligible": eligible,
+        "level": level,
+        "discount_vs_cost_pct": round(m.discount_vs_cost_pct, 2),
+        "pullback_pct": round(m.pullback_pct, 2) if m.pullback_pct is not None else None,
+        "below_52w_avg_pct": (
+            round(m.below_52w_avg_pct, 2) if m.below_52w_avg_pct is not None else None
+        ),
+        "signal_a": m.signal_a,
+        "signal_b": m.signal_b,
+        "mark": _q2_str(row.mark),
+        "avg_cost_usd": _q2_str(row.avg_cost),
+        "market_value_usd": _q2_str(row.mv_usd),
+        "cost_basis_usd": _q2_str(row.cost_usd),
+        "days_since_buy": row.days_since_buy,
+        "last_buy": row.last_buy.isoformat(),
+        "weight_pct": round(row.weight_pct, 2),
+        "gate_blockers": blockers,
+        "high_3m": _q2_str(high_3m) if high_3m is not None else None,
+        "avg_52w": _q2_str(avg_52w) if avg_52w is not None else None,
+    }
+
+
+def build_dca_board(
+    lots: Sequence[InvestmentLot],
+    events: Sequence[InvestmentEvent],
+    prices: Mapping[str, Price],
+    *,
+    as_of: date | None = None,
+    history_fetcher: HistoryStatsFetcher | None = None,
+    fetch_history: bool = True,
+) -> dict[str, Any]:
+    """
+    Full DCA board: all material open priced names, split stocks/crypto, score-ranked.
+    """
+    as_of = as_of or date.today()
+    rows = build_position_dca_rows(lots, events, prices, as_of=as_of)
+    board_rows = [r for r in rows if r.position_usd >= DCA_BOARD_MIN_POSITION_USD]
+    stats_by_ticker, hist_ok = _fetch_stats_for_rows(
+        board_rows, history_fetcher=history_fetcher, fetch_history=fetch_history
+    )
+
+    stocks: list[dict[str, Any]] = []
+    crypto: list[dict[str, Any]] = []
+    for r in board_rows:
+        high_3m, avg_52w = _normalize_stats(stats_by_ticker, r.ticker)
+        m = compute_dca_metrics(r, high_3m=high_3m, avg_52w=avg_52w)
+        item = board_item_dict(r, m, as_of=as_of, high_3m=high_3m, avg_52w=avg_52w)
+        if _is_crypto(r.asset_class):
+            crypto.append(item)
+        else:
+            stocks.append(item)
+
+    stocks.sort(key=lambda x: (-float(x["score"]), x["ticker"]))
+    crypto.sort(key=lambda x: (-float(x["score"]), x["ticker"]))
+
+    return {
+        "as_of": as_of.isoformat(),
+        "stocks": stocks,
+        "crypto": crypto,
+        "meta": {
+            "history_available": hist_ok,
+            "board_min_position_usd": str(DCA_BOARD_MIN_POSITION_USD),
+            "alert_min_position_usd": str(DCA_MIN_POSITION_USD),
+            "cooldown_days": DCA_COOLDOWN_DAYS,
+            "max_weight_pct": DCA_MAX_WEIGHT_PCT,
+        },
+    }
+
+
 def build_dca_alerts(
     lots: Sequence[InvestmentLot],
     events: Sequence[InvestmentEvent],
@@ -484,28 +647,13 @@ def build_dca_alerts(
             continue
         pre.append(r)
 
-    stats_by_ticker: dict[str, HistoryStats] = {}
-    if fetch_history and pre:
-        ac_map = {r.ticker: r.asset_class for r in pre}
-        tickers = [r.ticker for r in pre]
-        try:
-            if history_fetcher is not None:
-                stats_by_ticker = history_fetcher(tickers, ac_map)
-            else:
-                stats_by_ticker = fetch_history_stats_yfinance(tickers, ac_map)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("DCA history fetch failed open: %s", exc)
-            stats_by_ticker = {}
+    stats_by_ticker, _ = _fetch_stats_for_rows(
+        pre, history_fetcher=history_fetcher, fetch_history=fetch_history
+    )
 
     candidates: list[DcaCandidate] = []
     for r in pre:
-        st = stats_by_ticker.get(r.ticker) or {}
-        high_3m = st.get("high_3m")
-        avg_52w = st.get("avg_52w")
-        if high_3m is not None and not isinstance(high_3m, Decimal):
-            high_3m = Decimal(str(high_3m))
-        if avg_52w is not None and not isinstance(avg_52w, Decimal):
-            avg_52w = Decimal(str(avg_52w))
+        high_3m, avg_52w = _normalize_stats(stats_by_ticker, r.ticker)
         c = evaluate_dca_opportunity(
             r, as_of=as_of, high_3m=high_3m, avg_52w=avg_52w
         )
@@ -514,3 +662,38 @@ def build_dca_alerts(
 
     top = select_top_dca_candidates(candidates)
     return candidates_to_alerts(top, total_eligible=len(candidates))
+
+
+def build_dca_board_from_repo(
+    repo: Any,
+    *,
+    as_of: date | None = None,
+    fetch_history: bool = True,
+    history_fetcher: HistoryStatsFetcher | None = None,
+) -> dict[str, Any]:
+    """Load lots/events/prices from a Sheets repository and build the board."""
+    from backend.schema.models import InvestmentEvent, InvestmentLot, Price
+
+    lots = [
+        r
+        for r in repo.list_rows("InvestmentLots")
+        if isinstance(r, InvestmentLot)
+    ]
+    events = [
+        r
+        for r in repo.list_rows("InvestmentEvents")
+        if isinstance(r, InvestmentEvent)
+    ]
+    prices = {
+        p.ticker.upper(): p
+        for p in repo.list_rows("Prices")
+        if isinstance(p, Price) and not p.archived
+    }
+    return build_dca_board(
+        lots,
+        events,
+        prices,
+        as_of=as_of,
+        fetch_history=fetch_history,
+        history_fetcher=history_fetcher,
+    )
