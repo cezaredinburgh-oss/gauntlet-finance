@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — Portfolio chart: holdings as-of each date
+
+- **Bug:** `scope=all` / `asset_class` MV history used **current open-lot qty × historical prices**, inflating past MV (e.g. 2021 showed today’s book marked at 2021 prices).
+- **Fix:** rebuild qty from statement `InvestmentEvents` (Buy/Sell/StakingReward/Split/exit Transfer); `MV(t) = Σ qty(as_of date(t)) × price(t)`. Coverage gate uses then-owned book. Meta `quantity_basis=holdings_as_of_each_date`.
+- Module: `holdings_timeline.py`; aggregate `aggregate_mv_series_time_aware`.
+
 ## 2026-08-10 — DCA board color coding
 
 - Ticker chips + score bars use Desk palette tiers: **hot** (ok/green), **strong** (brand), **warm** (warn), **cool/watch** (muted) — not monochrome.

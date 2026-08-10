@@ -90,7 +90,7 @@ async def refresh_prices(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Price fetch failed: {exc}") from exc
 
-    # Portfolio MV charts use /prices/history (current holdings × market series).
+    # Portfolio MV charts use /prices/history (holdings as-of each day × market series).
     # No longer write PortfolioSnapshots on refresh.
 
     cache_invalidate("snap:")

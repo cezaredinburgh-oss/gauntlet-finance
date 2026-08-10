@@ -2,8 +2,8 @@
 
 Scopes:
   ticker       — price series for one open ticker
-  asset_class  — Stock | Crypto: current qty × historical prices → MV
-  all          — full book (stock + crypto) same reconstruction
+  asset_class  — Stock | Crypto MV: holdings as-of each day × historical prices
+  all          — full book MV with the same as-of holdings reconstruction
 
 Ranges:
   1d  → 5m bars (intraday)
@@ -22,7 +22,13 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Callable, Literal
 
 from backend.common.timeutil import utc_now
-from backend.schema.models import AssetClass, InvestmentLot, LotStatus
+from backend.schema.models import (
+    AssetClass,
+    InvestmentEvent,
+    InvestmentLot,
+    LotStatus,
+)
+from backend.services.holdings_timeline import HoldingsTimeline, build_holdings_timeline
 from backend.services.prices import _normalize_yahoo_symbol
 from backend.sheets.repository import SheetsRepository
 
@@ -360,6 +366,120 @@ def aggregate_mv_series(
         "coverage_threshold": float(threshold),
         "short_history_tickers": short,
         "series_start": series_start,
+        "quantity_basis": "constant",
+    }
+    return result, meta
+
+
+def _ts_to_date(ts: str) -> date:
+    dt = _parse_ts(ts)
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).date()
+    return dt.date()
+
+
+def aggregate_mv_series_time_aware(
+    timeline: HoldingsTimeline,
+    closes_by_ticker: dict[str, list[SeriesPoint]],
+    *,
+    tickers: list[str] | None = None,
+    coverage_threshold: Decimal = COVERAGE_THRESHOLD,
+) -> tuple[list[SeriesPoint], dict[str, Any]]:
+    """
+    Forward-fill closes; MV(t) = Σ qty(ticker, date(t)) × price(ticker, t).
+
+    Coverage uses **then-owned** book weights (qty × series latest mark as anchor),
+    not today's open lots — so early history is not inflated by names bought later.
+    """
+    empty_meta: dict[str, Any] = {
+        "coverage_threshold": float(coverage_threshold),
+        "short_history_tickers": [],
+        "series_start": None,
+        "quantity_basis": "holdings_as_of_each_date",
+    }
+    universe = [t.upper() for t in (tickers if tickers is not None else timeline.tickers())]
+    if not universe:
+        return [], empty_meta
+
+    price_maps: dict[str, dict[str, Decimal]] = {}
+    first_bar: dict[str, str] = {}
+    latest_px: dict[str, Decimal] = {}
+    all_ts: set[str] = set()
+    for t in universe:
+        series = closes_by_ticker.get(t) or []
+        if not series:
+            continue
+        m: dict[str, Decimal] = {}
+        for ts, px in series:
+            m[ts] = px
+            all_ts.add(ts)
+        if not m:
+            continue
+        price_maps[t] = m
+        ordered_ts = sorted(m.keys(), key=_parse_ts)
+        first_bar[t] = ordered_ts[0]
+        latest_px[t] = m[ordered_ts[-1]]
+
+    if not all_ts or not price_maps:
+        return [], empty_meta
+
+    threshold = coverage_threshold
+    ordered = sorted(all_ts, key=_parse_ts)
+    last: dict[str, Decimal] = {}
+    result: list[SeriesPoint] = []
+
+    for ts in ordered:
+        for t, m in price_maps.items():
+            if ts in m:
+                last[t] = m[ts]
+        if not last:
+            continue
+
+        as_of = _ts_to_date(ts)
+        owned: dict[str, Decimal] = {}
+        for t in price_maps:
+            q = timeline.qty_as_of(t, as_of)
+            if q > 0:
+                owned[t] = q
+        if not owned:
+            continue
+
+        # Anchor weights: then-owned qty × end-of-series mark (stable gate)
+        total_weight = Decimal("0")
+        for t, q in owned.items():
+            px_anchor = latest_px.get(t)
+            if px_anchor is None:
+                continue
+            total_weight += q * px_anchor
+        if total_weight <= 0:
+            continue
+
+        covered = Decimal("0")
+        total_mv = Decimal("0")
+        for t, q in owned.items():
+            if t not in last:
+                continue
+            px = last[t]
+            total_mv += q * px
+            covered += q * latest_px[t]
+
+        if covered / total_weight < threshold:
+            continue
+        result.append((ts, _q2(total_mv)))
+
+    series_start = result[0][0] if result else None
+    short: list[dict[str, str]] = []
+    if series_start is not None:
+        for t, fb in first_bar.items():
+            if _parse_ts(fb) > _parse_ts(series_start):
+                short.append({"ticker": t, "first_bar": fb})
+        short.sort(key=lambda x: x["ticker"])
+
+    meta = {
+        "coverage_threshold": float(threshold),
+        "short_history_tickers": short,
+        "series_start": series_start,
+        "quantity_basis": "holdings_as_of_each_date",
     }
     return result, meta
 
@@ -438,6 +558,26 @@ class PriceHistoryService:
             if not isinstance(row, InvestmentLot):
                 continue
             if row.archived or row.status != LotStatus.OPEN or row.quantity_remaining <= 0:
+                continue
+            rows.append(row)
+        return rows
+
+    def _all_lots(self) -> list[InvestmentLot]:
+        rows: list[InvestmentLot] = []
+        for row in self.repo.list_rows("InvestmentLots"):
+            if not isinstance(row, InvestmentLot):
+                continue
+            if row.archived:
+                continue
+            rows.append(row)
+        return rows
+
+    def _all_events(self) -> list[InvestmentEvent]:
+        rows: list[InvestmentEvent] = []
+        for row in self.repo.list_rows("InvestmentEvents"):
+            if not isinstance(row, InvestmentEvent):
+                continue
+            if row.archived:
                 continue
             rows.append(row)
         return rows
@@ -592,7 +732,7 @@ class PriceHistoryService:
                 },
             )
 
-        # asset_class or all
+        # asset_class or all — time-aware holdings (events as-of each date)
         ac_filter: AssetClass | None = None
         label = "Portfolio"
         if scope == "asset_class":
@@ -609,40 +749,99 @@ class PriceHistoryService:
                         f"Invalid asset_class {asset_class!r}; expected Stock or Crypto"
                     ) from exc
             label = ac_filter.value
-            qty_map, cost, ac_map = self._qty_and_cost_by_ticker(
-                lots, asset_class=ac_filter
-            )
-            if not qty_map:
-                raise LookupError(f"No open {ac_filter.value} positions")
         elif scope == "all":
-            qty_map, cost, ac_map = self._qty_and_cost_by_ticker(lots, all_open=True)
-            if not qty_map:
-                raise LookupError("No open positions")
             label = "Portfolio"
         else:
             raise ValueError(f"Invalid scope {scope!r}")
 
-        tickers = sorted(qty_map.keys())
-        closes = self._fetch_closes(tickers, ac_map, period, interval)
-        missing = [t for t in tickers if t not in closes or not closes[t]]
-        mv_series, agg_meta = aggregate_mv_series(qty_map, closes)
+        all_lots = self._all_lots()
+        events = self._all_events()
+        timeline = build_holdings_timeline(events, all_lots)
+        if ac_filter is not None:
+            tickers = timeline.tickers_for_asset_class(ac_filter)
+        else:
+            tickers = timeline.tickers()
+        if not tickers:
+            # Fall back to current open lots if timeline empty (sparse data)
+            open_lots = lots
+            qty_map, cost, ac_map = self._qty_and_cost_by_ticker(
+                open_lots,
+                asset_class=ac_filter,
+                all_open=ac_filter is None,
+            )
+            if not qty_map:
+                raise LookupError(
+                    f"No open {ac_filter.value} positions"
+                    if ac_filter
+                    else "No open positions"
+                )
+            tickers = sorted(qty_map.keys())
+            closes = self._fetch_closes(tickers, ac_map, period, interval)
+            missing = [t for t in tickers if t not in closes or not closes[t]]
+            mv_series, agg_meta = aggregate_mv_series(qty_map, closes)
+            quantity_basis = "current_open_lots"
+            note = (
+                "Fallback: current holdings × historical prices (no event timeline)."
+            )
+        else:
+            # Current open cost for reference only (not historical cost series)
+            open_lots = lots
+            _cur_qty, cost, ac_open = self._qty_and_cost_by_ticker(
+                open_lots,
+                asset_class=ac_filter,
+                all_open=ac_filter is None,
+            )
+            ac_map = {t: timeline.asset_class.get(t) for t in tickers}
+            for t, ac in ac_open.items():
+                if ac_map.get(t) is None:
+                    ac_map[t] = ac
+            closes = self._fetch_closes(tickers, ac_map, period, interval)
+            missing = [t for t in tickers if t not in closes or not closes[t]]
+            mv_series, agg_meta = aggregate_mv_series_time_aware(
+                timeline, closes, tickers=tickers
+            )
+            quantity_basis = "holdings_as_of_each_date"
+            note = (
+                "Holdings as of each day (statement events) × historical prices "
+                "(intraday 5m)."
+                if point_kind == "intraday"
+                else (
+                    "Holdings as of each day (statement buys/sells) × historical closes "
+                    "(≥90% of then-owned book coverage)."
+                )
+            )
+            # Day-change uses *today's* as-of qty (not constant open lots)
+            today = date.today()
+            qty_map = {
+                t: q
+                for t, q in (
+                    (t, timeline.qty_as_of(t, today)) for t in tickers
+                )
+                if q > 0
+            }
+
         points = [{"date": d_ts, "value": _str_dec(v)} for d_ts, v in mv_series]
         first = mv_series[0][1] if mv_series else None
         last = mv_series[-1][1] if mv_series else None
         ch = _change_meta(first, last, places=2)
-        day = self._resolve_day_change(
-            qty_map,
-            ac_map,
-            series_kind="market_value",
-            main_range=range_norm,
-            main_series=mv_series if range_norm == "1d" else None,
-            places=2,
-        )
-        note = (
-            "Current holdings marked at historical prices (intraday 5m)."
-            if point_kind == "intraday"
-            else "Mark of current holdings at historical closes (names with ≥90% book coverage)."
-        )
+        if quantity_basis == "holdings_as_of_each_date":
+            day = self._resolve_day_change(
+                qty_map if qty_map else {t: Decimal("0") for t in tickers},
+                ac_map,
+                series_kind="market_value",
+                main_range=range_norm,
+                main_series=mv_series if range_norm == "1d" else None,
+                places=2,
+            )
+        else:
+            day = self._resolve_day_change(
+                qty_map,
+                ac_map,
+                series_kind="market_value",
+                main_range=range_norm,
+                main_series=mv_series if range_norm == "1d" else None,
+                places=2,
+            )
         short = agg_meta.get("short_history_tickers") or []
         if short:
             bits = [f"{s['ticker']} from {s['first_bar']}" for s in short[:8]]
@@ -667,7 +866,7 @@ class PriceHistoryService:
                 "cost_basis_usd": _str_dec(cost),
                 "avg_cost_usd": None,
                 "quantity": None,
-                "quantity_basis": "current_open_lots",
+                "quantity_basis": quantity_basis,
                 "note": note,
                 "point_kind": point_kind,
                 **ch,
