@@ -14,7 +14,12 @@ from backend.schema.models import (
     LotStatus,
     Price,
 )
-from backend.services.ticker_digest import build_ticker_digests, roi_grade
+from backend.services.ticker_digest import (
+    annualized_unrealized_pct,
+    build_ticker_digests,
+    cost_weighted_holding_years,
+    roi_grade,
+)
 from backend.sheets.repository import InMemorySheetsRepository
 
 TS = datetime(2026, 8, 6, 12, 0, 0, tzinfo=timezone.utc)
@@ -70,6 +75,54 @@ def test_roi_grade_thresholds():
     assert roi_grade(0)[0] == "C"
     assert roi_grade(-10)[0] == "D"
     assert roi_grade(-25)[0] == "F"
+
+
+def test_cost_weighted_holding_years():
+    # Equal cost: average of 1y and 3y = 2y
+    as_of = date(2024, 1, 1)
+    lots = [
+        (Decimal("100"), date(2023, 1, 1)),
+        (Decimal("100"), date(2021, 1, 1)),
+    ]
+    y = cost_weighted_holding_years(lots, as_of=as_of)
+    assert y is not None
+    assert abs(y - 2.0) < 0.02
+    # Heavier recent lot pulls age down
+    lots2 = [
+        (Decimal("300"), date(2023, 1, 1)),
+        (Decimal("100"), date(2021, 1, 1)),
+    ]
+    y2 = cost_weighted_holding_years(lots2, as_of=as_of)
+    assert y2 is not None and y2 < y
+
+
+def test_annualized_unrealized_pct():
+    # Double in 2 years → ~41.4% ann (sqrt(2)-1)
+    ann = annualized_unrealized_pct(1.0, 2.0)
+    assert ann is not None
+    assert abs(ann - 41.42) < 0.1
+    # Too short
+    assert annualized_unrealized_pct(0.5, 30 / 365.25) is None
+    # Wipeout
+    assert annualized_unrealized_pct(-1.0, 2.0) is None
+
+
+def test_digest_includes_annualized():
+    # 2 years hold, MV doubles: 100% total, ~41% ann
+    repo = InMemorySheetsRepository()
+    acq = date(2024, 8, 6)  # exactly 2y before AS_OF 2026-08-06
+    repo.upsert_rows(
+        "InvestmentLots",
+        [_lot(ticker="AAA", qty="10", cost_usd="100", acquisition=acq)],
+    )
+    repo.upsert_rows("Prices", [_price("AAA", "20")])  # MV 200
+    repo.upsert_rows("InvestmentEvents", [])
+    result = build_ticker_digests(repo, as_of=AS_OF)
+    row = next(t for t in result["tickers"] if t["ticker"] == "AAA")
+    assert row["unrealized_pct"] == 100.0
+    assert row["holding_years"] is not None and row["holding_years"] >= 1.9
+    assert row["annualized_unrealized_pct"] is not None
+    assert abs(row["annualized_unrealized_pct"] - 41.42) < 1.0
 
 
 def test_multi_platform_qty_and_tax_tranches():

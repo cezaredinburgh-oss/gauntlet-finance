@@ -74,14 +74,40 @@ const GRADE_CHIP: Record<string, { idle: string; active: string }> = {
 
 const PLATFORM_COLORS = ["#3d9cf0", "#a78bfa", "#fbbf24", "#2dd4a8", "#f87171", "#38bdf8"];
 
-/** Best unrealized ROI first; unpriced last; then larger MV/cost, then name. */
-function comparePerformance(a: TickerDigest, b: TickerDigest): number {
-  const aPriced = a.unrealized_pct != null;
-  const bPriced = b.unrealized_pct != null;
-  if (aPriced !== bPriced) return aPriced ? -1 : 1;
-  if (aPriced && bPriced && a.unrealized_pct !== b.unrealized_pct) {
-    return (b.unrealized_pct as number) - (a.unrealized_pct as number);
+type HoldingsSortMode = "total" | "annualized";
+
+const HOLDINGS_SORT_KEY = "gauntlet.holdings.sortMode";
+
+function loadHoldingsSortMode(): HoldingsSortMode {
+  try {
+    const raw = localStorage.getItem(HOLDINGS_SORT_KEY);
+    if (raw === "annualized" || raw === "total") return raw;
+  } catch {
+    /* ignore */
   }
+  return "total";
+}
+
+/** Best metric first; unpriced / missing metric last; then larger MV/cost, then name. */
+function comparePerformance(
+  a: TickerDigest,
+  b: TickerDigest,
+  mode: HoldingsSortMode,
+): number {
+  const metric = (t: TickerDigest): number | null => {
+    if (mode === "annualized") {
+      return t.annualized_unrealized_pct ?? null;
+    }
+    return t.unrealized_pct ?? null;
+  };
+  const am = metric(a);
+  const bm = metric(b);
+  if (am == null && bm == null) {
+    /* fall through */
+  } else if (am == null) return 1;
+  else if (bm == null) return -1;
+  else if (bm !== am) return bm - am;
+
   const mv = (t: TickerDigest) =>
     t.market_value_usd != null ? d(t.market_value_usd) : d(t.cost_basis_usd);
   const mvDiff = mv(b) - mv(a);
@@ -104,9 +130,21 @@ export function InvestmentsPage() {
   const [digests, setDigests] = useState<TickerDigest[]>([]);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [chartScope, setChartScope] = useState<ChartScope | null>(null);
+  const [holdingsSort, setHoldingsSort] = useState<HoldingsSortMode>(
+    () => loadHoldingsSortMode(),
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const setHoldingsSortMode = (mode: HoldingsSortMode) => {
+    setHoldingsSort(mode);
+    try {
+      localStorage.setItem(HOLDINGS_SORT_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  };
 
   function selectTicker(ticker: string) {
     setSelectedTicker(ticker);
@@ -137,7 +175,9 @@ export function InvestmentsPage() {
           return prev;
         }
         if (prev && digR.tickers.some((t) => t.ticker === prev)) return prev;
-        const best = [...digR.tickers].sort(comparePerformance)[0];
+        const best = [...digR.tickers].sort((a, b) =>
+          comparePerformance(a, b, "total"),
+        )[0];
         return best?.ticker ?? null;
       });
       setChartScope((prev) => {
@@ -174,7 +214,9 @@ export function InvestmentsPage() {
         if (!cancelled) {
           setSnap(snapR);
           setDigests(digR.tickers);
-          const best = [...digR.tickers].sort(comparePerformance)[0];
+          const best = [...digR.tickers].sort((a, b) =>
+          comparePerformance(a, b, "total"),
+        )[0];
           setSelectedTicker(best?.ticker ?? null);
           setChartScope(defaultChartScope(digR.tickers));
         }
@@ -210,8 +252,8 @@ export function InvestmentsPage() {
   }, [loading, focus, snap]);
 
   const sortedDigests = useMemo(
-    () => [...digests].sort(comparePerformance),
-    [digests],
+    () => [...digests].sort((a, b) => comparePerformance(a, b, holdingsSort)),
+    [digests, holdingsSort],
   );
 
   const selectedDigest = useMemo(
@@ -353,9 +395,39 @@ export function InvestmentsPage() {
                     Select a ticker · compare quantities with your broker apps
                   </p>
                 </div>
-                <span className="badge bg-white/5 text-ink-muted">
-                  {digests.length} tickers
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setHoldingsSortMode("total")}
+                      className={cn(
+                        "rounded-md px-2 py-1 text-[11px] font-semibold transition",
+                        holdingsSort === "total"
+                          ? "bg-brand/20 text-brand"
+                          : "text-ink-faint hover:text-ink-muted",
+                      )}
+                      title="Sort by total unrealized ROI %"
+                    >
+                      Total
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setHoldingsSortMode("annualized")}
+                      className={cn(
+                        "rounded-md px-2 py-1 text-[11px] font-semibold transition",
+                        holdingsSort === "annualized"
+                          ? "bg-brand/20 text-brand"
+                          : "text-ink-faint hover:text-ink-muted",
+                      )}
+                      title="Sort by cost-weighted annualized open ROI %"
+                    >
+                      Annualized
+                    </button>
+                  </div>
+                  <span className="badge bg-white/5 text-ink-muted">
+                    {digests.length} tickers
+                  </span>
+                </div>
               </div>
 
               <div className="mb-2 flex flex-wrap gap-1.5">
@@ -363,12 +435,20 @@ export function InvestmentsPage() {
                   const active = selectedTicker === t.ticker;
                   const grade = t.roi_grade in GRADE_CHIP ? t.roi_grade : "—";
                   const chip = GRADE_CHIP[grade] || GRADE_CHIP["—"];
+                  const sortPct =
+                    holdingsSort === "annualized"
+                      ? t.annualized_unrealized_pct
+                      : t.unrealized_pct;
                   return (
                     <button
                       key={t.ticker}
                       type="button"
                       title={`${t.ticker} · grade ${t.roi_grade} (${t.roi_grade_label})${
                         t.missing_price ? " · no quote" : ""
+                      }${
+                        t.annualized_unrealized_pct != null
+                          ? ` · ann. ${t.annualized_unrealized_pct >= 0 ? "+" : ""}${t.annualized_unrealized_pct.toFixed(1)}%`
+                          : ""
                       }`}
                       onClick={() => selectTicker(t.ticker)}
                       className={cn(
@@ -378,6 +458,18 @@ export function InvestmentsPage() {
                     >
                       <span className="font-semibold">{t.ticker}</span>
                       <span className="ml-1 opacity-70">{formatQty(t.quantity_total)}</span>
+                      {sortPct != null && (
+                        <span
+                          className={cn(
+                            "ml-1 tabular-nums opacity-90",
+                            sortPct >= 0 ? "text-ok" : "text-danger",
+                          )}
+                        >
+                          {sortPct >= 0 ? "+" : ""}
+                          {sortPct.toFixed(0)}%
+                          {holdingsSort === "annualized" ? " a" : ""}
+                        </span>
+                      )}
                       <span className="ml-1.5 inline-flex h-4 min-w-[1rem] items-center justify-center rounded px-0.5 text-[10px] font-bold opacity-90">
                         {t.roi_grade}
                       </span>
@@ -394,7 +486,11 @@ export function InvestmentsPage() {
                 })}
               </div>
               <p className="mb-4 text-[11px] text-ink-faint">
-                Ordered best → worst ROI · chip color = grade (A–F) · muted = no quote ·{" "}
+                Sorted by{" "}
+                {holdingsSort === "annualized"
+                  ? "annualized ROI (cost-weighted hold ≥90d)"
+                  : "total unrealized ROI"}{" "}
+                · best → worst · grade A–F on total % ·{" "}
                 <strong className="text-ink-muted">Update prices</strong> for marks
               </p>
 
@@ -1385,9 +1481,31 @@ function TickerDigestPanel({
                       )}
                     >
                       {digest.unrealized_pct >= 0 ? "+" : ""}
-                      {digest.unrealized_pct.toFixed(1)}% ROI
+                      {digest.unrealized_pct.toFixed(1)}% total
                     </div>
                   )}
+                  {digest.annualized_unrealized_pct != null ? (
+                    <div
+                      className={cn(
+                        "text-[11px] tabular-nums",
+                        digest.annualized_unrealized_pct >= 0 ? "text-ok" : "text-danger",
+                      )}
+                      title="CAGR from cost→MV over cost-weighted holding years"
+                    >
+                      {digest.annualized_unrealized_pct >= 0 ? "+" : ""}
+                      {digest.annualized_unrealized_pct.toFixed(1)}% ann.
+                      {digest.holding_years != null && (
+                        <span className="text-ink-faint">
+                          {" "}
+                          · {digest.holding_years.toFixed(1)}y wtd
+                        </span>
+                      )}
+                    </div>
+                  ) : digest.holding_years != null && digest.holding_years * 365.25 < 90 ? (
+                    <div className="text-[11px] text-ink-faint">
+                      Ann. n/a (&lt;90d wtd hold)
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <>

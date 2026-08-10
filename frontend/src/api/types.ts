@@ -487,6 +487,10 @@ export type TickerDigest = {
   market_value_usd: string | null;
   unrealized_usd: string | null;
   unrealized_pct: number | null;
+  /** Cost-weighted open holding years (option B) */
+  holding_years?: number | null;
+  /** CAGR-style annualized open ROI %; null if short hold / unpriced */
+  annualized_unrealized_pct?: number | null;
   roi_grade: string;
   roi_grade_label: string;
   portfolio_weight_pct: number;

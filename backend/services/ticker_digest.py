@@ -53,6 +53,62 @@ def roi_grade(unrealized_pct: float | None) -> tuple[str, str]:
     return "F", "Underwater"
 
 
+# Min cost-weighted age before we quote CAGR-style annualized open ROI
+MIN_ANNUALIZE_DAYS = 90
+
+
+def cost_weighted_holding_years(
+    lot_costs_and_dates: list[tuple[Decimal, date]],
+    *,
+    as_of: date,
+) -> float | None:
+    """
+    Value-weighted holding period in years (option B).
+
+    Each open lot contributes ``cost_usd * days_held``; divide by total cost,
+    then by 365.25. Lots with non-positive cost are skipped.
+    """
+    weighted_days = Decimal("0")
+    total_cost = Decimal("0")
+    for cost, acq in lot_costs_and_dates:
+        if cost is None or cost <= 0:
+            continue
+        days = (as_of - acq).days
+        if days < 0:
+            days = 0
+        weighted_days += cost * Decimal(days)
+        total_cost += cost
+    if total_cost <= 0:
+        return None
+    avg_days = float(weighted_days / total_cost)
+    return avg_days / 365.25
+
+
+def annualized_unrealized_pct(
+    total_return_ratio: float,
+    holding_years: float | None,
+    *,
+    min_days: int = MIN_ANNUALIZE_DAYS,
+) -> float | None:
+    """
+    CAGR from cost→MV: ``(1+R)^(1/t) - 1``.
+
+    ``total_return_ratio`` is ``MV/cost - 1`` (not percent).
+    Returns None if holding period too short or return ≤ -100%.
+    """
+    if holding_years is None or holding_years <= 0:
+        return None
+    if holding_years * 365.25 < min_days:
+        return None
+    if total_return_ratio <= -1.0:
+        return None
+    try:
+        ann = (1.0 + total_return_ratio) ** (1.0 / holding_years) - 1.0
+    except (OverflowError, ValueError, ZeroDivisionError):
+        return None
+    return ann * 100.0
+
+
 def _tax_bucket_key(free_on: date, as_of: date) -> str:
     this_year = as_of.year
     if free_on <= as_of:
@@ -155,6 +211,7 @@ def build_ticker_digests(
         last_acq: date | None = None
         next_unlock: date | None = None
         next_unlock_qty = Decimal("0")
+        lot_age_inputs: list[tuple[Decimal, date]] = []
 
         # Prefer first non-null asset class among open lots for this ticker
         asset_class_val: str | None = None
@@ -172,6 +229,8 @@ def build_ticker_digests(
             if lot_usd <= 0:
                 lot_usd = _d(lot.cost_basis_usd)
             cost_total += lot_usd
+            if lot_usd > 0:
+                lot_age_inputs.append((lot_usd, lot.acquisition_date))
 
             src = (lot.source or "Unknown").strip() or "Unknown"
             if src not in platform:
@@ -222,9 +281,18 @@ def build_ticker_digests(
         total_cost += cost_total
         unrealized = (mv - cost_total) if mv is not None else None
         unrealized_pct: float | None = None
+        total_return_ratio: float | None = None
         if unrealized is not None and cost_total > 0:
             unrealized_pct = float((unrealized / cost_total) * 100)
+            total_return_ratio = float(unrealized / cost_total)
         grade, grade_label = roi_grade(unrealized_pct)
+
+        holding_years = cost_weighted_holding_years(lot_age_inputs, as_of=as_of)
+        annualized_pct: float | None = None
+        if total_return_ratio is not None:
+            annualized_pct = annualized_unrealized_pct(
+                total_return_ratio, holding_years
+            )
 
         avg_cost = (cost_total / qty_total) if qty_total > 0 else Decimal("0")
 
@@ -259,6 +327,8 @@ def build_ticker_digests(
                 "market_value_usd": mv,
                 "unrealized_usd": unrealized,
                 "unrealized_pct": unrealized_pct,
+                "holding_years": holding_years,
+                "annualized_unrealized_pct": annualized_pct,
                 "avg_cost_usd": avg_cost,
                 "price_val": price_val,
                 "price_as_of": price_as_of,
@@ -348,6 +418,12 @@ def build_ticker_digests(
                 "unrealized_usd": _str_dec(t_unreal) if t_unreal is not None else None,
                 "unrealized_pct": round(r["unrealized_pct"], 2)
                 if r["unrealized_pct"] is not None
+                else None,
+                "holding_years": round(r["holding_years"], 3)
+                if r.get("holding_years") is not None
+                else None,
+                "annualized_unrealized_pct": round(r["annualized_unrealized_pct"], 2)
+                if r.get("annualized_unrealized_pct") is not None
                 else None,
                 "roi_grade": r["grade"],
                 "roi_grade_label": r["grade_label"],

@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — Annualized open ROI (cost-weighted)
+
+- Digest: `holding_years` (cost-weighted lot age) + `annualized_unrealized_pct` (CAGR cost→MV, min 90d).
+- Verify holdings: sort toggle Total vs Annualized; chips + panel show ann. % and weighted years.
+
 ## 2026-08-10 — Live chart ticker strip with range performance
 
 - `GET /prices/window-performance?range=` — per open ticker first→last % for chart window.
