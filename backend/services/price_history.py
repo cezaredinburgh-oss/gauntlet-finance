@@ -860,6 +860,113 @@ def _change_meta(
     }
 
 
+def _book_mv_window(
+    timeline: HoldingsTimeline,
+    closes: dict[str, list[SeriesPoint]],
+    tickers: list[str],
+    *,
+    coverage_threshold: Decimal,
+) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+    """Return (first_mv, last_mv, delta) for a book subset, or Nones if empty."""
+    if not tickers:
+        return None, None, Decimal("0")
+    subset = {t: closes[t] for t in tickers if t in closes and closes[t]}
+    if not subset:
+        return None, None, Decimal("0")
+    series, _ = aggregate_mv_series_time_aware(
+        timeline,
+        subset,
+        tickers=tickers,
+        coverage_threshold=coverage_threshold,
+        preseed_first_marks=True,
+    )
+    if not series:
+        return None, None, Decimal("0")
+    first, last = series[0][1], series[-1][1]
+    return first, last, last - first
+
+
+def portfolio_window_from_components(
+    timeline: HoldingsTimeline,
+    closes_raw: dict[str, list[SeriesPoint]],
+    ac_map: dict[str, str | None],
+    tickers: list[str],
+    *,
+    is_intraday: bool,
+    coverage_threshold: Decimal,
+) -> dict[str, Any]:
+    """
+    Portfolio window Δ = Stocks book Δ + Crypto book Δ, using the **same**
+    windows as the Stocks / Crypto chart tabs (RTH vs last 24h on 1D).
+
+    This is additive by construction so the three headline numbers reconcile.
+    """
+    stock_ts = [
+        t
+        for t in tickers
+        if (ac_map.get(t) or "").lower() != "crypto"
+    ]
+    crypto_ts = [
+        t
+        for t in tickers
+        if (ac_map.get(t) or "").lower() == "crypto"
+    ]
+
+    if is_intraday:
+        stock_closes, _ = trim_closes_map(
+            {t: closes_raw[t] for t in stock_ts if t in closes_raw},
+            mode="rth_today_or_prior",
+        )
+        crypto_closes, _ = trim_closes_map(
+            {t: closes_raw[t] for t in crypto_ts if t in closes_raw},
+            mode="last_24h",
+        )
+    else:
+        stock_closes = {t: closes_raw[t] for t in stock_ts if t in closes_raw}
+        crypto_closes = {t: closes_raw[t] for t in crypto_ts if t in closes_raw}
+
+    s0, s1, s_d = _book_mv_window(
+        timeline, stock_closes, stock_ts, coverage_threshold=coverage_threshold
+    )
+    c0, c1, c_d = _book_mv_window(
+        timeline, crypto_closes, crypto_ts, coverage_threshold=coverage_threshold
+    )
+    s_d = s_d if s_d is not None else Decimal("0")
+    c_d = c_d if c_d is not None else Decimal("0")
+    total_d = s_d + c_d
+
+    # Opening book mark for %: sum of component first MVs when available
+    first_parts = [x for x in (s0, c0) if x is not None]
+    first_total = sum(first_parts, Decimal("0")) if first_parts else None
+    last_parts = [x for x in (s1, c1) if x is not None]
+    last_total = sum(last_parts, Decimal("0")) if last_parts else None
+
+    pct = None
+    if first_total is not None and first_total != 0:
+        pct = float((total_d / first_total) * 100)
+
+    def _leg(delta: Decimal, first: Decimal | None, last: Decimal | None) -> dict[str, Any]:
+        leg_pct = None
+        if first is not None and first != 0:
+            leg_pct = round(float((delta / first) * 100), 2)
+        return {
+            "change_usd": _str_dec(delta),
+            "change_pct": leg_pct,
+            "first_usd": _str_dec(first) if first is not None else None,
+            "last_usd": _str_dec(last) if last is not None else None,
+        }
+
+    return {
+        "stocks": _leg(s_d, s0, s1),
+        "crypto": _leg(c_d, c0, c1),
+        "sum_change_usd": _str_dec(total_d),
+        "sum_change_pct": round(pct, 2) if pct is not None else None,
+        "first_usd": _str_dec(first_total) if first_total is not None else None,
+        "last_usd": _str_dec(last_total) if last_total is not None else None,
+        "method": "stocks_rth_plus_crypto_24h" if is_intraday else "stocks_plus_crypto_same_range",
+    }
+
+
 def _day_change_from_series(series: list[SeriesPoint], *, places: int = 2) -> dict[str, Any]:
     if not series:
         return {
@@ -1159,6 +1266,7 @@ class PriceHistoryService:
         all_lots = self._all_lots()
         events = self._all_events()
         timeline = build_holdings_timeline(events, all_lots)
+        closes_raw: dict[str, list[SeriesPoint]] = {}
         if ac_filter is not None:
             tickers = timeline.tickers_for_asset_class(ac_filter)
         else:
@@ -1271,6 +1379,37 @@ class PriceHistoryService:
         first = mv_series[0][1] if mv_series else None
         last = mv_series[-1][1] if mv_series else None
         ch = _change_meta(first, last, places=2)
+        window_components: dict[str, Any] | None = None
+        # Portfolio: headline window Δ = Stocks tab Δ + Crypto tab Δ (additive)
+        if (
+            ac_filter is None
+            and quantity_basis == "holdings_as_of_each_date"
+            and closes_raw
+        ):
+            try:
+                window_components = portfolio_window_from_components(
+                    timeline,
+                    closes_raw,
+                    ac_map,
+                    tickers,
+                    is_intraday=is_intraday,
+                    coverage_threshold=cov_threshold,
+                )
+                # Override headline change with additive sum
+                if window_components.get("sum_change_usd") is not None:
+                    ch = {
+                        **ch,
+                        "change_abs": window_components["sum_change_usd"],
+                        "change_pct": window_components.get("sum_change_pct"),
+                        "first_value": window_components.get("first_usd")
+                        or ch.get("first_value"),
+                        "last_value": window_components.get("last_usd")
+                        or ch.get("last_value"),
+                    }
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("portfolio window components failed: %s", exc)
+                window_components = None
+
         if quantity_basis == "holdings_as_of_each_date":
             day = self._resolve_day_change(
                 qty_map if qty_map else {t: Decimal("0") for t in tickers},
@@ -1300,8 +1439,8 @@ class PriceHistoryService:
         elif is_intraday and session_status == "last_24h":
             if ac_filter is None:
                 note = (
-                    "Last 24h (5m); equities carried at prior close overnight "
-                    "so window matches stocks session + crypto 24h. "
+                    "Window Δ = Stocks (US session) + Crypto (24h). "
+                    "Chart path is last 24h book mark. "
                 ) + note
             else:
                 note = "Last 24h (5m). " + note
@@ -1315,6 +1454,25 @@ class PriceHistoryService:
             asset_class=ac_filter,
             asset_class_by_ticker=ac_map,
         )
+        meta_out: dict[str, Any] = {
+            "tickers": tickers,
+            "missing_tickers": missing,
+            "coverage_threshold": agg_meta.get("coverage_threshold"),
+            "short_history_tickers": short,
+            "series_start": agg_meta.get("series_start"),
+            "cost_basis_usd": _str_dec(cost),
+            "avg_cost_usd": None,
+            "quantity": None,
+            "quantity_basis": quantity_basis,
+            "trades": trades,
+            "session_status": session_status if is_intraday else None,
+            "note": note,
+            "point_kind": point_kind,
+            **ch,
+            **day,
+        }
+        if window_components is not None:
+            meta_out["window_components"] = window_components
         return HistoryResult(
             scope="all" if scope == "all" else "asset_class",
             label=label,
@@ -1324,23 +1482,7 @@ class PriceHistoryService:
             interval=interval,
             as_of=ts,
             points=points,
-            meta={
-                "tickers": tickers,
-                "missing_tickers": missing,
-                "coverage_threshold": agg_meta.get("coverage_threshold"),
-                "short_history_tickers": short,
-                "series_start": agg_meta.get("series_start"),
-                "cost_basis_usd": _str_dec(cost),
-                "avg_cost_usd": None,
-                "quantity": None,
-                "quantity_basis": quantity_basis,
-                "trades": trades,
-                "session_status": session_status if is_intraday else None,
-                "note": note,
-                "point_kind": point_kind,
-                **ch,
-                **day,
-            },
+            meta=meta_out,
         )
 
     def window_performance(

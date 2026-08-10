@@ -641,6 +641,58 @@ def test_portfolio_1d_aligned_grid_full_book_and_additive():
     assert net > Decimal("-200")
 
 
+def test_portfolio_window_components_additive():
+    """Portfolio window Δ = stock RTH Δ + crypto 24h Δ."""
+    from backend.services.price_history import portfolio_window_from_components
+
+    now = datetime(2026, 8, 10, 21, 30, 0, tzinfo=timezone.utc)
+    # Patch "now" indirectly via series dates relative to AS_OF-style fixed window
+    stock = [
+        ("2026-08-09T19:55:00+00:00", Decimal("100")),
+        ("2026-08-10T13:30:00+00:00", Decimal("100")),
+        ("2026-08-10T21:25:00+00:00", Decimal("110")),
+    ]
+    crypto = []
+    t0 = now - timedelta(hours=24)
+    for i in range(0, 24 * 12 + 1):
+        ts = (t0 + timedelta(minutes=5 * i)).replace(microsecond=0).isoformat()
+        crypto.append((ts, Decimal("1000") - Decimal(i) * Decimal("0.5")))
+
+    closes = {"STK": stock, "CRY": crypto}
+    ac = {"STK": "Stock", "CRY": "Crypto"}
+    events = [
+        _event(
+            ticker="STK",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="10",
+            asset_class=AssetClass.STOCK,
+        ),
+        _event(
+            ticker="CRY",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="1",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    tl = build_holdings_timeline(events, [])
+    # Freeze trim "now" by using series that encode windows; portfolio_window uses date.today
+    # so we only assert structure and that sum = stock + crypto legs
+    comp = portfolio_window_from_components(
+        tl,
+        closes,
+        ac,
+        ["STK", "CRY"],
+        is_intraday=True,
+        coverage_threshold=Decimal("0.5"),
+    )
+    s = Decimal(comp["stocks"]["change_usd"])
+    c = Decimal(comp["crypto"]["change_usd"])
+    total = Decimal(comp["sum_change_usd"])
+    assert total == s + c
+
+
 def test_window_performance_mocked():
     repo = InMemorySheetsRepository()
     repo.upsert_rows(

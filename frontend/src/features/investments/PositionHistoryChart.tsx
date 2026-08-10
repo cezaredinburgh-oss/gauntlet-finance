@@ -350,6 +350,14 @@ export function PositionHistoryChart({
         ? d(data.meta.cost_basis_usd)
         : null;
 
+  const wc = data?.meta.window_components;
+  const stockWin =
+    wc?.stocks?.change_usd != null ? d(wc.stocks.change_usd) : null;
+  const cryptoWin =
+    wc?.crypto?.change_usd != null ? d(wc.crypto.change_usd) : null;
+  const stockWinPct = wc?.stocks?.change_pct ?? null;
+  const cryptoWinPct = wc?.crypto?.change_pct ?? null;
+
   const missing = data?.meta.missing_tickers ?? [];
   const positive = changePct != null ? changePct >= 0 : true;
   const dayPositive = dayPct != null ? dayPct >= 0 : true;
@@ -418,6 +426,54 @@ export function PositionHistoryChart({
                   )}
                   {changePct >= 0 ? "+" : ""}
                   {changePct.toFixed(1)}% window
+                </div>
+              )}
+              {scope.kind === "all" && (stockWin != null || cryptoWin != null) && (
+                <div className="mt-0.5 flex flex-wrap justify-end gap-x-2 gap-y-0.5 text-[11px] tabular-nums">
+                  {stockWin != null && (
+                    <span
+                      className={cn(
+                        stockWin >= 0 ? "text-ok" : "text-danger",
+                      )}
+                      title={
+                        range === "1d"
+                          ? "Stocks US session change (same as Stocks tab)"
+                          : "Stocks book change over this range"
+                      }
+                    >
+                      Stocks {stockWin >= 0 ? "+" : ""}
+                      {formatUsd(stockWin)}
+                      {stockWinPct != null && (
+                        <span className="text-ink-faint">
+                          {" "}
+                          ({stockWinPct >= 0 ? "+" : ""}
+                          {stockWinPct.toFixed(1)}%)
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {cryptoWin != null && (
+                    <span
+                      className={cn(
+                        cryptoWin >= 0 ? "text-ok" : "text-danger",
+                      )}
+                      title={
+                        range === "1d"
+                          ? "Crypto last-24h change (same as Crypto tab)"
+                          : "Crypto book change over this range"
+                      }
+                    >
+                      Crypto {cryptoWin >= 0 ? "+" : ""}
+                      {formatUsd(cryptoWin)}
+                      {cryptoWinPct != null && (
+                        <span className="text-ink-faint">
+                          {" "}
+                          ({cryptoWinPct >= 0 ? "+" : ""}
+                          {cryptoWinPct.toFixed(1)}%)
+                        </span>
+                      )}
+                    </span>
+                  )}
                 </div>
               )}
               {dayPct != null && range !== "1d" && (

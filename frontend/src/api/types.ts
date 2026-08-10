@@ -577,6 +577,26 @@ export type PriceHistory = {
     short_history_tickers?: Array<{ ticker: string; first_bar: string }>;
     trades?: PriceHistoryTrade[];
     session_status?: string | null;
+    /** Portfolio only: window Δ split into Stocks + Crypto (additive). */
+    window_components?: {
+      stocks?: {
+        change_usd?: string | null;
+        change_pct?: number | null;
+        first_usd?: string | null;
+        last_usd?: string | null;
+      };
+      crypto?: {
+        change_usd?: string | null;
+        change_pct?: number | null;
+        first_usd?: string | null;
+        last_usd?: string | null;
+      };
+      sum_change_usd?: string | null;
+      sum_change_pct?: number | null;
+      first_usd?: string | null;
+      last_usd?: string | null;
+      method?: string;
+    } | null;
   };
 };
 

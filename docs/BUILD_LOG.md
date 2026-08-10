@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — Portfolio window Δ = Stocks + Crypto components
+
+- Portfolio headline change is **sum of Stocks book Δ + Crypto book Δ** (same windows as those tabs: RTH vs 24h on 1D).
+- UI shows Stocks / Crypto legs under the portfolio total.
+
 ## 2026-08-10 — Portfolio 1D shared 5m grid (stock/crypto sync)
 
 - Replace ad-hoc seed inject with **uniform 5m UTC grid** over last 24h: every ticker marked every bar (equity prior close overnight, crypto live).
