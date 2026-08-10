@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — Dashboard realized annualized ROI
+
+- Snapshot: `realized_holding_years` (cost-weighted from LotAllocation `holding_period_days`) + `realized_annualized_pct` (CAGR, min 90d).
+- Dashboard Realized (lifetime) shows total % + ann. % · weighted years.
+
 ## 2026-08-10 — Portfolio window Δ = Stocks + Crypto components
 
 - Portfolio headline change is **sum of Stocks book Δ + Crypto book Δ** (same windows as those tabs: RTH vs 24h on 1D).

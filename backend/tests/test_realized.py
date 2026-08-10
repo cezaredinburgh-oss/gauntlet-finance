@@ -31,6 +31,7 @@ def _alloc(
     gain: str,
     ticker: str = "PLTR",
     proceeds: str | None = None,
+    holding_period_days: int | None = None,
 ) -> InvestmentEvent:
     gain_d = Decimal(gain)
     # Default: invent proceeds so cost = 100 for simple cases when not passed
@@ -55,6 +56,7 @@ def _alloc(
         lot_id=lot_id,
         parent_event_id=parent_id,
         realized_gain_usd=gain_d,
+        holding_period_days=holding_period_days,
         source="Revolut",
         created_at=TS,
         updated_at=TS,
@@ -96,6 +98,35 @@ def test_economics_cost_and_roi():
     assert eco["proceeds_usd"] == Decimal("1500.00")
     assert eco["cost_basis_usd"] == Decimal("500.00")
     assert eco["roi_pct"] == 200.0
+
+
+def test_realized_annualized_cost_weighted():
+    # Double money in 2 years → ~41.4% ann
+    a = _alloc(
+        parent_id=uuid4(),
+        lot_id=uuid4(),
+        qty="10",
+        gain="500",
+        proceeds="1000",  # cost 500, R=100%
+        holding_period_days=730,
+    )
+    eco = sum_realized_economics([a])
+    assert eco["roi_pct"] == 100.0
+    assert eco["holding_years"] is not None
+    assert abs(eco["holding_years"] - 2.0) < 0.02
+    assert eco["annualized_roi_pct"] is not None
+    assert abs(eco["annualized_roi_pct"] - 41.42) < 0.5
+    # Short hold → no ann.
+    b = _alloc(
+        parent_id=uuid4(),
+        lot_id=uuid4(),
+        qty="1",
+        gain="50",
+        proceeds="100",
+        holding_period_days=30,
+    )
+    eco2 = sum_realized_economics([b])
+    assert eco2["annualized_roi_pct"] is None
 
 
 def test_economics_skips_cost_without_proceeds():

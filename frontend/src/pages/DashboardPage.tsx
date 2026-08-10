@@ -372,11 +372,34 @@ export function DashboardPage() {
                       <>
                         {" "}
                         · {snap.realized_roi_pct >= 0 ? "+" : ""}
-                        {snap.realized_roi_pct.toFixed(0)}%
+                        {snap.realized_roi_pct.toFixed(0)}% total
                       </>
                     )}
                   </div>
                 )}
+              {snap?.realized_annualized_pct != null ? (
+                <div
+                  className={cn(
+                    "text-[11px] tabular-nums",
+                    snap.realized_annualized_pct >= 0 ? "text-ok" : "text-danger",
+                  )}
+                  title="CAGR of realized sells over cost-weighted holding years"
+                >
+                  {snap.realized_annualized_pct >= 0 ? "+" : ""}
+                  {snap.realized_annualized_pct.toFixed(1)}% ann.
+                  {snap.realized_holding_years != null && (
+                    <span className="text-ink-faint">
+                      {" "}
+                      · {snap.realized_holding_years.toFixed(1)}y wtd
+                    </span>
+                  )}
+                </div>
+              ) : snap?.realized_holding_years != null &&
+                snap.realized_holding_years * 365.25 < 90 ? (
+                <div className="text-[11px] text-ink-faint">
+                  Ann. n/a (&lt;90d wtd hold)
+                </div>
+              ) : null}
             </ExecStat>
             <ExecStat label="Tax-free now" icon={ShieldAlert} tone="ok">
               <Money

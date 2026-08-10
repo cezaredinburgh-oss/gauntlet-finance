@@ -322,6 +322,8 @@ def portfolio_snapshot(
         "realized_cost_basis_usd": str(_q2(realized_eco["cost_basis_usd"])),
         "realized_proceeds_usd": str(_q2(realized_eco["proceeds_usd"])),
         "realized_roi_pct": realized_eco["roi_pct"],
+        "realized_holding_years": realized_eco.get("holding_years"),
+        "realized_annualized_pct": realized_eco.get("annualized_roi_pct"),
         "tax_free_now_usd": str(_q2(tax_free_display)),
         "tax_runway": {
             "available_usd": str(_q2(bucket_totals.get("now", Decimal("0")))),

@@ -381,6 +381,10 @@ export type PortfolioSnapshot = {
   realized_proceeds_usd?: string;
   /** gain / cost_sold × 100 when cost known */
   realized_roi_pct?: number | null;
+  /** Cost-weighted average hold years of closed lots */
+  realized_holding_years?: number | null;
+  /** CAGR-style annualized realized ROI % (min ~90d hold) */
+  realized_annualized_pct?: number | null;
   tax_free_now_usd: string;
   tax_runway: {
     available_usd: string;
