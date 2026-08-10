@@ -282,57 +282,90 @@ def inject_equity_prior_close_for_24h(
     now: datetime | None = None,
 ) -> dict[str, list[SeriesPoint]]:
     """
-    Seed equity series at (now−24h) with previous RTH close so portfolio MV
-    spans a true 24h window (stocks flat overnight, crypto live).
+    Align all book names at one window-open timestamp:
 
-    Without this, coverage skips overnight (stocks unpriced) and portfolio
-    first→last Δ only covers the co-session with equities — crypto 24h loss
-    is excluded from portfolio window change.
+    - Equities: previous RTH close (flat overnight)
+    - Crypto: first print in the 24h window (carried back to window open)
+
+    Critical: seeds share the **same** timestamp so the first MV point marks
+    the full book. Seeding equities 30s before crypto made coverage pass on
+    stocks alone → ridiculously low start then a jump (flat-looking after).
     """
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     cutoff = now - timedelta(hours=24)
-    # Align seed to a stable ISO used in sort
-    cutoff_iso = cutoff.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
     out: dict[str, list[SeriesPoint]] = {
         t: list(series) for t, series in closes_trimmed.items()
     }
 
-    for t, full in closes_full.items():
+    # Window open = earliest bar among trimmed series (usually crypto), else cutoff
+    starts: list[datetime] = []
+    for series in out.values():
+        if series:
+            ts0 = _parse_ts(series[0][0])
+            if ts0.tzinfo is None:
+                ts0 = ts0.replace(tzinfo=timezone.utc)
+            starts.append(ts0)
+    if starts:
+        window_open = min(starts)
+        if window_open < cutoff:
+            window_open = cutoff
+    else:
+        window_open = cutoff
+    seed_iso = window_open.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
+    for t, full in list(closes_full.items()):
         ac = (asset_classes.get(t) or "").lower()
-        if ac == "crypto":
+        is_crypto = ac == "crypto"
+        trimmed = out.get(t) or []
+
+        if is_crypto:
+            if not trimmed:
+                continue
+            # Carry first crypto print back to shared window open
+            first_px = trimmed[0][1]
+            first_ts = _parse_ts(trimmed[0][0])
+            if first_ts.tzinfo is None:
+                first_ts = first_ts.replace(tzinfo=timezone.utc)
+            if first_ts > window_open + timedelta(seconds=1):
+                if trimmed[0][0] != seed_iso:
+                    out[t] = [(seed_iso, first_px)] + trimmed
+            elif trimmed[0][0] != seed_iso:
+                # Same instant, normalize iso for sort stability
+                out[t] = [(seed_iso, first_px)] + trimmed[1:]
             continue
-        prior = _prior_rth_close(full, before=cutoff)
+
+        # Equity: prior RTH close before window open
+        prior = _prior_rth_close(full, before=window_open)
         if prior is None and full:
-            # Fall back: last RTH bar before first bar in trimmed window
-            trimmed = out.get(t) or []
             if trimmed:
                 prior = _prior_rth_close(full, before=_parse_ts(trimmed[0][0]))
         if prior is None:
-            # Last resort: first available close in full series before cutoff
             for ts, px in reversed(full):
-                if _parse_ts(ts) < cutoff:
+                tdt = _parse_ts(ts)
+                if tdt.tzinfo is None:
+                    tdt = tdt.replace(tzinfo=timezone.utc)
+                if tdt < window_open:
                     prior = px
                     break
+        if prior is None and trimmed:
+            prior = trimmed[0][1]
         if prior is None:
             continue
 
-        trimmed = out.get(t) or []
         if not trimmed:
-            out[t] = [(cutoff_iso, prior)]
+            out[t] = [(seed_iso, prior)]
             continue
         first_ts = _parse_ts(trimmed[0][0])
         if first_ts.tzinfo is None:
             first_ts = first_ts.replace(tzinfo=timezone.utc)
-        # Only inject if first real bar is well after window start
-        if first_ts > cutoff + timedelta(minutes=10):
-            # Avoid duplicate if already seeded
-            if trimmed[0][0] != cutoff_iso:
-                out[t] = [(cutoff_iso, prior)] + trimmed
-        elif t not in out:
-            out[t] = [(cutoff_iso, prior)]
+        if first_ts > window_open + timedelta(seconds=1):
+            if trimmed[0][0] != seed_iso:
+                out[t] = [(seed_iso, prior)] + trimmed
+        elif trimmed[0][0] != seed_iso:
+            out[t] = [(seed_iso, prior)] + trimmed[1:]
 
     return out
 
@@ -675,12 +708,16 @@ def aggregate_mv_series_time_aware(
     *,
     tickers: list[str] | None = None,
     coverage_threshold: Decimal = COVERAGE_THRESHOLD,
+    preseed_first_marks: bool = False,
 ) -> tuple[list[SeriesPoint], dict[str, Any]]:
     """
     Forward-fill closes; MV(t) = Σ qty(ticker, date(t)) × price(ticker, t).
 
     Coverage uses **then-owned** book weights (qty × series latest mark as anchor),
     not today's open lots — so early history is not inflated by names bought later.
+
+    ``preseed_first_marks``: initialize forward-fill with each series' first mark
+    so the first timestamp marks the full priced book (1D portfolio after seed align).
     """
     empty_meta: dict[str, Any] = {
         "coverage_threshold": float(coverage_threshold),
@@ -694,6 +731,7 @@ def aggregate_mv_series_time_aware(
 
     price_maps: dict[str, dict[str, Decimal]] = {}
     first_bar: dict[str, str] = {}
+    first_px: dict[str, Decimal] = {}
     latest_px: dict[str, Decimal] = {}
     all_ts: set[str] = set()
     for t in universe:
@@ -709,6 +747,7 @@ def aggregate_mv_series_time_aware(
         price_maps[t] = m
         ordered_ts = sorted(m.keys(), key=_parse_ts)
         first_bar[t] = ordered_ts[0]
+        first_px[t] = m[ordered_ts[0]]
         latest_px[t] = m[ordered_ts[-1]]
 
     if not all_ts or not price_maps:
@@ -716,7 +755,8 @@ def aggregate_mv_series_time_aware(
 
     threshold = coverage_threshold
     ordered = sorted(all_ts, key=_parse_ts)
-    last: dict[str, Decimal] = {}
+    # Pre-seed so the first bar is full-book (avoids stocks-only partial MV)
+    last: dict[str, Decimal] = dict(first_px) if preseed_first_marks else {}
     result: list[SeriesPoint] = []
 
     for ts in ordered:
@@ -1152,6 +1192,7 @@ class PriceHistoryService:
                     ac_map[t] = ac
             closes_raw = self._fetch_closes(tickers, ac_map, period, interval)
             session_status = "regular"
+            portfolio_1d = False
             if is_intraday:
                 trim_mode = (
                     "last_24h"
@@ -1161,11 +1202,12 @@ class PriceHistoryService:
                 closes, session_status = trim_closes_map(
                     closes_raw, mode=trim_mode
                 )
-                # Portfolio only: carry equity prior close so overnight crypto is in window
+                # Portfolio only: align window-open marks (equity prior close + crypto)
                 if ac_filter is None and trim_mode == "last_24h":
                     closes = inject_equity_prior_close_for_24h(
                         closes_raw, closes, ac_map
                     )
+                    portfolio_1d = True
             else:
                 closes = closes_raw
             missing = [t for t in tickers if t not in closes or not closes[t]]
@@ -1174,6 +1216,7 @@ class PriceHistoryService:
                 closes,
                 tickers=tickers,
                 coverage_threshold=cov_threshold,
+                preseed_first_marks=portfolio_1d,
             )
             quantity_basis = "holdings_as_of_each_date"
             note = (

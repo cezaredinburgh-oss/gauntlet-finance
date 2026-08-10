@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — Fix 1D portfolio low/flat start after prior-close carry
+
+- Bug: equity seed 30s before crypto → first MV was **stocks-only** (~half book), then jump → flat high plateau.
+- Fix: shared window-open timestamp for equity prior close + crypto carry-back; `preseed_first_marks` so first bar is full book.
+
 ## 2026-08-10 — Fix 1D portfolio vs stocks/crypto window math
 
 - Portfolio 1D was “Last 24h” but series started at stock open (coverage) → Δ excluded overnight crypto.

@@ -619,11 +619,19 @@ def test_inject_equity_prior_close_makes_portfolio_span_24h():
     ]
     tl = build_holdings_timeline(events, [])
     series, _ = aggregate_mv_series_time_aware(
-        tl, seeded, coverage_threshold=COVERAGE_THRESHOLD_INTRADAY
+        tl,
+        seeded,
+        coverage_threshold=COVERAGE_THRESHOLD_INTRADAY,
+        preseed_first_marks=True,
     )
     assert len(series) > 10
     # Series should start near 24h window (not only at stock open)
     assert _parse_ts(series[0][0]) < _parse_ts("2026-08-10T13:00:00+00:00")
+
+    # First point must be full book (not stocks-only partial) — no huge jump on bar 2
+    if len(series) >= 2:
+        jump = abs(series[1][1] - series[0][1])
+        assert jump < series[0][1] * Decimal("0.15")  # <15% jump on second bar
 
     ch = _change_meta(series[0][1], series[-1][1])
     # Stock +10*10 = +100; crypto first≈1000 last≈1000-144 = −144 → net ≈ −44
