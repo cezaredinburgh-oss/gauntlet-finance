@@ -274,100 +274,125 @@ def _prior_rth_close(
     return best_px
 
 
-def inject_equity_prior_close_for_24h(
+def _snap_down_5m(dt: datetime) -> datetime:
+    """Floor to 5-minute UTC boundary."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    minute = (dt.minute // 5) * 5
+    return dt.replace(minute=minute, second=0, microsecond=0)
+
+
+def _series_to_sorted_pairs(series: list[SeriesPoint]) -> list[tuple[datetime, Decimal]]:
+    pairs: list[tuple[datetime, Decimal]] = []
+    for ts, px in series:
+        tdt = _parse_ts(ts)
+        if tdt.tzinfo is None:
+            tdt = tdt.replace(tzinfo=timezone.utc)
+        else:
+            tdt = tdt.astimezone(timezone.utc)
+        pairs.append((tdt, px))
+    pairs.sort(key=lambda x: x[0])
+    return pairs
+
+
+def _px_asof(
+    pairs: list[tuple[datetime, Decimal]],
+    asof: datetime,
+    *,
+    start_i: int = 0,
+) -> tuple[Decimal | None, int]:
+    """Last price at or before asof; return (px, new_index_hint)."""
+    if not pairs:
+        return None, start_i
+    i = start_i
+    n = len(pairs)
+    while i + 1 < n and pairs[i + 1][0] <= asof:
+        i += 1
+    if pairs[i][0] <= asof:
+        return pairs[i][1], i
+    return None, i
+
+
+def build_portfolio_1d_aligned_closes(
     closes_full: dict[str, list[SeriesPoint]],
-    closes_trimmed: dict[str, list[SeriesPoint]],
     asset_classes: dict[str, str | None],
     *,
     now: datetime | None = None,
-) -> dict[str, list[SeriesPoint]]:
+) -> tuple[dict[str, list[SeriesPoint]], str]:
     """
-    Align all book names at one window-open timestamp:
+    Portfolio 1D on a **shared 5m UTC grid** over the last 24h.
 
-    - Equities: previous RTH close (flat overnight)
-    - Crypto: first print in the 24h window (carried back to window open)
+    Every ticker gets a mark on every grid timestamp (forward-filled):
+      - Equity: previous RTH close until the first live RTH bar, then live
+      - Crypto: live 5m with forward-fill
 
-    Critical: seeds share the **same** timestamp so the first MV point marks
-    the full book. Seeding equities 30s before crypto made coverage pass on
-    stocks alone → ridiculously low start then a jump (flat-looking after).
+    Same timestamps for all names → no stock/crypto seed desync, no partial-book
+    first bar, additive window Δ ≈ stocks session + crypto 24h.
     """
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    cutoff = now - timedelta(hours=24)
-
-    out: dict[str, list[SeriesPoint]] = {
-        t: list(series) for t, series in closes_trimmed.items()
-    }
-
-    # Window open = earliest bar among trimmed series (usually crypto), else cutoff
-    starts: list[datetime] = []
-    for series in out.values():
-        if series:
-            ts0 = _parse_ts(series[0][0])
-            if ts0.tzinfo is None:
-                ts0 = ts0.replace(tzinfo=timezone.utc)
-            starts.append(ts0)
-    if starts:
-        window_open = min(starts)
-        if window_open < cutoff:
-            window_open = cutoff
     else:
-        window_open = cutoff
-    seed_iso = window_open.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        now = now.astimezone(timezone.utc)
 
-    for t, full in list(closes_full.items()):
-        ac = (asset_classes.get(t) or "").lower()
+    window_open = _snap_down_5m(now - timedelta(hours=24))
+    window_end = _snap_down_5m(now)
+
+    grid: list[datetime] = []
+    t = window_open
+    while t <= window_end:
+        grid.append(t)
+        t += timedelta(minutes=5)
+    if not grid:
+        return {}, "empty"
+
+    out: dict[str, list[SeriesPoint]] = {}
+    for ticker, full in closes_full.items():
+        if not full:
+            continue
+        ac = (asset_classes.get(ticker) or "").lower()
         is_crypto = ac == "crypto"
-        trimmed = out.get(t) or []
+        pairs = _series_to_sorted_pairs(full)
+        if not pairs:
+            continue
 
+        # Opening mark for the window
         if is_crypto:
-            if not trimmed:
-                continue
-            # Carry first crypto print back to shared window open
-            first_px = trimmed[0][1]
-            first_ts = _parse_ts(trimmed[0][0])
-            if first_ts.tzinfo is None:
-                first_ts = first_ts.replace(tzinfo=timezone.utc)
-            if first_ts > window_open + timedelta(seconds=1):
-                if trimmed[0][0] != seed_iso:
-                    out[t] = [(seed_iso, first_px)] + trimmed
-            elif trimmed[0][0] != seed_iso:
-                # Same instant, normalize iso for sort stability
-                out[t] = [(seed_iso, first_px)] + trimmed[1:]
-            continue
+            open_px, _ = _px_asof(pairs, window_open)
+            if open_px is None:
+                # First print in window
+                for pdt, px in pairs:
+                    if pdt >= window_open:
+                        open_px = px
+                        break
+            if open_px is None:
+                open_px = pairs[0][1]
+        else:
+            open_px = _prior_rth_close(full, before=window_open)
+            if open_px is None:
+                open_px, _ = _px_asof(pairs, window_open)
+            if open_px is None:
+                open_px = pairs[0][1]
 
-        # Equity: prior RTH close before window open
-        prior = _prior_rth_close(full, before=window_open)
-        if prior is None and full:
-            if trimmed:
-                prior = _prior_rth_close(full, before=_parse_ts(trimmed[0][0]))
-        if prior is None:
-            for ts, px in reversed(full):
-                tdt = _parse_ts(ts)
-                if tdt.tzinfo is None:
-                    tdt = tdt.replace(tzinfo=timezone.utc)
-                if tdt < window_open:
-                    prior = px
-                    break
-        if prior is None and trimmed:
-            prior = trimmed[0][1]
-        if prior is None:
-            continue
+        series_out: list[SeriesPoint] = []
+        last_px = open_px
+        hint = 0
+        for g in grid:
+            live, hint = _px_asof(pairs, g, start_i=hint)
+            if live is not None:
+                # Equities: only adopt live prints once we're at/after that bar
+                # (prior close already in last_px overnight)
+                last_px = live
+            series_out.append(
+                (g.replace(microsecond=0).isoformat(), last_px)
+            )
+        out[ticker] = series_out
 
-        if not trimmed:
-            out[t] = [(seed_iso, prior)]
-            continue
-        first_ts = _parse_ts(trimmed[0][0])
-        if first_ts.tzinfo is None:
-            first_ts = first_ts.replace(tzinfo=timezone.utc)
-        if first_ts > window_open + timedelta(seconds=1):
-            if trimmed[0][0] != seed_iso:
-                out[t] = [(seed_iso, prior)] + trimmed
-        elif trimmed[0][0] != seed_iso:
-            out[t] = [(seed_iso, prior)] + trimmed[1:]
-
-    return out
+    if not out:
+        return {}, "empty"
+    return out, "last_24h"
 
 
 def _scalar_decimal(val: Any) -> Decimal | None:
@@ -1155,18 +1180,21 @@ class PriceHistoryService:
             tickers = sorted(qty_map.keys())
             closes_raw = self._fetch_closes(tickers, ac_map, period, interval)
             session_status = "regular"
+            portfolio_1d = False
             if is_intraday:
-                trim_mode: Literal["rth_today_or_prior", "last_24h"] = (
-                    "last_24h"
-                    if ac_filter is None or ac_filter == AssetClass.CRYPTO
-                    else "rth_today_or_prior"
-                )
-                closes, session_status = trim_closes_map(
-                    closes_raw, mode=trim_mode
-                )
-                if ac_filter is None and trim_mode == "last_24h":
-                    closes = inject_equity_prior_close_for_24h(
-                        closes_raw, closes, ac_map
+                if ac_filter is None:
+                    closes, session_status = build_portfolio_1d_aligned_closes(
+                        closes_raw, ac_map
+                    )
+                    portfolio_1d = True
+                else:
+                    trim_mode: Literal["rth_today_or_prior", "last_24h"] = (
+                        "last_24h"
+                        if ac_filter == AssetClass.CRYPTO
+                        else "rth_today_or_prior"
+                    )
+                    closes, session_status = trim_closes_map(
+                        closes_raw, mode=trim_mode
                     )
             else:
                 closes = closes_raw
@@ -1194,20 +1222,21 @@ class PriceHistoryService:
             session_status = "regular"
             portfolio_1d = False
             if is_intraday:
-                trim_mode = (
-                    "last_24h"
-                    if ac_filter is None or ac_filter == AssetClass.CRYPTO
-                    else "rth_today_or_prior"
-                )
-                closes, session_status = trim_closes_map(
-                    closes_raw, mode=trim_mode
-                )
-                # Portfolio only: align window-open marks (equity prior close + crypto)
-                if ac_filter is None and trim_mode == "last_24h":
-                    closes = inject_equity_prior_close_for_24h(
-                        closes_raw, closes, ac_map
+                if ac_filter is None:
+                    # Shared 5m grid — stocks + crypto always marked together
+                    closes, session_status = build_portfolio_1d_aligned_closes(
+                        closes_raw, ac_map
                     )
                     portfolio_1d = True
+                else:
+                    trim_mode = (
+                        "last_24h"
+                        if ac_filter == AssetClass.CRYPTO
+                        else "rth_today_or_prior"
+                    )
+                    closes, session_status = trim_closes_map(
+                        closes_raw, mode=trim_mode
+                    )
             else:
                 closes = closes_raw
             missing = [t for t in tickers if t not in closes or not closes[t]]
@@ -1216,6 +1245,7 @@ class PriceHistoryService:
                 closes,
                 tickers=tickers,
                 coverage_threshold=cov_threshold,
+                # Grid path already full-book each bar; preseed still helps safety
                 preseed_first_marks=portfolio_1d,
             )
             quantity_basis = "holdings_as_of_each_date"

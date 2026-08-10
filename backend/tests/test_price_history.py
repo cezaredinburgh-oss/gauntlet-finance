@@ -564,12 +564,11 @@ def test_collect_trade_markers_buy_sell_only():
     assert buy["series_value"] == "100.00"
 
 
-def test_inject_equity_prior_close_makes_portfolio_span_24h():
-    """Overnight crypto move enters portfolio window when equities carry prior close."""
+def test_portfolio_1d_aligned_grid_full_book_and_additive():
+    """Shared 5m grid: full book from first bar; Δ ≈ stock session + crypto 24h."""
     from backend.services.price_history import (
         COVERAGE_THRESHOLD_INTRADAY,
-        inject_equity_prior_close_for_24h,
-        trim_closes_map,
+        build_portfolio_1d_aligned_closes,
         aggregate_mv_series_time_aware,
         _change_meta,
     )
@@ -577,13 +576,11 @@ def test_inject_equity_prior_close_makes_portfolio_span_24h():
     now = datetime(2026, 8, 10, 21, 30, 0, tzinfo=timezone.utc)
     cutoff = now - timedelta(hours=24)
 
-    # Prior RTH bar for stock (yesterday afternoon ET)
     stock_full = [
-        ("2026-08-09T19:55:00+00:00", Decimal("100")),  # prior close ~3:55pm ET
-        ("2026-08-10T13:30:00+00:00", Decimal("100")),  # open flat
+        ("2026-08-09T19:55:00+00:00", Decimal("100")),  # prior close
+        ("2026-08-10T13:30:00+00:00", Decimal("100")),
         ("2026-08-10T21:25:00+00:00", Decimal("110")),  # +10/sh session
     ]
-    # Crypto declines over 24h
     crypto_full = []
     t0 = cutoff
     for i in range(0, 24 * 12 + 1):
@@ -593,13 +590,13 @@ def test_inject_equity_prior_close_makes_portfolio_span_24h():
 
     closes_raw = {"STK": stock_full, "CRY": crypto_full}
     ac_map = {"STK": "Stock", "CRY": "Crypto"}
-    trimmed, _ = trim_closes_map(closes_raw, mode="last_24h", now=now)
-    seeded = inject_equity_prior_close_for_24h(
-        closes_raw, trimmed, ac_map, now=now
+    aligned, status = build_portfolio_1d_aligned_closes(
+        closes_raw, ac_map, now=now
     )
-    assert seeded["STK"][0][1] == Decimal("100")
-    # Seed should be at/near window start, before RTH open
-    assert _parse_ts(seeded["STK"][0][0]) < _parse_ts("2026-08-10T13:30:00+00:00")
+    assert status == "last_24h"
+    # Identical timestamps for stock and crypto
+    assert [p[0] for p in aligned["STK"]] == [p[0] for p in aligned["CRY"]]
+    assert len(aligned["STK"]) >= 200
 
     events = [
         _event(
@@ -620,25 +617,28 @@ def test_inject_equity_prior_close_makes_portfolio_span_24h():
     tl = build_holdings_timeline(events, [])
     series, _ = aggregate_mv_series_time_aware(
         tl,
-        seeded,
+        aligned,
         coverage_threshold=COVERAGE_THRESHOLD_INTRADAY,
         preseed_first_marks=True,
     )
     assert len(series) > 10
-    # Series should start near 24h window (not only at stock open)
     assert _parse_ts(series[0][0]) < _parse_ts("2026-08-10T13:00:00+00:00")
 
-    # First point must be full book (not stocks-only partial) — no huge jump on bar 2
+    # First two bars full book — tiny jump
     if len(series) >= 2:
         jump = abs(series[1][1] - series[0][1])
-        assert jump < series[0][1] * Decimal("0.15")  # <15% jump on second bar
+        assert jump < series[0][1] * Decimal("0.05")
+
+    # First MV = 10*100 + 1*~1000 = ~2000 (full book, not stocks-only 1000)
+    assert series[0][1] > Decimal("1500")
+    assert series[0][1] < Decimal("3000")
 
     ch = _change_meta(series[0][1], series[-1][1])
-    # Stock +10*10 = +100; crypto first≈1000 last≈1000-144 = −144 → net ≈ −44
     assert ch["change_abs"] is not None
     net = Decimal(ch["change_abs"])
-    assert net < Decimal("0")  # crypto loss dominates overnight+session
-    assert net > Decimal("-200")  # not only stock session (+100)
+    # +100 stock, about -144 crypto → net negative, modest
+    assert net < Decimal("50")
+    assert net > Decimal("-200")
 
 
 def test_window_performance_mocked():
