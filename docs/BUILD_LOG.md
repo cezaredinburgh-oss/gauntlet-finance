@@ -4,9 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — DCA board color coding
+
+- Ticker chips + score bars use Desk palette tiers: **hot** (ok/green), **strong** (brand), **warm** (warn), **cool/watch** (muted) — not monochrome.
+
 ## 2026-08-10 — DCA board view (Investments)
 
-- `/investments/dca` — dual lists (Stocks | Crypto) ranked by continuous opportunity score; monochrome ticker intensity (brighter = larger opportunity).
+- `/investments/dca` — dual lists (Stocks | Crypto) ranked by continuous opportunity score.
 - API `GET /investments/dca-opportunities`; shared scoring with alerts; Active vs Watch gates.
 
 ## 2026-08-10 — DCA opportunity alerts

@@ -7,23 +7,53 @@ import { formatUsd } from "../lib/money";
 import { cn } from "../lib/cn";
 import { InvestmentsSubNav } from "../features/investments";
 
+/** Opportunity visual tier — green/hot = stronger add signal. */
+type OppTone = "hot" | "strong" | "warm" | "cool";
+
 /**
- * Monochrome ticker intensity: brighter = larger opportunity within the list.
- * rankIndex 0 = strongest.
+ * Color from absolute signals first (eligible / deep discount), then list rank
+ * so a lone strong name still reads green and weaker names stay muted.
  */
-function monoTickerClass(rankIndex: number, listLength: number): string {
-  if (listLength <= 1) {
-    return "bg-white/20 text-white ring-1 ring-white/40";
-  }
-  const t = rankIndex / (listLength - 1); // 0 strong → 1 weak
-  if (t <= 0.2) return "bg-white/22 text-white ring-1 ring-white/45";
-  if (t <= 0.4) return "bg-white/16 text-white/90 ring-1 ring-white/30";
-  if (t <= 0.6) return "bg-white/12 text-white/70 ring-1 ring-white/20";
-  if (t <= 0.8) return "bg-white/8 text-white/50 ring-1 ring-white/12";
-  return "bg-white/5 text-white/35 ring-1 ring-white/8";
+function opportunityTone(
+  item: DcaOpportunityItem,
+  rankIndex: number,
+  listLength: number,
+): OppTone {
+  const rankFrac = listLength <= 1 ? 0 : rankIndex / (listLength - 1); // 0 = best
+  const deep =
+    item.level === "warn" ||
+    item.discount_vs_cost_pct >= 25 ||
+    (item.eligible && rankFrac <= 0.2);
+
+  if (item.eligible && deep) return "hot";
+  if (item.eligible) return "strong";
+
+  const solidSignal =
+    item.signal_a ||
+    item.signal_b ||
+    item.discount_vs_cost_pct >= 5 ||
+    (item.pullback_pct != null && item.pullback_pct >= 10) ||
+    (item.below_52w_avg_pct != null && item.below_52w_avg_pct >= 5);
+
+  if (solidSignal || rankFrac <= 0.5) return "warm";
+  return "cool";
 }
 
-function monoBarWidth(rankIndex: number, listLength: number): string {
+const TICKER_TONE: Record<OppTone, string> = {
+  hot: "bg-ok/20 text-ok ring-1 ring-ok/45",
+  strong: "bg-brand/20 text-brand ring-1 ring-brand/40",
+  warm: "bg-warn/15 text-warn ring-1 ring-warn/35",
+  cool: "bg-white/8 text-ink-muted ring-1 ring-white/15",
+};
+
+const BAR_TONE: Record<OppTone, string> = {
+  hot: "bg-ok",
+  strong: "bg-brand",
+  warm: "bg-warn/80",
+  cool: "bg-white/25",
+};
+
+function scoreBarWidth(rankIndex: number, listLength: number): string {
   if (listLength <= 1) return "100%";
   const strength = 1 - rankIndex / (listLength - 1);
   return `${Math.round(18 + strength * 82)}%`;
@@ -72,7 +102,9 @@ function DcaColumn({
         </div>
       ) : (
         <ul className="divide-y divide-white/5">
-          {items.map((item, i) => (
+          {items.map((item, i) => {
+            const tone = opportunityTone(item, i, items.length);
+            return (
             <li key={item.ticker} className="px-4 py-3 hover:bg-white/[0.02]">
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
@@ -80,9 +112,9 @@ function DcaColumn({
                     <span
                       className={cn(
                         "inline-flex rounded-md px-2 py-0.5 font-mono text-xs font-bold tracking-wide",
-                        monoTickerClass(i, items.length),
+                        TICKER_TONE[tone],
                       )}
-                      title={`Rank #${i + 1} · score ${item.score.toFixed(1)}`}
+                      title={`Rank #${i + 1} · score ${item.score.toFixed(1)} · ${tone}`}
                     >
                       {item.ticker}
                     </span>
@@ -90,16 +122,16 @@ function DcaColumn({
                       <span
                         className={cn(
                           "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
-                          item.level === "warn"
-                            ? "bg-white/15 text-white"
-                            : "bg-white/10 text-white/80",
+                          item.level === "warn" || tone === "hot"
+                            ? "bg-warn/20 text-warn"
+                            : "bg-ok/20 text-ok",
                         )}
                       >
                         Active
                       </span>
                     ) : (
                       <span
-                        className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase text-ink-faint"
+                        className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-ink-faint"
                         title={gateLabel(item.gate_blockers) || "Below alert thresholds"}
                       >
                         Watch
@@ -112,8 +144,8 @@ function DcaColumn({
 
                   <div className="mt-1.5 h-1 w-full max-w-[12rem] overflow-hidden rounded-full bg-white/5">
                     <div
-                      className="h-full rounded-full bg-white/40"
-                      style={{ width: monoBarWidth(i, items.length) }}
+                      className={cn("h-full rounded-full", BAR_TONE[tone])}
+                      style={{ width: scoreBarWidth(i, items.length) }}
                     />
                   </div>
 
@@ -149,10 +181,39 @@ function DcaColumn({
                 </div>
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </section>
+  );
+}
+
+function ToneLegend() {
+  const items: Array<{ tone: OppTone; label: string }> = [
+    { tone: "hot", label: "Hot" },
+    { tone: "strong", label: "Strong" },
+    { tone: "warm", label: "Warm" },
+    { tone: "cool", label: "Watch" },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-[11px] text-ink-faint">
+      <span className="text-ink-muted">Color</span>
+      {items.map(({ tone, label }) => (
+        <span key={tone} className="inline-flex items-center gap-1.5">
+          <span
+            className={cn(
+              "inline-block h-2.5 w-2.5 rounded-sm ring-1 ring-inset",
+              tone === "hot" && "bg-ok ring-ok/50",
+              tone === "strong" && "bg-brand ring-brand/50",
+              tone === "warm" && "bg-warn ring-warn/50",
+              tone === "cool" && "bg-white/25 ring-white/20",
+            )}
+          />
+          {label}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -203,16 +264,18 @@ export function InvestmentsDcaPage() {
         <h1 className="text-2xl font-bold tracking-tight">DCA opportunities</h1>
         <p className="text-sm text-ink-muted">
           Rank existing holdings by add-size signal — below your cost, 3M pullback, and
-          under 52-week average. Brighter tickers = larger opportunity in that list.
+          under 52-week average. Green / sky = stronger opportunity; amber = mid; muted =
+          weaker or watch.
         </p>
         <InvestmentsSubNav active="dca" />
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 text-xs text-ink-faint">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-faint">
         <span>
           As of {board?.as_of ?? "—"}
           {activeCount > 0 ? ` · ${activeCount} active` : " · no active alerts right now"}
         </span>
+        <ToneLegend />
         {board?.meta?.history_available === false && (
           <span className="rounded bg-white/5 px-2 py-0.5">
             History offline — ranking from cost discount only
