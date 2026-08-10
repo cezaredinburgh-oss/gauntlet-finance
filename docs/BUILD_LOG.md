@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-10 — Buy/sell markers on live portfolio chart
+
+- `/prices/history` meta.trades: statement Buy/Sell in window (no staking); `series_value` snaps to MV/price line.
+- Holdings + Analysis charts: green/red scatter, tooltip, toggle (localStorage).
+
 ## 2026-08-10 — Portfolio chart: holdings as-of each date
 
 - **Bug:** `scope=all` / `asset_class` MV history used **current open-lot qty × historical prices**, inflating past MV (e.g. 2021 showed today’s book marked at 2021 prices).

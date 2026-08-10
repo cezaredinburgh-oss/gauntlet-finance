@@ -515,6 +515,15 @@ export type PriceHistoryRange =
   | "1y"
   | "5y";
 
+export type PriceHistoryTrade = {
+  date: string;
+  side: "buy" | "sell" | string;
+  ticker: string;
+  quantity: string;
+  value_usd?: string | null;
+  series_value?: string | null;
+};
+
 export type PriceHistory = {
   scope: "ticker" | "asset_class" | "all" | string;
   label: string;
@@ -545,6 +554,7 @@ export type PriceHistory = {
     coverage_threshold?: number | null;
     series_start?: string | null;
     short_history_tickers?: Array<{ ticker: string; first_bar: string }>;
+    trades?: PriceHistoryTrade[];
   };
 };
 

@@ -25,6 +25,7 @@ from backend.common.timeutil import utc_now
 from backend.schema.models import (
     AssetClass,
     InvestmentEvent,
+    InvestmentEventType,
     InvestmentLot,
     LotStatus,
 )
@@ -36,6 +37,9 @@ logger = logging.getLogger(__name__)
 
 RangeKey = Literal["1d", "7d", "1m", "3m", "6m", "ytd", "1y", "5y"]
 ScopeKey = Literal["ticker", "asset_class", "all"]
+
+# Cap buy/sell markers returned with a history series
+_MAX_TRADE_MARKERS = 300
 
 # (yfinance period, interval, point_kind)
 _RANGE_SPEC: dict[str, tuple[str, str, str]] = {
@@ -378,6 +382,94 @@ def _ts_to_date(ts: str) -> date:
     return dt.date()
 
 
+def _series_value_on_or_before(
+    series_points: list[dict[str, str]],
+    as_of: date,
+) -> Decimal | None:
+    """Last chart point on or before as_of (by calendar date)."""
+    best: Decimal | None = None
+    for p in series_points:
+        try:
+            d0 = _ts_to_date(p["date"])
+            v = Decimal(str(p["value"]))
+        except Exception:  # noqa: BLE001
+            continue
+        if d0 <= as_of:
+            best = v
+        else:
+            # points are chronological
+            break
+    if best is None and series_points:
+        # Trade before first bar — snap to first value
+        try:
+            return Decimal(str(series_points[0]["value"]))
+        except Exception:  # noqa: BLE001
+            return None
+    return best
+
+
+def collect_trade_markers(
+    events: list[InvestmentEvent],
+    series_points: list[dict[str, str]],
+    *,
+    ticker: str | None = None,
+    asset_class: AssetClass | None = None,
+    asset_class_by_ticker: dict[str, str | None] | None = None,
+    max_markers: int = _MAX_TRADE_MARKERS,
+) -> list[dict[str, Any]]:
+    """
+    Buy/Sell markers for the chart window. Excludes staking, allocations, etc.
+
+    ``series_value`` is the MV/price line level on that day so markers sit on the curve.
+    """
+    if not series_points:
+        return []
+
+    window_start = _ts_to_date(series_points[0]["date"])
+    window_end = _ts_to_date(series_points[-1]["date"])
+    ac_map = asset_class_by_ticker or {}
+    want_ticker = ticker.upper() if ticker else None
+    want_ac = asset_class.value if asset_class is not None else None
+
+    raw: list[dict[str, Any]] = []
+    for e in events:
+        if e.archived:
+            continue
+        if e.event_type not in (InvestmentEventType.BUY, InvestmentEventType.SELL):
+            continue
+        if not e.ticker or e.quantity is None or e.quantity <= 0:
+            continue
+        t = e.ticker.upper()
+        if want_ticker is not None and t != want_ticker:
+            continue
+        if want_ac is not None:
+            ev_ac = e.asset_class.value if e.asset_class is not None else ac_map.get(t)
+            if (ev_ac or "").lower() != want_ac.lower():
+                continue
+        ed = e.event_date
+        if ed < window_start or ed > window_end:
+            continue
+        side = "buy" if e.event_type == InvestmentEventType.BUY else "sell"
+        series_val = _series_value_on_or_before(series_points, ed)
+        value_usd = e.value_usd
+        raw.append(
+            {
+                "date": ed.isoformat(),
+                "side": side,
+                "ticker": t,
+                "quantity": str(e.quantity),
+                "value_usd": str(value_usd) if value_usd is not None else None,
+                "series_value": str(_q2(series_val)) if series_val is not None else None,
+            }
+        )
+
+    raw.sort(key=lambda m: (m["date"], m["side"], m["ticker"]))
+    if len(raw) > max_markers:
+        # Keep most recent markers in-window
+        raw = raw[-max_markers:]
+    return raw
+
+
 def aggregate_mv_series_time_aware(
     timeline: HoldingsTimeline,
     closes_by_ticker: dict[str, list[SeriesPoint]],
@@ -702,12 +794,17 @@ class PriceHistoryService:
             )
             ysym = _normalize_yahoo_symbol(t, ac_map.get(t))
             note = (
-                "Intraday (5m) USD. Avg cost from open lots."
+                "Intraday (5m) USD. Avg cost from open lots · buy/sell markers."
                 if point_kind == "intraday"
-                else "Daily close (USD). Avg cost from open lots."
+                else "Daily close (USD). Avg cost from open lots · buy/sell markers."
             )
             if missing:
                 note = f"No Yahoo history for {ysym}. " + note
+            trades = collect_trade_markers(
+                self._all_events(),
+                points,
+                ticker=t,
+            )
             return HistoryResult(
                 scope="ticker",
                 label=t,
@@ -725,6 +822,7 @@ class PriceHistoryService:
                     "avg_cost_usd": _str_dec(avg_cost, 4) if avg_cost is not None else None,
                     "quantity": str(_q4(qty)),
                     "quantity_basis": "current_open_lots",
+                    "trades": trades,
                     "note": note,
                     "point_kind": point_kind,
                     **ch,
@@ -802,12 +900,11 @@ class PriceHistoryService:
             )
             quantity_basis = "holdings_as_of_each_date"
             note = (
-                "Holdings as of each day (statement events) × historical prices "
-                "(intraday 5m)."
+                "Holdings as of each day × historical prices (intraday 5m) · buy/sell markers."
                 if point_kind == "intraday"
                 else (
-                    "Holdings as of each day (statement buys/sells) × historical closes "
-                    "(≥90% of then-owned book coverage)."
+                    "Holdings as of each day × historical closes "
+                    "(≥90% then-owned coverage) · buy/sell markers from statements."
                 )
             )
             # Day-change uses *today's* as-of qty (not constant open lots)
@@ -848,6 +945,12 @@ class PriceHistoryService:
             note += " Late listings: " + ", ".join(bits)
             if len(short) > 8:
                 note += "…"
+        trades = collect_trade_markers(
+            events,
+            points,
+            asset_class=ac_filter,
+            asset_class_by_ticker=ac_map,
+        )
         return HistoryResult(
             scope="all" if scope == "all" else "asset_class",
             label=label,
@@ -867,6 +970,7 @@ class PriceHistoryService:
                 "avg_cost_usd": None,
                 "quantity": None,
                 "quantity_basis": quantity_basis,
+                "trades": trades,
                 "note": note,
                 "point_kind": point_kind,
                 **ch,

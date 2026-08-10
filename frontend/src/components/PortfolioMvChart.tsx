@@ -4,6 +4,7 @@ import {
   CartesianGrid,
   ComposedChart,
   ResponsiveContainer,
+  Scatter,
   Tooltip,
   XAxis,
   YAxis,
@@ -11,7 +12,7 @@ import {
 } from "recharts";
 import { ExternalLink } from "lucide-react";
 import { api } from "../api/client";
-import type { PriceHistory, PriceHistoryRange } from "../api/types";
+import type { PriceHistory, PriceHistoryRange, PriceHistoryTrade } from "../api/types";
 import { d, formatUsd } from "../lib/money";
 import { cn } from "../lib/cn";
 import {
@@ -31,6 +32,9 @@ const RANGES: { key: PriceHistoryRange; label: string }[] = [
 ];
 
 const TF_KEY = "gauntlet.mvSeries.historyRange";
+const TRADES_KEY = "gauntlet.priceHistory.showTrades";
+const BUY_COLOR = "#2dd4a8";
+const SELL_COLOR = "#f87171";
 
 type BookScope = "all" | "Stock" | "Crypto";
 
@@ -63,8 +67,8 @@ function toChartScope(book: BookScope): ChartScope {
 }
 
 /**
- * Portfolio market-value series from yfinance history (current open lots × prices).
- * Replaces sparse PortfolioSnapshots MV series.
+ * Portfolio market-value series from yfinance history (holdings as-of each day).
+ * Buy/sell markers from statement events.
  */
 export function PortfolioMvChart() {
   const [range, setRange] = useState<PriceHistoryRange>(() => loadRange());
@@ -74,6 +78,14 @@ export function PortfolioMvChart() {
   const [softUpdating, setSoftUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const [showTrades, setShowTrades] = useState(() => {
+    try {
+      if (localStorage.getItem(TRADES_KEY) === "0") return false;
+    } catch {
+      /* ignore */
+    }
+    return true;
+  });
   const hasDataRef = useRef(false);
   hasDataRef.current = data != null && (data.points?.length ?? 0) > 0;
 
@@ -145,13 +157,31 @@ export function PortfolioMvChart() {
     if (!data?.points?.length) return [];
     const cost =
       data.meta.cost_basis_usd != null ? d(data.meta.cost_basis_usd) : undefined;
-    return data.points.map((p) => ({
-      date: p.date,
-      label: shortLabel(p.date, !!intraday),
-      mv: d(p.value),
-      cost,
-    }));
+    const trades = data.meta.trades ?? [];
+    const byDay = new Map<string, PriceHistoryTrade[]>();
+    for (const tr of trades) {
+      const day = tr.date.slice(0, 10);
+      const list = byDay.get(day) ?? [];
+      list.push(tr);
+      byDay.set(day, list);
+    }
+    return data.points.map((p) => {
+      const day = p.date.slice(0, 10);
+      const dayTrades = byDay.get(day) ?? [];
+      const y = d(p.value);
+      return {
+        date: p.date,
+        label: shortLabel(p.date, !!intraday),
+        mv: y,
+        cost,
+        buyMark: dayTrades.some((t) => t.side === "buy") ? y : (null as number | null),
+        sellMark: dayTrades.some((t) => t.side === "sell") ? y : (null as number | null),
+        trades: dayTrades,
+      };
+    });
   }, [data, intraday]);
+
+  const tradeCount = data?.meta.trades?.length ?? 0;
 
   const last = rows[rows.length - 1];
   const changePct = data?.meta.change_pct ?? null;
@@ -171,7 +201,8 @@ export function PortfolioMvChart() {
         <div>
           <h2 className="text-sm font-semibold">{title}</h2>
           <p className="text-xs text-ink-faint">
-            Current holdings marked at historical market prices · free Yahoo data
+            Holdings as of each day × market prices · free Yahoo data
+            {showTrades ? " · buy/sell markers" : ""}
             {range === "1d" ? " · auto-refresh 60s" : ""}
           </p>
         </div>
@@ -254,22 +285,58 @@ export function PortfolioMvChart() {
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-1">
-        {RANGES.map((r) => (
-          <button
-            key={r.key}
-            type="button"
-            onClick={() => onRange(r.key)}
-            className={cn(
-              "rounded-md px-2 py-1 text-[11px] font-semibold tracking-wide transition",
-              range === r.key
-                ? "bg-brand/20 text-brand ring-1 ring-brand/40"
-                : "bg-white/5 text-ink-muted hover:bg-white/10 hover:text-ink",
-            )}
-          >
-            {r.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap gap-1">
+          {RANGES.map((r) => (
+            <button
+              key={r.key}
+              type="button"
+              onClick={() => onRange(r.key)}
+              className={cn(
+                "rounded-md px-2 py-1 text-[11px] font-semibold tracking-wide transition",
+                range === r.key
+                  ? "bg-brand/20 text-brand ring-1 ring-brand/40"
+                  : "bg-white/5 text-ink-muted hover:bg-white/10 hover:text-ink",
+              )}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setShowTrades((v) => {
+              const next = !v;
+              try {
+                localStorage.setItem(TRADES_KEY, next ? "1" : "0");
+              } catch {
+                /* ignore */
+              }
+              return next;
+            });
+          }}
+          className={cn(
+            "rounded-md px-2 py-1 text-[11px] font-semibold tracking-wide transition",
+            showTrades
+              ? "bg-white/10 text-ink ring-1 ring-white/20"
+              : "bg-white/5 text-ink-faint hover:bg-white/10 hover:text-ink-muted",
+          )}
+        >
+          Trades{tradeCount > 0 ? ` (${tradeCount})` : ""}
+        </button>
+        {showTrades && tradeCount > 0 && (
+          <span className="flex items-center gap-2 text-[11px] text-ink-faint">
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full" style={{ background: BUY_COLOR }} />
+              Buy
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full" style={{ background: SELL_COLOR }} />
+              Sell
+            </span>
+          </span>
+        )}
       </div>
 
       {loading && rows.length === 0 && (
@@ -328,16 +395,45 @@ export function PortfolioMvChart() {
                 }
               />
               <Tooltip
-                contentStyle={{
-                  background: "#0f172a",
-                  border: "1px solid rgba(148,163,184,0.25)",
-                  borderRadius: 12,
-                  fontSize: 12,
-                }}
-                formatter={(value: number) => [formatUsd(value), "Market value"]}
-                labelFormatter={(_, payload) => {
-                  const row = payload?.[0]?.payload as { date?: string } | undefined;
-                  return row?.date ?? "";
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null;
+                  const row = payload[0]?.payload as {
+                    date?: string;
+                    mv?: number;
+                    trades?: PriceHistoryTrade[];
+                  };
+                  const trades = row?.trades ?? [];
+                  return (
+                    <div className="rounded-xl border border-white/15 bg-surface-raised px-3 py-2 text-xs shadow-card">
+                      <div className="mb-1 font-medium text-ink">
+                        {row?.date?.slice(0, 10) ?? ""}
+                      </div>
+                      {row?.mv != null && (
+                        <div className="tabular-nums text-ink-muted">
+                          Market value{" "}
+                          <span className="font-medium text-ink">{formatUsd(row.mv)}</span>
+                        </div>
+                      )}
+                      {showTrades &&
+                        trades.map((tr, i) => (
+                          <div
+                            key={`${tr.ticker}-${tr.side}-${i}`}
+                            className={cn(
+                              "mt-0.5 tabular-nums",
+                              tr.side === "buy" ? "text-ok" : "text-danger",
+                            )}
+                          >
+                            {tr.side === "buy" ? "BUY" : "SELL"} {tr.ticker} ·{" "}
+                            {Number(tr.quantity).toLocaleString(undefined, {
+                              maximumFractionDigits: 6,
+                            })}
+                            {tr.value_usd != null && tr.value_usd !== ""
+                              ? ` · ${formatUsd(tr.value_usd)}`
+                              : ""}
+                          </div>
+                        ))}
+                    </div>
+                  );
                 }}
               />
               <Area
@@ -356,6 +452,26 @@ export function PortfolioMvChart() {
                   strokeDasharray="4 4"
                   strokeWidth={1.5}
                 />
+              )}
+              {showTrades && (
+                <>
+                  <Scatter
+                    dataKey="buyMark"
+                    fill={BUY_COLOR}
+                    name="buy"
+                    isAnimationActive={false}
+                    legendType="none"
+                    shape="circle"
+                  />
+                  <Scatter
+                    dataKey="sellMark"
+                    fill={SELL_COLOR}
+                    name="sell"
+                    isAnimationActive={false}
+                    legendType="none"
+                    shape="circle"
+                  />
+                </>
               )}
             </ComposedChart>
           </ResponsiveContainer>

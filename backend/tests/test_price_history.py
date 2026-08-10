@@ -427,6 +427,50 @@ def test_aggregate_time_aware_constant_matches_legacy():
     assert aware == legacy
 
 
+def test_collect_trade_markers_buy_sell_only():
+    from backend.services.price_history import collect_trade_markers
+
+    events = [
+        _event(
+            ticker="AAA",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2021, 8, 11),
+            qty="10",
+        ),
+        _event(
+            ticker="AAA",
+            event_type=InvestmentEventType.SELL,
+            event_date=date(2022, 1, 15),
+            qty="5",
+        ),
+        _event(
+            ticker="AAA",
+            event_type=InvestmentEventType.STAKING_REWARD,
+            event_date=date(2021, 9, 1),
+            qty="1",
+        ),
+        _event(
+            ticker="BBB",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),  # outside window
+            qty="1",
+        ),
+    ]
+    series = [
+        {"date": "2021-08-11", "value": "100.00"},
+        {"date": "2022-01-15", "value": "120.00"},
+        {"date": "2022-06-01", "value": "130.00"},
+    ]
+    marks = collect_trade_markers(events, series)
+    sides = {(m["ticker"], m["side"], m["date"]) for m in marks}
+    assert ("AAA", "buy", "2021-08-11") in sides
+    assert ("AAA", "sell", "2022-01-15") in sides
+    assert not any(m["side"] == "buy" and m["ticker"] == "BBB" for m in marks)
+    assert not any(m["date"] == "2021-09-01" for m in marks)
+    buy = next(m for m in marks if m["side"] == "buy")
+    assert buy["series_value"] == "100.00"
+
+
 def test_history_all_uses_as_of_holdings():
     repo = InMemorySheetsRepository()
     repo.upsert_rows(
