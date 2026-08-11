@@ -1,7 +1,13 @@
 import type { StakingSummary } from "../../api/types";
 import { formatQty, formatUsd } from "../../lib/money";
 
-export function StakingRewardsSection({ staking }: { staking: StakingSummary }) {
+export function StakingRewardsSection({
+  staking,
+  embedded = false,
+}: {
+  staking: StakingSummary;
+  embedded?: boolean;
+}) {
   const markNote: Record<string, string> = {
     broker: "broker USD at reward time",
     live: "≈ live mark (units × price now)",
@@ -10,9 +16,17 @@ export function StakingRewardsSection({ staking }: { staking: StakingSummary }) 
   };
 
   return (
-    <div className="card p-5">
+    <div className={embedded ? "p-0" : "card p-5"}>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h2 className="text-sm font-semibold">Staking rewards</h2>
+        <h2
+          className={
+            embedded
+              ? "text-sm font-semibold tracking-wide text-brand"
+              : "text-sm font-semibold"
+          }
+        >
+          Staking rewards
+        </h2>
         <span className="badge bg-ok/15 text-ok">
           Added value {formatUsd(staking.mark_usd_total)}
         </span>

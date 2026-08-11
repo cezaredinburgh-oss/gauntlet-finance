@@ -15,10 +15,12 @@ const STATUS_STYLE: Record<string, string> = {
 type Props = {
   /** Compact for dashboard strip */
   compact?: boolean;
+  /** Nested in a parent hero — no outer card chrome */
+  embedded?: boolean;
   className?: string;
 };
 
-export function DrawMetricsCard({ compact = false, className }: Props) {
+export function DrawMetricsCard({ compact = false, embedded = false, className }: Props) {
   const [data, setData] = useState<DrawMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [softUpdating, setSoftUpdating] = useState(false);
@@ -60,14 +62,26 @@ export function DrawMetricsCard({ compact = false, className }: Props) {
 
   if (loading && !data) {
     return (
-      <div className={cn("card flex items-center justify-center p-5", className)}>
+      <div
+        className={cn(
+          "flex items-center justify-center p-5",
+          !embedded && "card",
+          className,
+        )}
+      >
         <Spinner className="h-5 w-5" />
       </div>
     );
   }
   if ((error || !data) && !data) {
     return (
-      <div className={cn("card p-4 text-sm text-ink-muted", className)}>
+      <div
+        className={cn(
+          "p-4 text-sm text-ink-muted",
+          !embedded && "card",
+          className,
+        )}
+      >
         {error || "Draw metrics unavailable"}
       </div>
     );
@@ -83,10 +97,18 @@ export function DrawMetricsCard({ compact = false, className }: Props) {
   const status = (data.status || "n/a").toLowerCase();
 
   return (
-    <div className={cn("card space-y-3 p-5", className)}>
+    <div
+      className={cn(
+        "space-y-3",
+        embedded ? "p-0" : "card p-5",
+        className,
+      )}
+    >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold">Living draw vs safe draw</h2>
+          <h2 className="text-sm font-semibold tracking-wide text-ok">
+            Living draw vs safe draw
+          </h2>
           {!compact && (
             <p className="text-xs text-ink-faint">
               Trailing 12m investment cash (sells − buys) vs capacity{" "}

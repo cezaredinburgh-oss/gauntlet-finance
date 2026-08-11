@@ -4,6 +4,10 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Analysis capital flows hero
+
+- Analysis: removed HealthBand; order is buy/sell cashflow → combined living-draw + fees + staking hero → FX chart.
+
 ## 2026-08-12 — Spending hero, Categorize latest import, Alerts desk
 
 - Spending: Net/Income/Expenses + pace strip combined into one bottom cash-pulse hero.

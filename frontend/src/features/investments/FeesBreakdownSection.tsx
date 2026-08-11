@@ -5,7 +5,13 @@ import type { FeesSummary } from "../../api/types";
 import { Money } from "../../components/Money";
 import { d, formatUsd } from "../../lib/money";
 
-export function FeesBreakdownSection({ fees }: { fees: FeesSummary }) {
+export function FeesBreakdownSection({
+  fees,
+  embedded = false,
+}: {
+  fees: FeesSummary;
+  embedded?: boolean;
+}) {
   const byType = fees.fees_by_event_type.map((x) => ({
     name: x.label,
     amount: d(x.amount_usd),
@@ -17,9 +23,17 @@ export function FeesBreakdownSection({ fees }: { fees: FeesSummary }) {
   const hasAmounts = d(fees.total_fees_usd) > 0 || byType.length > 0;
 
   return (
-    <div className="card p-5">
+    <div className={embedded ? "p-0" : "card p-5"}>
       <div className="mb-1">
-        <h2 className="text-sm font-semibold">Fees breakdown</h2>
+        <h2
+          className={
+            embedded
+              ? "text-sm font-semibold tracking-wide text-warn"
+              : "text-sm font-semibold"
+          }
+        >
+          Fees breakdown
+        </h2>
         <p className="text-xs text-ink-faint">
           Trade commissions and explicit fee events from investment statements (lifetime). Buy
           fees include Revolut crypto service fees (the same Fees column used to fee-net DOGE/XRP
