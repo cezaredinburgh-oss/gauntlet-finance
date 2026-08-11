@@ -247,9 +247,6 @@ export function ExecutiveHero({
           </div>
         </div>
 
-        {/* Compact alert summary → Alerts page */}
-        <AlertCountStrip buckets={alertBuckets} />
-
         {(snap.fees || snap.staking) && (
           <div className="flex flex-wrap items-center gap-2 text-[11px]">
             {snap.fees && (
@@ -282,6 +279,11 @@ export function ExecutiveHero({
             <TaxRunwayCard snap={snap} embedded />
           </div>
         )}
+
+        {/* Alert counts last — after wealth + tax runway */}
+        <div className="border-t border-white/10 pt-4">
+          <AlertCountStrip buckets={alertBuckets} />
+        </div>
       </div>
     </section>
   );
