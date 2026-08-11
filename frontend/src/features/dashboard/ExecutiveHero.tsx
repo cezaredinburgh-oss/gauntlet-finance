@@ -55,7 +55,7 @@ export function ExecutiveHero({
 
   return (
     <section
-      className="relative overflow-hidden rounded-2xl border p-5 sm:p-6"
+      className="relative rounded-2xl border p-5 sm:p-6"
       style={{
         background:
           "linear-gradient(135deg, rgba(59,130,246,0.16), rgba(16,185,129,0.10) 45%, rgba(15,23,42,0.85))",
@@ -63,8 +63,14 @@ export function ExecutiveHero({
         boxShadow: "0 20px 50px rgba(0,0,0,0.35)",
       }}
     >
-      <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-brand/10 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-20 left-1/3 h-40 w-40 rounded-full bg-ok/10 blur-3xl" />
+      {/* Clip glow orbs to the card; do not clip HoverPanel popups (wealth KPIs, tax runway). */}
+      <div
+        className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl"
+        aria-hidden
+      >
+        <div className="absolute -right-16 -top-16 h-48 w-48 rounded-full bg-brand/10 blur-3xl" />
+        <div className="absolute -bottom-20 left-1/3 h-40 w-40 rounded-full bg-ok/10 blur-3xl" />
+      </div>
 
       <div className="relative space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-2">
