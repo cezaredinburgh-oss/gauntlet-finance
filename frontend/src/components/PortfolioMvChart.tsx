@@ -197,12 +197,18 @@ export function PortfolioMvChart() {
       : last && first
         ? last.mv - first.mv
         : null;
-  const mvChangeAbs =
+  const markPnlAbs =
+    data?.meta.mark_pnl_abs != null ? d(data.meta.mark_pnl_abs) : null;
+  const markPnlPct = data?.meta.mark_pnl_pct ?? null;
+  const netCapitalAbs =
+    data?.meta.net_capital_abs != null ? d(data.meta.net_capital_abs) : null;
+  // Legacy: older API put mark in change_abs and book in mv_change_abs
+  const legacyMv =
     data?.meta.mv_change_abs != null ? d(data.meta.mv_change_abs) : null;
-  const isPerf =
-    data?.meta.change_basis === "performance_ex_flows" ||
-    data?.meta.change_basis === "mark_performance_start_qty" ||
-    data?.series_kind === "market_value";
+  const hasRecon =
+    markPnlAbs != null &&
+    changeAbs != null &&
+    Math.abs(markPnlAbs - changeAbs) > 0.5;
   const dayPct = data?.meta.day_change_pct ?? null;
   const dayAbs = data?.meta.day_change_abs != null ? d(data.meta.day_change_abs) : null;
   const costRef = data?.meta.cost_basis_usd != null ? d(data.meta.cost_basis_usd) : null;
@@ -243,11 +249,7 @@ export function PortfolioMvChart() {
                     "text-sm font-medium tabular-nums",
                     changeAbs >= 0 ? "text-ok" : "text-danger",
                   )}
-                  title={
-                    isPerf
-                      ? "Mark P&L on holdings at window open (new buys excluded)"
-                      : "Change over chart window"
-                  }
+                  title="Book change: last − first market value on this chart"
                 >
                   {changeAbs >= 0 ? "+" : ""}
                   {formatUsd(changeAbs)}
@@ -258,22 +260,50 @@ export function PortfolioMvChart() {
                       {changePct.toFixed(1)}%)
                     </span>
                   )}
-                  <span className="font-normal text-ink-faint">
-                    {isPerf ? " mark P&L" : " window"}
-                  </span>
+                  <span className="font-normal text-ink-faint"> book</span>
                 </div>
               )}
-              {isPerf &&
-                mvChangeAbs != null &&
+              {hasRecon && markPnlAbs != null && (
+                <div
+                  className="mt-0.5 space-y-0.5 text-[11px] tabular-nums text-ink-faint"
+                  title="Book Δ = Mark P&L + Net capital. Mark is price move on qty held at window open; net capital is the effect of buys/sells (and qty leaving the book)."
+                >
+                  <div>
+                    <span
+                      className={cn(
+                        markPnlAbs >= 0 ? "text-ok" : "text-danger",
+                      )}
+                    >
+                      Mark P&amp;L {markPnlAbs >= 0 ? "+" : ""}
+                      {formatUsd(markPnlAbs)}
+                    </span>
+                    {markPnlPct != null && (
+                      <span>
+                        {" "}
+                        ({markPnlPct >= 0 ? "+" : ""}
+                        {markPnlPct.toFixed(1)}%)
+                      </span>
+                    )}
+                    {netCapitalAbs != null && (
+                      <span>
+                        {" · Net capital "}
+                        {netCapitalAbs >= 0 ? "+" : ""}
+                        {formatUsd(netCapitalAbs)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+              {!hasRecon &&
+                legacyMv != null &&
                 changeAbs != null &&
-                Math.abs(mvChangeAbs - changeAbs) > 0.5 && (
+                Math.abs(legacyMv - changeAbs) > 0.5 && (
                   <div
                     className="text-[11px] text-ink-faint"
-                    title="Book market value change includes deposits and withdrawals of assets"
+                    title="Legacy API: book vs mark split"
                   >
-                    Book Δ {mvChangeAbs >= 0 ? "+" : ""}
-                    {formatUsd(mvChangeAbs)}
-                    <span className="text-ink-faint/80"> (includes buys/sells)</span>
+                    Book Δ {legacyMv >= 0 ? "+" : ""}
+                    {formatUsd(legacyMv)}
                   </div>
                 )}
               {dayPct != null && range !== "1d" && (

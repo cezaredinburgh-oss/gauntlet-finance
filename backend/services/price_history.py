@@ -1057,9 +1057,18 @@ def performance_change_meta(
     places: int = 2,
 ) -> dict[str, Any]:
     """
-    Headline = mark performance (preferred) with raw ΔMV for comparison.
+    Chart-first reconciliation.
 
-    If ``performance_abs`` is provided, that is the headline change.
+    Headline ``change_abs`` / ``change_pct`` = **book Δ** (last − first MV on the
+    displayed series). That always matches the chart endpoints.
+
+    When mark performance is available:
+      mark_pnl_abs  = q0 × (p_end − p_start) on qty held at window open
+      net_capital_abs = book Δ − mark P&L
+                        (capital in/out effect: buys positive, sells negative
+                         relative to mark when prices rose on sold qty)
+
+    Identity: **Book Δ = Mark P&L + Net capital**.
     """
     mv = _change_meta(first, last, places=places)
     mv_delta = None
@@ -1070,44 +1079,61 @@ def performance_change_meta(
         mv_pct = float((mv_delta / first) * 100)
 
     if performance_abs is not None:
-        perf = performance_abs
-        pct = performance_pct
-        if pct is None and open_basis_usd is not None and open_basis_usd != 0:
-            pct = float((perf / open_basis_usd) * 100)
+        mark = performance_abs
+        mark_pct = performance_pct
+        if mark_pct is None and open_basis_usd is not None and open_basis_usd != 0:
+            mark_pct = float((mark / open_basis_usd) * 100)
+        net_cap = None
+        if mv_delta is not None:
+            net_cap = mv_delta - mark
         return {
             "first_value": _str_dec(first, places) if first is not None else None,
             "last_value": _str_dec(last, places) if last is not None else None,
-            "change_abs": _str_dec(perf, places),
-            "change_pct": round(pct, 2) if pct is not None else None,
+            # Headline = book (matches chart line)
+            "change_abs": _str_dec(mv_delta, places) if mv_delta is not None else None,
+            "change_pct": round(mv_pct, 2) if mv_pct is not None else None,
             "mv_change_abs": _str_dec(mv_delta, places) if mv_delta is not None else None,
             "mv_change_pct": round(mv_pct, 2) if mv_pct is not None else None,
+            "mark_pnl_abs": _str_dec(mark, places),
+            "mark_pnl_pct": round(mark_pct, 2) if mark_pct is not None else None,
+            "net_capital_abs": _str_dec(net_cap, places) if net_cap is not None else None,
+            "open_basis_usd": (
+                _str_dec(open_basis_usd, places) if open_basis_usd is not None else None
+            ),
             "window_buys_usd": _str_dec(buys_usd, places),
             "window_sells_usd": _str_dec(sells_usd, places),
-            "change_basis": "mark_performance_start_qty",
+            "change_basis": "book_with_mark_reconciliation",
         }
 
-    # Legacy fallback: ΔMV − buys + sells
+    # Legacy fallback: ΔMV − buys + sells as secondary "mark"; headline still book
     if first is None or last is None:
         return {
             **mv,
             "mv_change_abs": mv.get("change_abs"),
             "mv_change_pct": mv.get("change_pct"),
+            "mark_pnl_abs": None,
+            "mark_pnl_pct": None,
+            "net_capital_abs": None,
             "window_buys_usd": _str_dec(buys_usd, places),
             "window_sells_usd": _str_dec(sells_usd, places),
-            "change_basis": "performance_ex_flows",
+            "change_basis": "book_only",
         }
-    perf = mv_delta - buys_usd + sells_usd  # type: ignore[operator]
-    perf_pct = float((perf / first) * 100) if first != 0 else None
+    assert mv_delta is not None
+    legacy_perf = mv_delta - buys_usd + sells_usd
+    legacy_pct = float((legacy_perf / first) * 100) if first != 0 else None
     return {
         "first_value": _str_dec(first, places),
         "last_value": _str_dec(last, places),
-        "change_abs": _str_dec(perf, places),
-        "change_pct": round(perf_pct, 2) if perf_pct is not None else None,
+        "change_abs": _str_dec(mv_delta, places),
+        "change_pct": round(mv_pct, 2) if mv_pct is not None else None,
         "mv_change_abs": _str_dec(mv_delta, places),
         "mv_change_pct": round(mv_pct, 2) if mv_pct is not None else None,
+        "mark_pnl_abs": _str_dec(legacy_perf, places),
+        "mark_pnl_pct": round(legacy_pct, 2) if legacy_pct is not None else None,
+        "net_capital_abs": _str_dec(buys_usd - sells_usd, places),
         "window_buys_usd": _str_dec(buys_usd, places),
         "window_sells_usd": _str_dec(sells_usd, places),
-        "change_basis": "performance_ex_flows",
+        "change_basis": "book_with_flow_reconciliation",
     }
 
 
@@ -1912,7 +1938,8 @@ class PriceHistoryService:
             places=2,
         )
         window_components: dict[str, Any] | None = None
-        # Portfolio: headline = Stocks + Crypto mark performance (additive)
+        # Portfolio: optional Stocks/Crypto legs (RTH vs 24h on 1D) — do NOT
+        # override headline. Headline stays chart-series book Δ + same-series mark.
         if (
             ac_filter is None
             and quantity_basis.startswith("holdings_as_of")
@@ -1928,34 +1955,6 @@ class PriceHistoryService:
                     coverage_threshold=cov_threshold,
                     events=events,
                 )
-                # Override headline change with additive sum
-                if window_components.get("sum_change_usd") is not None:
-                    ch = {
-                        **ch,
-                        "change_abs": window_components["sum_change_usd"],
-                        "change_pct": window_components.get("sum_change_pct"),
-                        "first_value": window_components.get("first_usd")
-                        or ch.get("first_value"),
-                        "last_value": window_components.get("last_usd")
-                        or ch.get("last_value"),
-                        "mv_change_abs": window_components.get("sum_mv_change_usd")
-                        or ch.get("mv_change_abs"),
-                        "window_buys_usd": _str_dec(
-                            Decimal(window_components["stocks"].get("window_buys_usd") or 0)
-                            + Decimal(
-                                window_components["crypto"].get("window_buys_usd") or 0
-                            )
-                        ),
-                        "window_sells_usd": _str_dec(
-                            Decimal(
-                                window_components["stocks"].get("window_sells_usd") or 0
-                            )
-                            + Decimal(
-                                window_components["crypto"].get("window_sells_usd") or 0
-                            )
-                        ),
-                        "change_basis": "mark_performance_start_qty",
-                    }
             except Exception as exc:  # noqa: BLE001
                 logger.warning("portfolio window components failed: %s", exc)
                 window_components = None
@@ -1987,13 +1986,10 @@ class PriceHistoryService:
         if is_intraday and session_status == "prior_session":
             note = "Prior regular session (today’s open not in Yahoo yet). " + note
         elif is_intraday and session_status == "last_24h":
-            if ac_filter is None:
-                note = (
-                    "Performance = mark P&L on qty held through window "
-                    "(Stocks RTH + Crypto 24h). Purchases excluded. "
-                ) + note
-            else:
-                note = "Last 24h (5m) · mark P&L on held-through qty. " + note
+            note = (
+                "Book change = chart endpoints · Mark P&L on qty at open · "
+                "Net capital closes the gap. "
+            ) + note
         elif is_intraday and session_status == "regular":
             note = "US regular session (5m). " + note
         elif is_intraday and len(mv_series) <= 3:

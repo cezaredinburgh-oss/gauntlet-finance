@@ -4,6 +4,15 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Chart-first book / mark reconciliation
+
+- Confusion: chart endpoints (+$4.9k book) vs headline mark P&L (+$13.7k) → “missing” $8.8k.
+- Cause: mark = q₀×Δp on **open** qty; book = last−first MV (includes sells/capital leaving the book).
+  Identity: **Book Δ = Mark P&L + Net capital**. On sells after a rise, mark &gt; book (net capital negative).
+- Fix: headline `change_*` = book (matches line); emit `mark_pnl_*` + `net_capital_abs`.
+- Portfolio 1D no longer overrides headline with Stocks RTH + Crypto 24h sum (legs stay in `window_components`).
+- UI: primary “book”; secondary “Mark P&L · Net capital” when they differ.
+
 ## 2026-08-11 — Mark P&L aligned to chart open (no purchase cash)
 
 - Root cause: prior flow method missed USD-less trades; UI big number is MV not P&L.

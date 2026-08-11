@@ -566,11 +566,20 @@ export type PriceHistory = {
     quantity?: string | null;
     first_value?: string | null;
     last_value?: string | null;
-    /** Performance ex-buys/sells when change_basis is performance_ex_flows. */
+    /**
+     * Headline change_abs = book Δ (chart last − first).
+     * mark_pnl_abs = pure mark on qty at window open.
+     * net_capital_abs = book − mark (capital in/out effect).
+     * Identity: Book = Mark + Net capital.
+     */
     change_pct?: number | null;
     change_abs?: string | null;
     mv_change_abs?: string | null;
     mv_change_pct?: number | null;
+    mark_pnl_abs?: string | null;
+    mark_pnl_pct?: number | null;
+    net_capital_abs?: string | null;
+    open_basis_usd?: string | null;
     window_buys_usd?: string | null;
     window_sells_usd?: string | null;
     change_basis?: string | null;

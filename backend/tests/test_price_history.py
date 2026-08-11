@@ -910,9 +910,82 @@ def test_performance_excludes_window_buys():
         open_basis_usd=mark["open_basis_usd"],
         performance_pct=mark["performance_pct"],
     )
+    # Headline = book Δ (line); mark P&L excludes mid-window buy
+    assert Decimal(ch["change_abs"]) == Decimal("1000.00")
     assert Decimal(ch["mv_change_abs"]) == Decimal("1000.00")
-    assert Decimal(ch["change_abs"]) == Decimal("0.00")
-    assert ch["change_basis"] == "mark_performance_start_qty"
+    assert Decimal(ch["mark_pnl_abs"]) == Decimal("0.00")
+    assert Decimal(ch["net_capital_abs"]) == Decimal("1000.00")
+    assert ch["change_basis"] == "book_with_mark_reconciliation"
+    # Identity: book = mark + net capital
+    assert (
+        Decimal(ch["change_abs"])
+        == Decimal(ch["mark_pnl_abs"]) + Decimal(ch["net_capital_abs"])
+    )
+
+
+def test_book_mark_net_capital_identity_on_sell():
+    """
+    Sell toy model (user's $8.8k gap):
+      open 100 @ 100 → end 20 @ 110 after selling 80
+      book Δ = 20*110 − 100*100 = −7800
+      mark   = 100*(110−100) = +1000  (held-through open qty)
+      net capital = book − mark = −8800
+    """
+    from backend.services.price_history import (
+        performance_change_meta,
+        window_mark_performance,
+    )
+
+    events = [
+        _event(
+            ticker="XYZ",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            event_datetime=datetime(2020, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            qty="100",
+            asset_class=AssetClass.STOCK,
+        ),
+        _event(
+            ticker="XYZ",
+            event_type=InvestmentEventType.SELL,
+            event_date=date(2026, 8, 8),
+            event_datetime=datetime(2026, 8, 8, 12, 0, 0, tzinfo=timezone.utc),
+            qty="80",
+            asset_class=AssetClass.STOCK,
+        ),
+    ]
+    tl = build_holdings_timeline(events, [])
+    closes = {
+        "XYZ": [
+            ("2026-08-05", Decimal("100")),
+            ("2026-08-08", Decimal("105")),
+            ("2026-08-11", Decimal("110")),
+        ]
+    }
+    # Book endpoints from holdings × prices
+    book_first = Decimal("100") * Decimal("100")  # 10000
+    book_last = Decimal("20") * Decimal("110")  # 2200
+    mark = window_mark_performance(
+        tl,
+        closes,
+        chart_first_ts="2026-08-05",
+        chart_last_ts="2026-08-11",
+    )
+    assert mark["performance_abs"] == Decimal("1000.00")  # 100 * 10
+    ch = performance_change_meta(
+        book_first,
+        book_last,
+        performance_abs=mark["performance_abs"],
+        open_basis_usd=mark["open_basis_usd"],
+        performance_pct=mark["performance_pct"],
+    )
+    assert Decimal(ch["change_abs"]) == Decimal("-7800.00")
+    assert Decimal(ch["mark_pnl_abs"]) == Decimal("1000.00")
+    assert Decimal(ch["net_capital_abs"]) == Decimal("-8800.00")
+    assert (
+        Decimal(ch["change_abs"])
+        == Decimal(ch["mark_pnl_abs"]) + Decimal(ch["net_capital_abs"])
+    )
 
 
 def test_mark_performance_price_move_held_through():
