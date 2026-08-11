@@ -3,17 +3,19 @@ import { api } from "../api/client";
 import type { PortfolioSnapshot } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import { FxUsdCzkChart } from "../components/FxUsdCzkChart";
-import { PortfolioMvChart } from "../components/PortfolioMvChart";
 import { DrawMetricsCard } from "../components/DrawMetricsCard";
 import {
   CashflowMonthlyChart,
   FeesBreakdownSection,
   HealthBand,
-  InvestmentsSubNav,
+  InvestmentsPageShell,
   StakingRewardsSection,
-} from "./InvestmentsPage";
+} from "../features/investments";
 
-/** Portfolio health, cashflow, fees, staking, draw, MV series, FX. */
+/**
+ * Analysis tools desk: health, draw, cashflow, fees, staking, FX.
+ * Live MV history lives on Holdings (single chart home).
+ */
 export function InvestmentsAnalysisPage() {
   const [snap, setSnap] = useState<PortfolioSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -40,7 +42,6 @@ export function InvestmentsAnalysisPage() {
     };
   }, []);
 
-  // Soft-refresh health / staking marks when Layout live-marks or Update prices fires
   useEffect(() => {
     const onPrices = () => {
       void api
@@ -65,19 +66,15 @@ export function InvestmentsAnalysisPage() {
   const hasHoldings = !!snap && snap.ticker_count > 0;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Investments analysis</h1>
-        <p className="text-sm text-ink-muted">
-          Portfolio health · cashflow · fees · staking · draw · live MV history · CZK/USD
-        </p>
-        <InvestmentsSubNav active="analysis" />
-      </div>
-
+    <InvestmentsPageShell
+      active="analysis"
+      title="Investments analysis"
+      subtitle="Portfolio health · living draw · cashflow · fees · staking · CZK/USD"
+    >
       {!hasHoldings && (
         <EmptyState
           title="No holdings yet"
-          description="Import statements first for health, fees, and staking. MV / FX charts still load when data exists."
+          description="Import statements first for health, fees, and staking. FX chart still loads when data exists."
         />
       )}
 
@@ -92,8 +89,7 @@ export function InvestmentsAnalysisPage() {
       {hasHoldings && snap.fees && <FeesBreakdownSection fees={snap.fees} />}
       {hasHoldings && snap.staking && <StakingRewardsSection staking={snap.staking} />}
 
-      <PortfolioMvChart />
       <FxUsdCzkChart portfolioUsd={snap?.total_market_value_usd} />
-    </div>
+    </InvestmentsPageShell>
   );
 }

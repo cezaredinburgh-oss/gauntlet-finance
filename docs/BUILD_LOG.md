@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Investment Desk rework (Holdings + Analysis + DCA + Tax)
+
+- **Holdings** executive desk: hero (grade + MV + price status), nested wealth KPIs, scannable holdings table + detail panel (replaces chip strip), live chart below, tax runway, DCA top-3 teaser.
+- **Analysis**: removed duplicate `PortfolioMvChart` (single MV chart home = Holdings); keeps health, draw, cashflow, fees, staking, FX.
+- **IA**: four tabs retained (Holdings | Analysis | DCA | Tax); shared `InvestmentsPageShell` + feature-module imports (no page re-exports).
+- Domain math / APIs unchanged (snapshot, digests, history, draw, DCA, tax-report). UI presentation + hierarchy only.
+
 ## 2026-08-11 — Chart performance clarity (Performance | Book toggle)
 
 - UX only: MV charts default primary **Performance** (`mark_pnl_*`); toggle **Book** for market value Δ (`change_abs` = last−first, matches line).

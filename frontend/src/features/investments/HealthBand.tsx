@@ -1,21 +1,12 @@
 import type { PortfolioSnapshot } from "../../api/types";
 import { cn } from "../../lib/cn";
-
-const GRADE_STYLE: Record<string, string> = {
-  A: "bg-ok/20 text-ok ring-ok/40",
-  B: "bg-brand/20 text-brand ring-brand/40",
-  C: "bg-white/10 text-ink ring-white/20",
-  D: "bg-warn/20 text-warn ring-warn/40",
-  F: "bg-danger/20 text-danger ring-danger/40",
-  "—": "bg-white/5 text-ink-faint ring-white/10",
-};
+import { gradeStyleClass } from "./gradeStyles";
 
 export function HealthBand({
   health,
 }: {
   health: NonNullable<PortfolioSnapshot["health"]>;
 }) {
-  const grade = health.grade in GRADE_STYLE ? health.grade : "—";
   const c = health.concentration;
   const focus = (health.issues || [])
     .filter((i) => i.severity === "high" || i.severity === "medium")
@@ -29,7 +20,7 @@ export function HealthBand({
         <div
           className={cn(
             "flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-2xl ring-1",
-            GRADE_STYLE[grade] || GRADE_STYLE["—"],
+            gradeStyleClass(health.grade),
           )}
         >
           <span className="text-2xl font-bold leading-none">{health.grade}</span>

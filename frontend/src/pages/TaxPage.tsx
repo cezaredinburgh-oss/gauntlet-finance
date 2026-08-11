@@ -14,7 +14,7 @@ import { api, API_BASE } from "../api/client";
 import type { TaxReport, TaxYearsSummary } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import { d, formatCzk, formatUsd } from "../lib/money";
-import { InvestmentsSubNav } from "./InvestmentsPage";
+import { InvestmentsPageShell } from "../features/investments";
 
 export function TaxPage() {
   const [years, setYears] = useState<number[]>([]);
@@ -106,16 +106,11 @@ export function TaxPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Tax report</h1>
-        <p className="text-sm text-ink-muted">
-          Realised disposals from FIFO lot allocations · CZK primary reporting · not
-          tax advice
-        </p>
-        <InvestmentsSubNav active="tax" />
-      </div>
-
+    <InvestmentsPageShell
+      active="tax"
+      title="Tax report"
+      subtitle="Realised disposals from FIFO lot allocations · CZK primary · not tax advice"
+    >
       {error && (
         <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
           {error}
@@ -174,26 +169,36 @@ export function TaxPage() {
 
       {!loading && report && (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Kpi
-              label="Taxable gain (CZK)"
-              value={formatCzk(report.summary.taxable_realized_gain_czk)}
-              tone="warn"
-            />
-            <Kpi
-              label="Exempt gain (CZK)"
-              value={formatCzk(report.summary.exempt_realized_gain_czk)}
-              tone="ok"
-            />
-            <Kpi
-              label="Total gain (USD)"
-              value={formatUsd(report.summary.total_realized_gain_usd)}
-            />
-            <Kpi
-              label="Disposals"
-              value={`${report.summary.taxable_disposal_count} tax · ${report.summary.exempt_disposal_count} free`}
-            />
-          </div>
+          <section className="card p-5">
+            <div className="mb-3">
+              <h2 className="text-sm font-semibold tracking-wide text-brand">
+                Year {year} summary
+              </h2>
+              <p className="text-xs text-ink-faint">
+                FIFO realised gains · CZK filing basis · USD for wealth context
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Kpi
+                label="Taxable gain (CZK)"
+                value={formatCzk(report.summary.taxable_realized_gain_czk)}
+                tone="warn"
+              />
+              <Kpi
+                label="Exempt gain (CZK)"
+                value={formatCzk(report.summary.exempt_realized_gain_czk)}
+                tone="ok"
+              />
+              <Kpi
+                label="Total gain (USD)"
+                value={formatUsd(report.summary.total_realized_gain_usd)}
+              />
+              <Kpi
+                label="Disposals"
+                value={`${report.summary.taxable_disposal_count} tax · ${report.summary.exempt_disposal_count} free`}
+              />
+            </div>
+          </section>
 
           {chartData.length > 0 && (
             <div className="card p-5">
@@ -369,7 +374,7 @@ export function TaxPage() {
           </p>
         </>
       )}
-    </div>
+    </InvestmentsPageShell>
   );
 }
 
@@ -383,10 +388,8 @@ function Kpi({
   tone?: "ok" | "warn";
 }) {
   return (
-    <div className="card px-4 py-3">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-ink-faint">
-        {label}
-      </div>
+    <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+      <div className="label mb-0.5">{label}</div>
       <div
         className={
           tone === "ok"

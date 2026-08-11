@@ -5,7 +5,7 @@ import type { DcaBoardResponse, DcaOpportunityItem } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import { formatUsd } from "../lib/money";
 import { cn } from "../lib/cn";
-import { InvestmentsSubNav } from "../features/investments";
+import { InvestmentsPageShell } from "../features/investments";
 
 /** Opportunity visual tier — green/hot = stronger add signal. */
 type OppTone = "hot" | "strong" | "warm" | "cool";
@@ -220,26 +220,20 @@ export function InvestmentsDcaPage() {
   const crypto = board?.crypto ?? [];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">DCA opportunities</h1>
-        <p className="text-sm text-ink-muted">
-          Rank existing holdings by add-size signal — below your cost, 3M pullback, and
-          under 52-week average. Green / sky = stronger opportunity; amber = mid; muted =
-          weaker.
-        </p>
-        <InvestmentsSubNav active="dca" />
-      </div>
-
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-faint">
-        <span>As of {board?.as_of ?? "—"}</span>
+    <InvestmentsPageShell
+      active="dca"
+      title="DCA opportunities"
+      subtitle="Rank holdings by add-size signal — below cost, 3M pullback, under 52-week average"
+    >
+      <div className="card flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-xs text-ink-faint">
+        <span className="font-medium text-ink-muted">As of {board?.as_of ?? "—"}</span>
         <ToneLegend />
         {board?.meta?.history_available === false && (
-          <span className="rounded bg-white/5 px-2 py-0.5">
+          <span className="rounded-lg bg-warn/10 px-2 py-0.5 text-warn">
             History offline — ranking from cost discount only
           </span>
         )}
-        <Link to="/expenses/alerts" className="text-brand hover:underline">
+        <Link to="/expenses/alerts" className="ml-auto font-medium text-brand hover:underline">
           Alerts →
         </Link>
       </div>
@@ -262,6 +256,6 @@ export function InvestmentsDcaPage() {
         last buy, size). Color tracks opportunity strength only — alert eligibility lives on
         the Alerts page. Not investment advice — statement lots + live marks only.
       </p>
-    </div>
+    </InvestmentsPageShell>
   );
 }
