@@ -344,10 +344,6 @@ export function PositionHistoryChart({
         : null;
   const mvChangeAbs =
     data?.meta.mv_change_abs != null ? d(data.meta.mv_change_abs) : null;
-  const windowBuys =
-    data?.meta.window_buys_usd != null ? d(data.meta.window_buys_usd) : null;
-  const windowSells =
-    data?.meta.window_sells_usd != null ? d(data.meta.window_sells_usd) : null;
   const isPrice = data?.series_kind === "price";
   const isPerf =
     !isPrice &&
@@ -426,37 +422,49 @@ export function PositionHistoryChart({
         <div className="flex flex-wrap items-start gap-3">
           {last && (
             <div className="text-right">
+              <div className="text-[11px] uppercase tracking-wide text-ink-faint">
+                {isPrice ? "Last price" : "Market value"}
+              </div>
               <div className="text-2xl font-semibold tabular-nums tracking-tight text-brand sm:text-3xl">
                 {fmt(last.value)}
               </div>
-              {changePct != null && (
-                <div className={cn("text-sm font-medium", positive ? "text-ok" : "text-danger")}>
-                  {changeAbs != null && (
-                    <span className="mr-1.5 tabular-nums">
-                      {changeAbs >= 0 ? "+" : ""}
-                      {fmt(changeAbs)}
+              {changeAbs != null && (
+                <div
+                  className={cn(
+                    "text-sm font-medium tabular-nums",
+                    changeAbs >= 0 ? "text-ok" : "text-danger",
+                  )}
+                  title={
+                    isPerf
+                      ? "Mark P&L on holdings at window open (new buys excluded)"
+                      : "Change over chart window"
+                  }
+                >
+                  {changeAbs >= 0 ? "+" : ""}
+                  {fmt(changeAbs)}
+                  {changePct != null && (
+                    <span>
+                      {" "}
+                      ({changePct >= 0 ? "+" : ""}
+                      {changePct.toFixed(1)}%)
                     </span>
                   )}
-                  {changePct >= 0 ? "+" : ""}
-                  {changePct.toFixed(1)}%
-                  {isPerf ? " performance" : " window"}
+                  <span className="font-normal text-ink-faint">
+                    {isPerf ? " mark P&L" : " window"}
+                  </span>
                 </div>
               )}
               {isPerf &&
-                ((windowBuys != null && windowBuys > 0) ||
-                  (windowSells != null && windowSells > 0) ||
-                  (mvChangeAbs != null &&
-                    changeAbs != null &&
-                    Math.abs(mvChangeAbs - changeAbs) > 0.5)) && (
-                  <div className="text-[11px] text-ink-faint">
-                    ex-buys/sells
-                    {mvChangeAbs != null && (
-                      <span>
-                        {" "}
-                        · MV Δ {mvChangeAbs >= 0 ? "+" : ""}
-                        {formatUsd(mvChangeAbs)}
-                      </span>
-                    )}
+                mvChangeAbs != null &&
+                changeAbs != null &&
+                Math.abs(mvChangeAbs - changeAbs) > 0.5 && (
+                  <div
+                    className="text-[11px] text-ink-faint"
+                    title="Book market value change includes deposits and withdrawals of assets"
+                  >
+                    Book Δ {mvChangeAbs >= 0 ? "+" : ""}
+                    {formatUsd(mvChangeAbs)}
+                    <span className="text-ink-faint/80"> (includes buys/sells)</span>
                   </div>
                 )}
               {scope.kind === "all" && (stockWin != null || cryptoWin != null) && (

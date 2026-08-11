@@ -938,19 +938,47 @@ def window_external_flows(
     }
 
 
-def _qty_window_open(timeline: HoldingsTimeline, ticker: str, first_ts: str) -> Decimal:
-    """Qty at window open: prior day for daily bars; as-of first bar for intraday."""
+def _price_on_or_before(
+    series: list[SeriesPoint],
+    as_of_ts: str,
+) -> Decimal | None:
+    """Last price at or before chart timestamp (forward-fill friendly)."""
+    if not series:
+        return None
+    as_of = _parse_ts(as_of_ts)
+    best: Decimal | None = None
+    for ts, px in sorted(series, key=lambda p: _parse_ts(p[0])):
+        if _parse_ts(ts) <= as_of:
+            try:
+                best = px if isinstance(px, Decimal) else Decimal(str(px))
+            except Exception:  # noqa: BLE001
+                continue
+        else:
+            break
+    if best is not None:
+        return best
+    # Before first print: use first available (still gate qty separately)
+    try:
+        ordered = sorted(series, key=lambda p: _parse_ts(p[0]))
+        px = ordered[0][1]
+        return px if isinstance(px, Decimal) else Decimal(str(px))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _qty_at_chart_open(timeline: HoldingsTimeline, ticker: str, first_ts: str) -> Decimal:
+    """
+    Qty held **entering** the chart window (excludes buys at/after first bar).
+
+    Daily: end of prior calendar day.
+    Intraday: events strictly before first bar timestamp.
+    """
     if "T" in first_ts:
-        dt = _as_utc(_parse_ts(first_ts))
-        return timeline.qty_as_of_ts(ticker, dt)
+        return timeline.qty_as_of_ts(
+            ticker, _as_utc(_parse_ts(first_ts)), inclusive=False
+        )
     d0 = _ts_to_date(first_ts)
     return timeline.qty_as_of(ticker, d0 - timedelta(days=1))
-
-
-def _qty_window_close(timeline: HoldingsTimeline, ticker: str, last_ts: str) -> Decimal:
-    if "T" in last_ts:
-        return timeline.qty_as_of_ts(ticker, _as_utc(_parse_ts(last_ts)))
-    return timeline.qty_as_of(ticker, _ts_to_date(last_ts))
 
 
 def window_mark_performance(
@@ -958,46 +986,56 @@ def window_mark_performance(
     closes_by_ticker: dict[str, list[SeriesPoint]],
     *,
     tickers: list[str] | None = None,
+    chart_first_ts: str | None = None,
+    chart_last_ts: str | None = None,
 ) -> dict[str, Any]:
     """
-    Pure mark performance on capital held through the window.
+    Pure mark performance on capital held at **chart window open**.
 
-    For each ticker:
-      q = min(qty_at_window_open, qty_at_window_close)
-      contrib = q * (price_last − price_first)
+    For each ticker with prices at both ends of the **chart** window:
+      q0 = qty entering the window (no mid-window buys)
+      contrib = q0 * (price_at_chart_end − price_at_chart_start)
 
-    Mid-window buys are excluded (not in open qty). Full exits contribute 0.
-    Independent of trade value_usd — robust for CZK / missing cash fields.
+    Uses shared chart first/last timestamps when provided so performance
+    matches the visible series (not each ticker's own Yahoo start/end).
     """
     universe = [
         t.upper()
         for t in (tickers if tickers is not None else list(closes_by_ticker.keys()))
     ]
+    # Infer chart bounds from union of series if not provided
+    if chart_first_ts is None or chart_last_ts is None:
+        all_ts: list[str] = []
+        for series in closes_by_ticker.values():
+            for ts, _ in series:
+                all_ts.append(ts)
+        if not all_ts:
+            return {
+                "performance_abs": Decimal("0.00"),
+                "open_basis_usd": Decimal("0.00"),
+                "performance_pct": None,
+            }
+        all_ts.sort(key=_parse_ts)
+        chart_first_ts = chart_first_ts or all_ts[0]
+        chart_last_ts = chart_last_ts or all_ts[-1]
+
+    assert chart_first_ts is not None and chart_last_ts is not None
     perf = Decimal("0")
-    open_basis = Decimal("0")  # Σ q * p0 for % denominator
+    open_basis = Decimal("0")
     for t in universe:
         series = closes_by_ticker.get(t) or []
-        if len(series) < 1:
+        if not series:
             continue
-        # chronological
-        ordered = sorted(series, key=lambda p: _parse_ts(p[0]))
-        ts0, p0 = ordered[0]
-        ts1, p1 = ordered[-1]
-        try:
-            p0d = p0 if isinstance(p0, Decimal) else Decimal(str(p0))
-            p1d = p1 if isinstance(p1, Decimal) else Decimal(str(p1))
-        except Exception:  # noqa: BLE001
+        p0 = _price_on_or_before(series, chart_first_ts)
+        p1 = _price_on_or_before(series, chart_last_ts)
+        if p0 is None or p1 is None:
             continue
-        q0 = _qty_window_open(timeline, t, ts0)
-        q1 = _qty_window_close(timeline, t, ts1)
-        if q0 <= 0 and q1 <= 0:
+        q0 = _qty_at_chart_open(timeline, t, chart_first_ts)
+        if q0 <= 0:
             continue
-        q = min(q0, q1) if q0 > 0 and q1 > 0 else Decimal("0")
-        # Held through (or residual after partial sell)
-        if q <= 0:
-            continue
-        perf += q * (p1d - p0d)
-        open_basis += q * p0d
+        # Opening-book mark-to-market only (purchases after open excluded)
+        perf += q0 * (p1 - p0)
+        open_basis += q0 * p0
     return {
         "performance_abs": _q2(perf),
         "open_basis_usd": _q2(open_basis),
@@ -1299,8 +1337,34 @@ def portfolio_window_from_components(
     s_mv = s_mv if s_mv is not None else Decimal("0")
     c_mv = c_mv if c_mv is not None else Decimal("0")
 
-    s_mark = window_mark_performance(timeline, stock_closes, tickers=stock_ts)
-    c_mark = window_mark_performance(timeline, crypto_closes, tickers=crypto_ts)
+    def _series_bounds(
+        closes: dict[str, list[SeriesPoint]],
+    ) -> tuple[str | None, str | None]:
+        ts_all: list[str] = []
+        for series in closes.values():
+            for ts, _ in series:
+                ts_all.append(ts)
+        if not ts_all:
+            return None, None
+        ts_all.sort(key=_parse_ts)
+        return ts_all[0], ts_all[-1]
+
+    s_first, s_last = _series_bounds(stock_closes)
+    c_first, c_last = _series_bounds(crypto_closes)
+    s_mark = window_mark_performance(
+        timeline,
+        stock_closes,
+        tickers=stock_ts,
+        chart_first_ts=s_first,
+        chart_last_ts=s_last,
+    )
+    c_mark = window_mark_performance(
+        timeline,
+        crypto_closes,
+        tickers=crypto_ts,
+        chart_first_ts=c_first,
+        chart_last_ts=c_last,
+    )
     s_perf = s_mark["performance_abs"]
     c_perf = c_mark["performance_abs"]
     total_perf = s_perf + c_perf
@@ -1827,8 +1891,16 @@ class PriceHistoryService:
             asset_class=ac_filter,
             asset_class_by_ticker=ac_map,
         )
-        # Pure mark P&L on qty held through window (ignores purchase cash)
-        mark = window_mark_performance(timeline, closes, tickers=tickers)
+        # Pure mark P&L on qty held at chart open (aligned to displayed series)
+        chart_first_ts = mv_series[0][0] if mv_series else None
+        chart_last_ts = mv_series[-1][0] if mv_series else None
+        mark = window_mark_performance(
+            timeline,
+            closes,
+            tickers=tickers,
+            chart_first_ts=chart_first_ts,
+            chart_last_ts=chart_last_ts,
+        )
         ch = performance_change_meta(
             first,
             last,

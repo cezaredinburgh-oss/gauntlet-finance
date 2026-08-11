@@ -4,10 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
-## 2026-08-11 — Mark performance (held-through qty × Δprice)
+## 2026-08-11 — Mark P&L aligned to chart open (no purchase cash)
 
-- Headline no longer ΔMV−flows (missed CZK / null value_usd → purchases looked like gains).
-- `window_mark_performance`: Σ min(q_open,q_close)×(p_end−p_start); all ranges / books.
+- Root cause: prior flow method missed USD-less trades; UI big number is MV not P&L.
+- Fix: `q0` = qty **entering** chart window; `Σ q0×(p_end−p_start)` on chart first/last bars.
+- UI: label Market value vs mark P&L; Book Δ shown when it includes buys/sells.
 
 ## 2026-08-11 — Revert trade jump bands / curve colors
 

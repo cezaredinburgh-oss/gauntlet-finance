@@ -897,7 +897,12 @@ def test_performance_excludes_window_buys():
     series, _ = aggregate_mv_series_time_aware(
         tl, closes, coverage_threshold=Decimal("0.5"), preseed_first_marks=True
     )
-    mark = window_mark_performance(tl, closes)
+    mark = window_mark_performance(
+        tl,
+        closes,
+        chart_first_ts=series[0][0],
+        chart_last_ts=series[-1][0],
+    )
     ch = performance_change_meta(
         series[0][1],
         series[-1][1],
@@ -932,7 +937,7 @@ def test_mark_performance_price_move_held_through():
             asset_class=AssetClass.CRYPTO,
         ),
     ]
-    # no value_usd on second buy — old flow method would fail; mark method must not
+    # no value_usd on second buy — must not matter
     events[1] = events[1].model_copy(update={"value_usd": None, "value_native": None})
     tl = build_holdings_timeline(events, [])
     closes = {
@@ -942,10 +947,56 @@ def test_mark_performance_price_move_held_through():
             ("2026-08-11", Decimal("3200")),
         ]
     }
-    mark = window_mark_performance(tl, closes)
-    # open qty before 2026-08-05 = 10; end qty = 15; min = 10
+    mark = window_mark_performance(
+        tl,
+        closes,
+        chart_first_ts="2026-08-05",
+        chart_last_ts="2026-08-11",
+    )
+    # open qty before 2026-08-05 = 10; mid buy excluded
     # perf = 10 * (3200 - 3000) = 2000
     assert mark["performance_abs"] == Decimal("2000.00")
+
+
+def test_mark_performance_ignores_buy_even_if_yahoo_starts_after_buy():
+    """New ticker mid-window: performance 0 even when prices exist for full range."""
+    from backend.services.price_history import window_mark_performance
+
+    events = [
+        _event(
+            ticker="OLD",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="1",
+            asset_class=AssetClass.STOCK,
+        ),
+        _event(
+            ticker="NEW",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 8),
+            qty="100",
+            asset_class=AssetClass.STOCK,
+        ),
+    ]
+    tl = build_holdings_timeline(events, [])
+    closes = {
+        "OLD": [
+            ("2026-08-05", Decimal("100")),
+            ("2026-08-11", Decimal("110")),
+        ],
+        "NEW": [
+            ("2026-08-05", Decimal("50")),
+            ("2026-08-11", Decimal("60")),  # would look like +1000 if q counted
+        ],
+    }
+    mark = window_mark_performance(
+        tl,
+        closes,
+        chart_first_ts="2026-08-05",
+        chart_last_ts="2026-08-11",
+    )
+    # Only OLD: 1*(110-100)=10; NEW open qty before Aug 5 = 0
+    assert mark["performance_abs"] == Decimal("10.00")
 
 
 def test_portfolio_window_components_additive():

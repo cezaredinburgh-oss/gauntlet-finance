@@ -90,27 +90,41 @@ class HoldingsTimeline:
                 hi = mid - 1
         return best if best is not None else Decimal("0")
 
-    def qty_as_of_ts(self, ticker: str, as_of: datetime) -> Decimal:
-        """Qty after all events with instant ≤ ``as_of`` (UTC)."""
+    def qty_as_of_ts(
+        self,
+        ticker: str,
+        as_of: datetime,
+        *,
+        inclusive: bool = True,
+    ) -> Decimal:
+        """
+        Qty after inventory events relative to ``as_of`` (UTC).
+
+        ``inclusive=True`` (default): events with instant ≤ as_of.
+        ``inclusive=False``: events with instant < as_of (window-open qty
+        excluding same-timestamp buys at the first chart bar).
+        """
         t = ticker.upper()
         pts = self.ts_steps.get(t)
-        if not pts:
-            # Fall back to end-of-day steps when only date-level history exists
-            if as_of.tzinfo is None:
-                as_of_d = as_of.replace(tzinfo=timezone.utc).date()
-            else:
-                as_of_d = as_of.astimezone(timezone.utc).date()
-            return self.qty_as_of(t, as_of_d)
         if as_of.tzinfo is None:
             as_of_u = as_of.replace(tzinfo=timezone.utc)
         else:
             as_of_u = as_of.astimezone(timezone.utc)
+        if not pts:
+            # Fall back to date steps: exclusive open uses prior calendar day
+            as_of_d = as_of_u.date()
+            if not inclusive:
+                from datetime import timedelta
+
+                return self.qty_as_of(t, as_of_d - timedelta(days=1))
+            return self.qty_as_of(t, as_of_d)
         lo, hi = 0, len(pts) - 1
         best: Decimal | None = None
         while lo <= hi:
             mid = (lo + hi) // 2
             dt, q = pts[mid]
-            if dt <= as_of_u:
+            ok = dt <= as_of_u if inclusive else dt < as_of_u
+            if ok:
                 best = q
                 lo = mid + 1
             else:
