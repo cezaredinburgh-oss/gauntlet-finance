@@ -854,8 +854,69 @@ def test_portfolio_1d_aligned_grid_full_book_and_additive():
     assert net > Decimal("-200")
 
 
+def test_performance_excludes_window_buys():
+    """Flat prices + mid-window buy: performance ~0; MV Δ = purchase."""
+    from backend.services.price_history import (
+        aggregate_mv_series_time_aware,
+        performance_change_meta,
+        window_external_flows,
+    )
+
+    buy_dt = datetime(2026, 8, 11, 11, 45, 0, tzinfo=timezone.utc)
+    events = [
+        _event(
+            ticker="BASE",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 1),
+            event_datetime=datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc),
+            qty="1",
+            asset_class=AssetClass.CRYPTO,
+        ),
+        _event(
+            ticker="DOGE",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 11),
+            event_datetime=buy_dt,
+            qty="100",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    # value_usd = qty * 10 from helper
+    tl = build_holdings_timeline(events, [])
+    closes = {
+        "BASE": [
+            ("2026-08-11T10:00:00+00:00", Decimal("1000")),
+            ("2026-08-11T11:45:00+00:00", Decimal("1000")),
+            ("2026-08-11T12:00:00+00:00", Decimal("1000")),
+        ],
+        "DOGE": [
+            ("2026-08-11T10:00:00+00:00", Decimal("10")),
+            ("2026-08-11T11:45:00+00:00", Decimal("10")),
+            ("2026-08-11T12:00:00+00:00", Decimal("10")),
+        ],
+    }
+    series, _ = aggregate_mv_series_time_aware(
+        tl, closes, coverage_threshold=Decimal("0.5"), preseed_first_marks=True
+    )
+    pts = [{"date": ts, "value": str(v)} for ts, v in series]
+    flows = window_external_flows(
+        events, pts, asset_class=AssetClass.CRYPTO
+    )
+    assert flows["buys_usd"] == Decimal("1000.00")  # 100 * 10
+    ch = performance_change_meta(
+        series[0][1],
+        series[-1][1],
+        buys_usd=flows["buys_usd"],
+        sells_usd=flows["sells_usd"],
+    )
+    assert Decimal(ch["mv_change_abs"]) == Decimal("1000.00")
+    assert Decimal(ch["change_abs"]) == Decimal("0.00")
+    assert ch["change_pct"] == 0.0
+    assert ch["change_basis"] == "performance_ex_flows"
+
+
 def test_portfolio_window_components_additive():
-    """Portfolio window Δ = stock RTH Δ + crypto 24h Δ."""
+    """Portfolio window performance = stock RTH + crypto 24h (ex-flows)."""
     from backend.services.price_history import portfolio_window_from_components
 
     now = datetime(2026, 8, 10, 21, 30, 0, tzinfo=timezone.utc)

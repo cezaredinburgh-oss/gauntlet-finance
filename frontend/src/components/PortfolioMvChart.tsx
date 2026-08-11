@@ -8,6 +8,7 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  ReferenceArea,
   ReferenceLine,
 } from "recharts";
 import { ExternalLink } from "lucide-react";
@@ -189,13 +190,45 @@ export function PortfolioMvChart() {
   const tradeCount = data?.meta.trades?.length ?? 0;
 
   const last = rows[rows.length - 1];
+  const first = rows[0];
   const changePct = data?.meta.change_pct ?? null;
+  const changeAbs =
+    data?.meta.change_abs != null
+      ? d(data.meta.change_abs)
+      : last && first
+        ? last.mv - first.mv
+        : null;
+  const mvChangeAbs =
+    data?.meta.mv_change_abs != null ? d(data.meta.mv_change_abs) : null;
+  const windowBuys =
+    data?.meta.window_buys_usd != null ? d(data.meta.window_buys_usd) : null;
+  const windowSells =
+    data?.meta.window_sells_usd != null ? d(data.meta.window_sells_usd) : null;
+  const isPerf =
+    data?.meta.change_basis === "performance_ex_flows" ||
+    data?.series_kind === "market_value";
   const dayPct = data?.meta.day_change_pct ?? null;
   const dayAbs = data?.meta.day_change_abs != null ? d(data.meta.day_change_abs) : null;
   const costRef = data?.meta.cost_basis_usd != null ? d(data.meta.cost_basis_usd) : null;
   const positive = changePct != null ? changePct >= 0 : true;
   const dayPositive = dayPct != null ? dayPct >= 0 : true;
   const stroke = positive ? "#3d9cf0" : "#f87171";
+
+  const tradeBands = useMemo(() => {
+    const bands: Array<{ key: string; x1: string; x2: string; fill: string }> = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const bc = row.buyCount ?? 0;
+      const sc = row.sellCount ?? 0;
+      if (bc <= 0 && sc <= 0) continue;
+      const x1 = rows[Math.max(0, i - 1)]?.label ?? row.label;
+      const x2 = row.label;
+      const fill =
+        bc > 0 && sc > 0 ? "#a78bfa" : bc > 0 ? BUY_COLOR : SELL_COLOR;
+      bands.push({ key: `tb-${i}`, x1, x2, fill });
+    }
+    return bands;
+  }, [rows]);
 
   const title =
     book === "all" ? "Portfolio market value" : book === "Crypto" ? "Crypto book" : "Stock book";
@@ -223,10 +256,34 @@ export function PortfolioMvChart() {
               </div>
               {changePct != null && (
                 <div className={cn("text-sm font-medium", positive ? "text-ok" : "text-danger")}>
+                  {changeAbs != null && (
+                    <span className="mr-1.5 tabular-nums">
+                      {changeAbs >= 0 ? "+" : ""}
+                      {formatUsd(changeAbs)}
+                    </span>
+                  )}
                   {changePct >= 0 ? "+" : ""}
-                  {changePct.toFixed(1)}% in window
+                  {changePct.toFixed(1)}%
+                  {isPerf ? " performance" : " window"}
                 </div>
               )}
+              {isPerf &&
+                ((windowBuys != null && windowBuys > 0) ||
+                  (windowSells != null && windowSells > 0) ||
+                  (mvChangeAbs != null &&
+                    changeAbs != null &&
+                    Math.abs(mvChangeAbs - changeAbs) > 0.5)) && (
+                  <div className="text-[11px] text-ink-faint">
+                    ex-buys/sells
+                    {mvChangeAbs != null && (
+                      <span>
+                        {" "}
+                        · MV Δ {mvChangeAbs >= 0 ? "+" : ""}
+                        {formatUsd(mvChangeAbs)}
+                      </span>
+                    )}
+                  </div>
+                )}
               {dayPct != null && range !== "1d" && (
                 <div
                   className={cn(
@@ -343,6 +400,17 @@ export function PortfolioMvChart() {
             <span className="inline-flex items-center gap-1">
               <LegendSellIcon />
               Sell
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span
+                className="inline-block h-2.5 w-2 rounded-sm"
+                style={{ background: BUY_COLOR, opacity: 0.35 }}
+              />
+              <span
+                className="inline-block h-2.5 w-2 rounded-sm"
+                style={{ background: SELL_COLOR, opacity: 0.35 }}
+              />
+              jump band
             </span>
             <span className="text-ink-faint/80">· badge = multi</span>
           </span>
@@ -465,6 +533,18 @@ export function PortfolioMvChart() {
                   );
                 }}
               />
+              {showTrades &&
+                tradeBands.map((b) => (
+                  <ReferenceArea
+                    key={b.key}
+                    x1={b.x1}
+                    x2={b.x2}
+                    fill={b.fill}
+                    fillOpacity={0.16}
+                    strokeOpacity={0}
+                    ifOverflow="visible"
+                  />
+                ))}
               <Area
                 type="monotone"
                 dataKey="mv"

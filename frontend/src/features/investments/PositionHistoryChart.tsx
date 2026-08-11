@@ -9,6 +9,7 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  ReferenceArea,
   ReferenceLine,
 } from "recharts";
 import { ExternalLink } from "lucide-react";
@@ -342,9 +343,19 @@ export function PositionHistoryChart({
       : last && first
         ? last.value - first.value
         : null;
+  const mvChangeAbs =
+    data?.meta.mv_change_abs != null ? d(data.meta.mv_change_abs) : null;
+  const windowBuys =
+    data?.meta.window_buys_usd != null ? d(data.meta.window_buys_usd) : null;
+  const windowSells =
+    data?.meta.window_sells_usd != null ? d(data.meta.window_sells_usd) : null;
+  const isPrice = data?.series_kind === "price";
+  const isPerf =
+    !isPrice &&
+    (data?.meta.change_basis === "performance_ex_flows" ||
+      data?.series_kind === "market_value");
   const dayPct = data?.meta.day_change_pct ?? null;
   const dayAbs = data?.meta.day_change_abs != null ? d(data.meta.day_change_abs) : null;
-  const isPrice = data?.series_kind === "price";
   const costRef =
     isPrice && data?.meta.avg_cost_usd != null
       ? d(data.meta.avg_cost_usd)
@@ -359,6 +370,22 @@ export function PositionHistoryChart({
     wc?.crypto?.change_usd != null ? d(wc.crypto.change_usd) : null;
   const stockWinPct = wc?.stocks?.change_pct ?? null;
   const cryptoWinPct = wc?.crypto?.change_pct ?? null;
+
+  const tradeBands = useMemo(() => {
+    const bands: Array<{ key: string; x1: string; x2: string; fill: string }> = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const bc = row.buyCount ?? 0;
+      const sc = row.sellCount ?? 0;
+      if (bc <= 0 && sc <= 0) continue;
+      const x1 = rows[Math.max(0, i - 1)]?.label ?? row.label;
+      const x2 = row.label;
+      const fill =
+        bc > 0 && sc > 0 ? "#a78bfa" : bc > 0 ? BUY_COLOR : SELL_COLOR;
+      bands.push({ key: `tb-${i}`, x1, x2, fill });
+    }
+    return bands;
+  }, [rows]);
 
   const missing = data?.meta.missing_tickers ?? [];
   const positive = changePct != null ? changePct >= 0 : true;
@@ -427,9 +454,27 @@ export function PositionHistoryChart({
                     </span>
                   )}
                   {changePct >= 0 ? "+" : ""}
-                  {changePct.toFixed(1)}% window
+                  {changePct.toFixed(1)}%
+                  {isPerf ? " performance" : " window"}
                 </div>
               )}
+              {isPerf &&
+                ((windowBuys != null && windowBuys > 0) ||
+                  (windowSells != null && windowSells > 0) ||
+                  (mvChangeAbs != null &&
+                    changeAbs != null &&
+                    Math.abs(mvChangeAbs - changeAbs) > 0.5)) && (
+                  <div className="text-[11px] text-ink-faint">
+                    ex-buys/sells
+                    {mvChangeAbs != null && (
+                      <span>
+                        {" "}
+                        · MV Δ {mvChangeAbs >= 0 ? "+" : ""}
+                        {formatUsd(mvChangeAbs)}
+                      </span>
+                    )}
+                  </div>
+                )}
               {scope.kind === "all" && (stockWin != null || cryptoWin != null) && (
                 <div className="mt-0.5 flex flex-wrap justify-end gap-x-2 gap-y-0.5 text-[11px] tabular-nums">
                   {stockWin != null && (
@@ -439,8 +484,8 @@ export function PositionHistoryChart({
                       )}
                       title={
                         range === "1d"
-                          ? "Stocks US session change (same as Stocks tab)"
-                          : "Stocks book change over this range"
+                          ? "Stocks US session performance ex-buys/sells"
+                          : "Stocks book performance over this range"
                       }
                     >
                       Stocks {stockWin >= 0 ? "+" : ""}
@@ -461,8 +506,8 @@ export function PositionHistoryChart({
                       )}
                       title={
                         range === "1d"
-                          ? "Crypto last-24h change (same as Crypto tab)"
-                          : "Crypto book change over this range"
+                          ? "Crypto last-24h performance ex-buys/sells"
+                          : "Crypto book performance over this range"
                       }
                     >
                       Crypto {cryptoWin >= 0 ? "+" : ""}
@@ -589,6 +634,17 @@ export function PositionHistoryChart({
             <span className="inline-flex items-center gap-1">
               <LegendSellIcon />
               Sell
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span
+                className="inline-block h-2.5 w-2 rounded-sm"
+                style={{ background: BUY_COLOR, opacity: 0.35 }}
+              />
+              <span
+                className="inline-block h-2.5 w-2 rounded-sm"
+                style={{ background: SELL_COLOR, opacity: 0.35 }}
+              />
+              jump band
             </span>
             <span className="text-ink-faint/80">· badge = multi</span>
           </span>
@@ -766,6 +822,18 @@ export function PositionHistoryChart({
                   legendType="none"
                 />
               )}
+              {showTrades &&
+                tradeBands.map((b) => (
+                  <ReferenceArea
+                    key={b.key}
+                    x1={b.x1}
+                    x2={b.x2}
+                    fill={b.fill}
+                    fillOpacity={0.16}
+                    strokeOpacity={0}
+                    ifOverflow="visible"
+                  />
+                ))}
               {showTrades && (
                 <>
                   <Scatter

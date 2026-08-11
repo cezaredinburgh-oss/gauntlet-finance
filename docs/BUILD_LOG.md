@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Chart performance ex-buys/sells + trade bands
+
+- Headline `change_*` = ΔMV − buys + sells (price P&amp;L); raw MV Δ kept as `mv_change_*`.
+- UI: “performance” label; green/red vertical bands on buy/sell bars (markers stay).
+
 ## 2026-08-11 — Revolut statement times = Europe/Prague
 
 - Bug: naive Revolut clocks tagged UTC → 1D markers ~2h late in CEST (looked like “just now”).

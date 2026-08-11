@@ -566,8 +566,14 @@ export type PriceHistory = {
     quantity?: string | null;
     first_value?: string | null;
     last_value?: string | null;
+    /** Performance ex-buys/sells when change_basis is performance_ex_flows. */
     change_pct?: number | null;
     change_abs?: string | null;
+    mv_change_abs?: string | null;
+    mv_change_pct?: number | null;
+    window_buys_usd?: string | null;
+    window_sells_usd?: string | null;
+    change_basis?: string | null;
     day_open?: string | null;
     day_last?: string | null;
     day_change_pct?: number | null;
@@ -581,25 +587,33 @@ export type PriceHistory = {
     short_history_tickers?: Array<{ ticker: string; first_bar: string }>;
     trades?: PriceHistoryTrade[];
     session_status?: string | null;
-    /** Portfolio only: window Δ split into Stocks + Crypto (additive). */
+    /** Portfolio only: performance split into Stocks + Crypto (ex-flows, additive). */
     window_components?: {
       stocks?: {
         change_usd?: string | null;
         change_pct?: number | null;
+        mv_change_usd?: string | null;
+        window_buys_usd?: string | null;
+        window_sells_usd?: string | null;
         first_usd?: string | null;
         last_usd?: string | null;
       };
       crypto?: {
         change_usd?: string | null;
         change_pct?: number | null;
+        mv_change_usd?: string | null;
+        window_buys_usd?: string | null;
+        window_sells_usd?: string | null;
         first_usd?: string | null;
         last_usd?: string | null;
       };
       sum_change_usd?: string | null;
       sum_change_pct?: number | null;
+      sum_mv_change_usd?: string | null;
       first_usd?: string | null;
       last_usd?: string | null;
       method?: string;
+      change_basis?: string | null;
     } | null;
   };
 };
