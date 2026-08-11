@@ -23,6 +23,14 @@ import type {
 import { d, formatUsd } from "../../lib/money";
 import { cn } from "../../lib/cn";
 import { indexTradesByPoint, tradesForPoint } from "../../lib/chartTrades";
+import {
+  BUY_COLOR,
+  LegendBuyIcon,
+  LegendSellIcon,
+  SELL_COLOR,
+  TradeBuyShape,
+  TradeSellShape,
+} from "../../lib/chartTradeMarkers";
 
 const RANGES: { key: PriceHistoryRange; label: string }[] = [
   { key: "1d", label: "1D" },
@@ -37,9 +45,6 @@ const RANGES: { key: PriceHistoryRange; label: string }[] = [
 
 const RANGE_KEY = "gauntlet.priceHistory.range";
 const TRADES_KEY = "gauntlet.priceHistory.showTrades";
-
-const BUY_COLOR = "#2dd4a8";
-const SELL_COLOR = "#f87171";
 
 export type ChartScope =
   | { kind: "all" }
@@ -286,15 +291,17 @@ export function PositionHistoryChart({
     return data.points.map((p) => {
       const pointTrades = tradesForPoint(byKey, p.date, isIntra);
       const y = d(p.value);
-      const hasBuy = pointTrades.some((t) => t.side === "buy");
-      const hasSell = pointTrades.some((t) => t.side === "sell");
+      const buyCount = pointTrades.filter((t) => t.side === "buy").length;
+      const sellCount = pointTrades.filter((t) => t.side === "sell").length;
       return {
         date: p.date,
         label: shortLabel(p.date, isIntra),
         value: y,
         cost,
-        buyMark: hasBuy ? y : (null as number | null),
-        sellMark: hasSell ? y : (null as number | null),
+        buyMark: buyCount > 0 ? y : (null as number | null),
+        sellMark: sellCount > 0 ? y : (null as number | null),
+        buyCount,
+        sellCount,
         trades: pointTrades,
       };
     });
@@ -576,13 +583,14 @@ export function PositionHistoryChart({
         {showTrades && tradeCount > 0 && (
           <span className="flex items-center gap-2 text-[11px] text-ink-faint">
             <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full" style={{ background: BUY_COLOR }} />
+              <LegendBuyIcon />
               Buy
             </span>
             <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full" style={{ background: SELL_COLOR }} />
+              <LegendSellIcon />
               Sell
             </span>
+            <span className="text-ink-faint/80">· badge = multi</span>
           </span>
         )}
       </div>
@@ -661,6 +669,8 @@ export function PositionHistoryChart({
                     date?: string;
                     value?: number;
                     cost?: number;
+                    buyCount?: number;
+                    sellCount?: number;
                     trades?: PriceHistoryTrade[];
                   };
                   const raw = row?.date ?? String(label ?? "");
@@ -677,6 +687,8 @@ export function PositionHistoryChart({
                     }
                   }
                   const trades = row?.trades ?? [];
+                  const bc = row?.buyCount ?? 0;
+                  const sc = row?.sellCount ?? 0;
                   return (
                     <div className="rounded-xl border border-white/15 bg-surface-raised px-3 py-2 text-xs shadow-card">
                       <div className="mb-1 font-medium text-ink">{title}</div>
@@ -689,6 +701,16 @@ export function PositionHistoryChart({
                       {row?.cost != null && (
                         <div className="tabular-nums text-ink-faint">
                           {isPrice ? "Avg cost" : "Cost basis"} {fmt(row.cost)}
+                        </div>
+                      )}
+                      {showTrades && trades.length > 0 && (bc > 0 || sc > 0) && (
+                        <div className="mt-1 text-[11px] text-ink-faint">
+                          {[
+                            bc > 0 ? `${bc} buy${bc === 1 ? "" : "s"}` : null,
+                            sc > 0 ? `${sc} sell${sc === 1 ? "" : "s"}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
                         </div>
                       )}
                       {showTrades &&
@@ -753,7 +775,7 @@ export function PositionHistoryChart({
                     name="buy"
                     isAnimationActive={false}
                     legendType="none"
-                    shape="circle"
+                    shape={TradeBuyShape}
                   />
                   <Scatter
                     dataKey="sellMark"
@@ -762,7 +784,7 @@ export function PositionHistoryChart({
                     name="sell"
                     isAnimationActive={false}
                     legendType="none"
-                    shape="circle"
+                    shape={TradeSellShape}
                   />
                 </>
               )}

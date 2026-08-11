@@ -17,6 +17,14 @@ import { d, formatUsd } from "../lib/money";
 import { cn } from "../lib/cn";
 import { indexTradesByPoint, tradesForPoint } from "../lib/chartTrades";
 import {
+  BUY_COLOR,
+  LegendBuyIcon,
+  LegendSellIcon,
+  SELL_COLOR,
+  TradeBuyShape,
+  TradeSellShape,
+} from "../lib/chartTradeMarkers";
+import {
   openChartPopout,
   type ChartScope,
 } from "../features/investments/PositionHistoryChart";
@@ -34,8 +42,6 @@ const RANGES: { key: PriceHistoryRange; label: string }[] = [
 
 const TF_KEY = "gauntlet.mvSeries.historyRange";
 const TRADES_KEY = "gauntlet.priceHistory.showTrades";
-const BUY_COLOR = "#2dd4a8";
-const SELL_COLOR = "#f87171";
 
 type BookScope = "all" | "Stock" | "Crypto";
 
@@ -164,13 +170,17 @@ export function PortfolioMvChart() {
     return data.points.map((p) => {
       const pointTrades = tradesForPoint(byKey, p.date, isIntra);
       const y = d(p.value);
+      const buyCount = pointTrades.filter((t) => t.side === "buy").length;
+      const sellCount = pointTrades.filter((t) => t.side === "sell").length;
       return {
         date: p.date,
         label: shortLabel(p.date, isIntra),
         mv: y,
         cost,
-        buyMark: pointTrades.some((t) => t.side === "buy") ? y : (null as number | null),
-        sellMark: pointTrades.some((t) => t.side === "sell") ? y : (null as number | null),
+        buyMark: buyCount > 0 ? y : (null as number | null),
+        sellMark: sellCount > 0 ? y : (null as number | null),
+        buyCount,
+        sellCount,
         trades: pointTrades,
       };
     });
@@ -327,13 +337,14 @@ export function PortfolioMvChart() {
         {showTrades && tradeCount > 0 && (
           <span className="flex items-center gap-2 text-[11px] text-ink-faint">
             <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full" style={{ background: BUY_COLOR }} />
+              <LegendBuyIcon />
               Buy
             </span>
             <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full" style={{ background: SELL_COLOR }} />
+              <LegendSellIcon />
               Sell
             </span>
+            <span className="text-ink-faint/80">· badge = multi</span>
           </span>
         )}
       </div>
@@ -401,18 +412,35 @@ export function PortfolioMvChart() {
                   const row = payload[0]?.payload as {
                     date?: string;
                     mv?: number;
+                    buyCount?: number;
+                    sellCount?: number;
                     trades?: PriceHistoryTrade[];
                   };
                   const trades = row?.trades ?? [];
+                  const bc = row?.buyCount ?? 0;
+                  const sc = row?.sellCount ?? 0;
+                  const dateLabel = row?.date
+                    ? row.date.includes("T")
+                      ? row.date.replace("T", " ").slice(0, 16)
+                      : row.date.slice(0, 10)
+                    : "";
                   return (
                     <div className="rounded-xl border border-white/15 bg-surface-raised px-3 py-2 text-xs shadow-card">
-                      <div className="mb-1 font-medium text-ink">
-                        {row?.date?.slice(0, 10) ?? ""}
-                      </div>
+                      <div className="mb-1 font-medium text-ink">{dateLabel}</div>
                       {row?.mv != null && (
                         <div className="tabular-nums text-ink-muted">
                           Market value{" "}
                           <span className="font-medium text-ink">{formatUsd(row.mv)}</span>
+                        </div>
+                      )}
+                      {showTrades && trades.length > 0 && (bc > 0 || sc > 0) && (
+                        <div className="mt-1 text-[11px] text-ink-faint">
+                          {[
+                            bc > 0 ? `${bc} buy${bc === 1 ? "" : "s"}` : null,
+                            sc > 0 ? `${sc} sell${sc === 1 ? "" : "s"}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
                         </div>
                       )}
                       {showTrades &&
@@ -462,7 +490,7 @@ export function PortfolioMvChart() {
                     name="buy"
                     isAnimationActive={false}
                     legendType="none"
-                    shape="circle"
+                    shape={TradeBuyShape}
                   />
                   <Scatter
                     dataKey="sellMark"
@@ -470,7 +498,7 @@ export function PortfolioMvChart() {
                     name="sell"
                     isAnimationActive={false}
                     legendType="none"
-                    shape="circle"
+                    shape={TradeSellShape}
                   />
                 </>
               )}

@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Trade markers: both sides + multi counts
+
+- Buy = green △ up, sell = red ▽ down; when both on same bar, vertical split.
+- Count badge when ≥2 buys or sells on that bar; tooltip summary `N buys · M sells`.
+
 ## 2026-08-11 — Fix 1D phantom trade markers
 
 - Bug: day-level trade attach painted every buy/sell on **every** 5m bar of that calendar day.
