@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from backend.common.money import parse_decimal
 from backend.common.timeutil import parse_flexible_datetime, utc_now
+from backend.config import get_settings
 from backend.parsers.base import ParseResult, empty_to_none, resolve_account_id
 from backend.schema.models import ParserKey, Transaction
 
@@ -76,8 +77,13 @@ def parse_revolut_expenses(
         if not completed and not started:
             continue
 
-        booking_dt = parse_flexible_datetime(completed or started)  # type: ignore[arg-type]
-        value_dt = parse_flexible_datetime(started) if started else booking_dt
+        _tz = get_settings().statement_timezone
+        booking_dt = parse_flexible_datetime(
+            completed or started, default_tz=_tz
+        )  # type: ignore[arg-type]
+        value_dt = (
+            parse_flexible_datetime(started, default_tz=_tz) if started else booking_dt
+        )
 
         currency = (row.get("Currency") or "").strip().upper()
         if len(currency) != 3:

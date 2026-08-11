@@ -312,6 +312,19 @@ class ImportPipeline:
             for r in self.repo.list_rows("InvestmentEvents")
             if isinstance(r, InvestmentEvent)
         ]
+        # One-shot migrate legacy Revolut naive-UTC clocks before dedupe
+        try:
+            from backend.services.revolut_tz_repair import ensure_revolut_tz_repaired
+
+            ensure_revolut_tz_repaired(self.repo)
+            existing_ev = [
+                r
+                for r in self.repo.list_rows("InvestmentEvents")
+                if isinstance(r, InvestmentEvent)
+            ]
+        except Exception:  # noqa: BLE001
+            pass
+
         d_tx = StatementService.dedupe_transactions(existing_tx, parsed.transactions)
         d_ev = StatementService.dedupe_events(existing_ev, parsed.investment_events)
 

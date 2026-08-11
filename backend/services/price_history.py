@@ -1153,6 +1153,13 @@ class PriceHistoryService:
         return rows
 
     def _all_events(self) -> list[InvestmentEvent]:
+        # One-shot: fix Revolut wall-clock-as-UTC so 1D markers land at real times
+        try:
+            from backend.services.revolut_tz_repair import ensure_revolut_tz_repaired
+
+            ensure_revolut_tz_repaired(self.repo)
+        except Exception:  # noqa: BLE001
+            pass
         rows: list[InvestmentEvent] = []
         for row in self.repo.list_rows("InvestmentEvents"):
             if not isinstance(row, InvestmentEvent):

@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 from backend.common.money import parse_decimal_optional, parse_money_with_currency
 from backend.common.timeutil import parse_flexible_datetime, utc_now
+from backend.config import get_settings
 from backend.engines.statements import revolut_event_external_id
 from backend.parsers.base import (
     ParseResult,
@@ -105,7 +106,10 @@ def parse_revolut_crypto(
             # Unknown type — skip but count
             continue
 
-        dt = parse_flexible_datetime(row["Date"])
+        dt = parse_flexible_datetime(
+            row["Date"],
+            default_tz=get_settings().statement_timezone,
+        )
         qty_gross = parse_decimal_optional(row.get("Quantity"))
 
         price, price_ccy = parse_money_with_currency(row.get("Price"))

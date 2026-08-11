@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -74,6 +75,10 @@ def test_parse_revolut_crypto_mixed_ccy_and_empty_staking_reward():
     # 100 * (1 - 3.80/294.96)
     assert usd_buy.quantity == Decimal("100") * (
         Decimal("1") - Decimal("3.80") / Decimal("294.96")
+    )
+    # "Nov 18, 2021, 4:22:55 PM" Europe/Prague CET → 15:22:55 UTC
+    assert usd_buy.event_datetime == datetime(
+        2021, 11, 18, 15, 22, 55, tzinfo=timezone.utc
     )
 
     sell = next(

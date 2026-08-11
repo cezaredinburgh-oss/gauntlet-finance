@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Revolut statement times = Europe/Prague
+
+- Bug: naive Revolut clocks tagged UTC → 1D markers ~2h late in CEST (looked like “just now”).
+- Fix: parse naive times in `statement_timezone` (default Europe/Prague); one-shot ledger repair.
+
 ## 2026-08-11 — DCA days-since-buy ignores staking rewards
 
 - Bug: open staking-reward lots counted as last buy → zeroed "Xd since buy" for staked coins.

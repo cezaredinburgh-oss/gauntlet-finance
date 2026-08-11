@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     holding_period_exemption_days: int = 1095
     primary_display_currency: str = "USD"
     secondary_display_currency: str = "CZK"
+    # Naive statement clocks (Revolut CSV has no TZ) — matches seed Settings.timezone
+    statement_timezone: str = "Europe/Prague"
 
     # Cron / background jobs (optional)
     cron_secret: str = ""
