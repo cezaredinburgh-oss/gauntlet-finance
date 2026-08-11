@@ -15,14 +15,23 @@ import {
   Receipt,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import type { AlertItem } from "../api/types";
 import {
   ALERTS_SEEN_EVENT,
+  ALERTS_SEEN_STORAGE_KEY,
   countUnseenAlerts,
-  pruneSeenAlertIds,
+  pruneSeenAlertKeys,
 } from "../lib/alertSeen";
 import { cn } from "../lib/cn";
 import { Spinner } from "./Spinner";
@@ -206,6 +215,14 @@ function NavItems({
               >
                 <GroupIcon className="h-5 w-5 shrink-0" />
                 <span className="flex-1 truncate">{item.label}</span>
+                {/* Collapsed expenses: non-numeric hint (leaf holds the count when open). */}
+                {item.id === "expenses" && !open && alertBadge > 0 && (
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn"
+                    title={`${alertBadge} unseen alert${alertBadge === 1 ? "" : "s"}`}
+                    aria-hidden
+                  />
+                )}
               </button>
               <button
                 type="button"
@@ -246,8 +263,9 @@ export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [priceBusy, setPriceBusy] = useState(false);
   const [priceMsg, setPriceMsg] = useState<string | null>(null);
-  const [alertItems, setAlertItems] = useState<AlertItem[]>([]);
   const [alertBadge, setAlertBadge] = useState(0);
+  /** Always-current inventory for event-driven badge recompute (avoids empty-state race). */
+  const alertItemsRef = useRef<AlertItem[]>([]);
 
   const expensesGroup = useMemo(
     () => nav.find((n): n is NavGroup => n.kind === "group" && n.id === "expenses")!,
@@ -307,37 +325,64 @@ export function Layout() {
     }
   }, [investmentsOpen]);
 
+  const applyAlertItems = useCallback((items: AlertItem[]) => {
+    pruneSeenAlertKeys(items);
+    alertItemsRef.current = items;
+    setAlertBadge(countUnseenAlerts(items));
+  }, []);
+
+  const fetchAlertBadge = useCallback(async () => {
+    try {
+      const r = await api.alerts();
+      applyAlertItems(r.items ?? []);
+    } catch {
+      /* ignore badge errors */
+    }
+  }, [applyAlertItems]);
+
   useEffect(() => {
     let cancelled = false;
-    // Defer badge fetch so it doesn't race the dashboard's first Sheets load
+    // Defer first badge fetch so it doesn't race the dashboard's Sheets load
     const t = window.setTimeout(() => {
-      api
-        .alerts()
-        .then((r) => {
-          if (cancelled) return;
-          const items = r.items ?? [];
-          pruneSeenAlertIds(items.map((a) => a.id));
-          setAlertItems(items);
-          setAlertBadge(countUnseenAlerts(items));
-        })
-        .catch(() => {
-          /* ignore badge errors */
-        });
+      if (!cancelled) void fetchAlertBadge();
     }, 750);
     return () => {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, []);
+  }, [fetchAlertBadge]);
 
-  // Recompute when Alerts page marks an item as seen (localStorage + event).
+  // Refresh inventory when visiting Alerts (page has its own fetch; keep badge in sync).
+  useEffect(() => {
+    if (location.pathname.startsWith("/expenses/alerts")) {
+      void fetchAlertBadge();
+    }
+  }, [location.pathname, fetchAlertBadge]);
+
+  // Soft refresh when the tab becomes visible again (imports / other tabs).
+  useEffect(() => {
+    function onVis() {
+      if (document.visibilityState === "visible") void fetchAlertBadge();
+    }
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [fetchAlertBadge]);
+
+  // Recompute from ref when Alerts page marks seen (same tab) or storage changes (other tabs).
   useEffect(() => {
     function refreshBadge() {
-      setAlertBadge(countUnseenAlerts(alertItems));
+      setAlertBadge(countUnseenAlerts(alertItemsRef.current));
+    }
+    function onStorage(e: StorageEvent) {
+      if (e.key === ALERTS_SEEN_STORAGE_KEY || e.key === null) refreshBadge();
     }
     window.addEventListener(ALERTS_SEEN_EVENT, refreshBadge);
-    return () => window.removeEventListener(ALERTS_SEEN_EVENT, refreshBadge);
-  }, [alertItems]);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(ALERTS_SEEN_EVENT, refreshBadge);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
 
   /**
    * Soft live marks (~60s) on Dashboard + Investments so portfolio MV tracks

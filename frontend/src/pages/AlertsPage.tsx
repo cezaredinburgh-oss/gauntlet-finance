@@ -6,7 +6,7 @@ import type { AlertItem } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import { cn } from "../lib/cn";
 import { summarizeAlertBuckets } from "../features/dashboard/alertBuckets";
-import { loadSeenAlertIds, markAlertSeen } from "../lib/alertSeen";
+import { isAlertSeen, markAlertSeen } from "../lib/alertSeen";
 
 type DomainKey = "spending" | "stocks" | "crypto";
 
@@ -55,7 +55,8 @@ export function AlertsPage() {
   const [items, setItems] = useState<AlertItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [seenIds, setSeenIds] = useState<Set<string>>(() => loadSeenAlertIds());
+  /** Bump to re-read fingerprint seen state from localStorage after mark. */
+  const [seenTick, setSeenTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,9 +76,9 @@ export function AlertsPage() {
     };
   }, []);
 
-  function onAlertActivate(id: string) {
-    markAlertSeen(id);
-    setSeenIds(loadSeenAlertIds());
+  function onAlertActivate(a: AlertItem) {
+    markAlertSeen(a);
+    setSeenTick((t) => t + 1);
   }
 
   const byDomain = useMemo(() => {
@@ -173,64 +174,72 @@ export function AlertsPage() {
                   ) : (
                     <ul className="space-y-2">
                       {list.map((a) => {
-                        const seen = seenIds.has(a.id);
+                        // seenTick forces re-read after markAlertSeen
+                        void seenTick;
+                        const seen = isAlertSeen(a);
                         return (
                           <li
                             key={a.id}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => onAlertActivate(a.id)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                onAlertActivate(a.id);
-                              }
-                            }}
                             className={cn(
-                              "cursor-pointer rounded-lg border border-white/10 bg-white/[0.03] p-3 text-left transition hover:border-white/20",
+                              "rounded-lg border border-white/10 bg-white/[0.03] transition hover:border-white/20",
                               seen && "opacity-55",
                             )}
                           >
-                            <div className="flex gap-2">
-                              <span
-                                className={cn(
-                                  "mt-0.5 shrink-0 rounded-md p-1.5",
-                                  levelStyle(String(a.level)),
-                                )}
-                              >
-                                <LevelIcon level={String(a.level)} />
-                              </span>
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className="text-sm font-semibold text-ink">
-                                    {a.title}
-                                  </span>
-                                  <span
-                                    className={cn(
-                                      "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
-                                      levelStyle(String(a.level)),
-                                    )}
-                                  >
-                                    {a.level}
-                                  </span>
-                                  {seen && (
-                                    <span className="text-[10px] font-medium uppercase text-ink-faint">
-                                      Seen
-                                    </span>
+                            {/*
+                              Button body (mark seen) and Link are siblings —
+                              not nested interactive controls (a11y).
+                            */}
+                            <button
+                              type="button"
+                              onClick={() => onAlertActivate(a)}
+                              className={cn(
+                                "w-full p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-inset",
+                                a.href ? "rounded-t-lg" : "rounded-lg",
+                              )}
+                            >
+                              <div className="flex gap-2">
+                                <span
+                                  className={cn(
+                                    "mt-0.5 shrink-0 rounded-md p-1.5",
+                                    levelStyle(String(a.level)),
                                   )}
+                                >
+                                  <LevelIcon level={String(a.level)} />
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-sm font-semibold text-ink">
+                                      {a.title}
+                                    </span>
+                                    <span
+                                      className={cn(
+                                        "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+                                        levelStyle(String(a.level)),
+                                      )}
+                                    >
+                                      {a.level}
+                                    </span>
+                                    {seen && (
+                                      <span className="text-[10px] font-medium uppercase text-ink-faint">
+                                        Seen
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="mt-1 text-xs text-ink-muted">{a.body}</p>
                                 </div>
-                                <p className="mt-1 text-xs text-ink-muted">{a.body}</p>
-                                {a.href && (
-                                  <Link
-                                    to={a.href}
-                                    onClick={() => onAlertActivate(a.id)}
-                                    className="mt-1.5 inline-block text-[11px] font-medium text-brand hover:underline"
-                                  >
-                                    Open related page →
-                                  </Link>
-                                )}
                               </div>
-                            </div>
+                            </button>
+                            {a.href && (
+                              <div className="border-t border-white/5 px-3 py-2">
+                                <Link
+                                  to={a.href}
+                                  onClick={() => onAlertActivate(a)}
+                                  className="inline-block text-[11px] font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                                >
+                                  Open related page →
+                                </Link>
+                              </div>
+                            )}
                           </li>
                         );
                       })}
