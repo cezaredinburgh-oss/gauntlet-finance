@@ -22,7 +22,7 @@ function parseScope(params: URLSearchParams): ChartScope {
   return { kind: "all" };
 }
 
-/** Minimal chrome page for side-by-side chart watching. */
+/** Full-viewport chrome for side-by-side chart watching — sizes with the window. */
 export function ChartPopoutPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [digests, setDigests] = useState<TickerDigest[]>([]);
@@ -74,25 +74,33 @@ export function ChartPopoutPage() {
     setSearchParams(q, { replace: true });
   };
 
-  if (loading) return <PageLoader label="Opening chart…" />;
+  if (loading) {
+    return (
+      <div className="flex h-[100dvh] items-center justify-center bg-[#070b12]">
+        <PageLoader label="Opening chart…" />
+      </div>
+    );
+  }
   if (error) {
     return (
-      <div className="min-h-screen bg-[#070b12] p-4">
+      <div className="flex h-[100dvh] items-center justify-center bg-[#070b12] p-4">
         <EmptyState title="Couldn’t open chart" description={error} />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#070b12] p-2 sm:p-4">
-      <PositionHistoryChart
-        digests={digests}
-        scope={scope}
-        onScopeChange={onScopeChange}
-        variant="popout"
-        showPopOut={false}
-        preferIntraday
-      />
+    <div className="box-border flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden bg-[#070b12] p-1.5 sm:p-2">
+      <div className="min-h-0 flex-1">
+        <PositionHistoryChart
+          digests={digests}
+          scope={scope}
+          onScopeChange={onScopeChange}
+          variant="popout"
+          showPopOut={false}
+          preferIntraday
+        />
+      </div>
     </div>
   );
 }

@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Live chart + popout density / layout
+
+- Holdings ticker strip: square centered tiles (more per row); % only (price in title).
+- Popout: full `100dvh` flex column — chart flex-fills remaining height; strip scrolls if needed.
+- Soft “Updating…” sits to the right of MV values with reserved width (no chart vertical jump).
+
 ## 2026-08-11 — Home executive redesign (two dials + triage)
 
 - Dashboard: number-first **portfolio MV** + **month net cash** hero; unified Needs attention (alerts + health + uncat); secondary Signals (unrealized %, pace, TTM draw vs safe from snap, tax-free now); cash insight from existing dashboard top domain/merchant.
