@@ -31,6 +31,12 @@ import {
   TradeBuyShape,
   TradeSellShape,
 } from "../../lib/chartTradeMarkers";
+import { selectChartHeadline } from "../../lib/chartChangeHeadline";
+import {
+  loadChartChangeMode,
+  saveChartChangeMode,
+  type ChartChangeMode,
+} from "../../lib/chartChangeMode";
 
 const RANGES: { key: PriceHistoryRange; label: string }[] = [
   { key: "1d", label: "1D" },
@@ -161,6 +167,9 @@ export function PositionHistoryChart({
     }
     return true;
   });
+  const [changeMode, setChangeMode] = useState<ChartChangeMode>(() =>
+    loadChartChangeMode(),
+  );
   const hasDataRef = useRef(false);
   hasDataRef.current = data != null && (data.points?.length ?? 0) > 0;
 
@@ -347,14 +356,18 @@ export function PositionHistoryChart({
   const markPnlPct = data?.meta.mark_pnl_pct ?? null;
   const netCapitalAbs =
     data?.meta.net_capital_abs != null ? d(data.meta.net_capital_abs) : null;
-  const legacyMv =
-    data?.meta.mv_change_abs != null ? d(data.meta.mv_change_abs) : null;
   const isPrice = data?.series_kind === "price";
-  const hasRecon =
-    !isPrice &&
-    markPnlAbs != null &&
-    changeAbs != null &&
-    Math.abs(markPnlAbs - changeAbs) > 0.5;
+  const headline = selectChartHeadline({
+    seriesKind: data?.series_kind ?? (isPrice ? "price" : "market_value"),
+    mode: changeMode,
+    changeAbs,
+    changePct,
+    markPnlAbs,
+    markPnlPct,
+    netCapitalAbs,
+  });
+  const primaryAbs = headline.primaryAbs;
+  const primaryPct = headline.primaryPct;
   const dayPct = data?.meta.day_change_pct ?? null;
   const dayAbs = data?.meta.day_change_abs != null ? d(data.meta.day_change_abs) : null;
   const costRef =
@@ -373,9 +386,10 @@ export function PositionHistoryChart({
   const cryptoWinPct = wc?.crypto?.change_pct ?? null;
 
   const missing = data?.meta.missing_tickers ?? [];
-  const positive = changePct != null ? changePct >= 0 : true;
+  const positive = primaryPct != null ? primaryPct >= 0 : primaryAbs != null ? primaryAbs >= 0 : true;
   const dayPositive = dayPct != null ? dayPct >= 0 : true;
   const stroke = positive ? "#2dd4a8" : "#f87171";
+  const showModeToggle = !isPrice && scope.kind !== "ticker";
 
   const title =
     scope.kind === "ticker"
@@ -433,118 +447,126 @@ export function PositionHistoryChart({
               <div className="text-2xl font-semibold tabular-nums tracking-tight text-brand sm:text-3xl">
                 {fmt(last.value)}
               </div>
-              {changeAbs != null && (
+              {primaryAbs != null && (
                 <div
                   className={cn(
                     "text-sm font-medium tabular-nums",
-                    changeAbs >= 0 ? "text-ok" : "text-danger",
+                    primaryAbs >= 0 ? "text-ok" : "text-danger",
                   )}
-                  title={
-                    isPrice
-                      ? "Price change over chart window"
-                      : "Book change: last − first market value on this chart"
-                  }
+                  title={headline.primaryTitle}
                 >
-                  {changeAbs >= 0 ? "+" : ""}
-                  {fmt(changeAbs)}
-                  {changePct != null && (
+                  {primaryAbs >= 0 ? "+" : ""}
+                  {fmt(primaryAbs)}
+                  {primaryPct != null && (
                     <span>
                       {" "}
-                      ({changePct >= 0 ? "+" : ""}
-                      {changePct.toFixed(1)}%)
+                      ({primaryPct >= 0 ? "+" : ""}
+                      {primaryPct.toFixed(1)}%)
                     </span>
                   )}
                   <span className="font-normal text-ink-faint">
-                    {isPrice ? " window" : " book"}
+                    {" "}
+                    {headline.primaryLabel}
                   </span>
                 </div>
               )}
-              {hasRecon && markPnlAbs != null && (
+              {headline.performanceUnavailable && (
+                <div className="text-[11px] text-ink-faint">
+                  Performance unavailable for this window
+                </div>
+              )}
+              {headline.secondary && (
                 <div
                   className="mt-0.5 space-y-0.5 text-[11px] tabular-nums text-ink-faint"
-                  title="Book Δ = Mark P&L + Net capital. Mark is price move on qty held at window open; net capital is the effect of buys/sells (and qty leaving the book)."
+                  title={
+                    headline.secondary.otherTitle +
+                    ". Cash/qty effect is market value Δ minus performance (buys/sells and residual)."
+                  }
                 >
                   <div>
-                    <span
-                      className={cn(
-                        markPnlAbs >= 0 ? "text-ok" : "text-danger",
-                      )}
-                    >
-                      Mark P&amp;L {markPnlAbs >= 0 ? "+" : ""}
-                      {formatUsd(markPnlAbs)}
-                    </span>
-                    {markPnlPct != null && (
-                      <span>
-                        {" "}
-                        ({markPnlPct >= 0 ? "+" : ""}
-                        {markPnlPct.toFixed(1)}%)
+                    {headline.secondary.otherAbs != null && (
+                      <span
+                        className={cn(
+                          headline.secondary.otherAbs >= 0 ? "text-ok" : "text-danger",
+                        )}
+                      >
+                        {headline.secondary.otherLabel}{" "}
+                        {headline.secondary.otherAbs >= 0 ? "+" : ""}
+                        {formatUsd(headline.secondary.otherAbs)}
                       </span>
                     )}
-                    {netCapitalAbs != null && (
+                    {headline.secondary.otherPct != null && (
                       <span>
-                        {" · Net capital "}
-                        {netCapitalAbs >= 0 ? "+" : ""}
-                        {formatUsd(netCapitalAbs)}
+                        {" "}
+                        ({headline.secondary.otherPct >= 0 ? "+" : ""}
+                        {headline.secondary.otherPct.toFixed(1)}%)
+                      </span>
+                    )}
+                    {headline.secondary.netCapitalAbs != null && (
+                      <span>
+                        {" · Cash/qty effect "}
+                        {headline.secondary.netCapitalAbs >= 0 ? "+" : ""}
+                        {formatUsd(headline.secondary.netCapitalAbs)}
                       </span>
                     )}
                   </div>
                 </div>
               )}
-              {!hasRecon &&
-                !isPrice &&
-                legacyMv != null &&
-                changeAbs != null &&
-                Math.abs(legacyMv - changeAbs) > 0.5 && (
-                  <div className="text-[11px] text-ink-faint">
-                    Book Δ {legacyMv >= 0 ? "+" : ""}
-                    {formatUsd(legacyMv)}
-                  </div>
-                )}
               {scope.kind === "all" && (stockWin != null || cryptoWin != null) && (
-                <div className="mt-0.5 flex flex-wrap justify-end gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-ink-faint">
-                  {stockWin != null && (
-                    <span
-                      className={cn(
-                        stockWin >= 0 ? "text-ok" : "text-danger",
-                      )}
-                      title={
-                        range === "1d"
-                          ? "Stocks US session mark P&L (leg; not the chart headline)"
-                          : "Stocks mark P&L over this range"
-                      }
-                    >
-                      Stocks mark {stockWin >= 0 ? "+" : ""}
-                      {formatUsd(stockWin)}
-                      {stockWinPct != null && (
-                        <span className="text-ink-faint">
-                          {" "}
-                          ({stockWinPct >= 0 ? "+" : ""}
-                          {stockWinPct.toFixed(1)}%)
-                        </span>
-                      )}
-                    </span>
-                  )}
-                  {cryptoWin != null && (
-                    <span
-                      className={cn(
-                        cryptoWin >= 0 ? "text-ok" : "text-danger",
-                      )}
-                      title={
-                        range === "1d"
-                          ? "Crypto last-24h mark P&L (leg; not the chart headline)"
-                          : "Crypto mark P&L over this range"
-                      }
-                    >
-                      Crypto mark {cryptoWin >= 0 ? "+" : ""}
-                      {formatUsd(cryptoWin)}
-                      {cryptoWinPct != null && (
-                        <span className="text-ink-faint">
-                          {" "}
-                          ({cryptoWinPct >= 0 ? "+" : ""}
-                          {cryptoWinPct.toFixed(1)}%)
-                        </span>
-                      )}
-                    </span>
+                <div className="mt-0.5 space-y-0.5 text-right">
+                  <div className="flex flex-wrap justify-end gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-ink-faint">
+                    {stockWin != null && (
+                      <span
+                        className={cn(
+                          stockWin >= 0 ? "text-ok" : "text-danger",
+                        )}
+                        title={
+                          range === "1d"
+                            ? "Stocks US session performance (leg; not the chart headline on 1D)"
+                            : "Stocks performance over this range"
+                        }
+                      >
+                        Stocks{range === "1d" ? " (session)" : " performance"}{" "}
+                        {stockWin >= 0 ? "+" : ""}
+                        {formatUsd(stockWin)}
+                        {stockWinPct != null && (
+                          <span className="text-ink-faint">
+                            {" "}
+                            ({stockWinPct >= 0 ? "+" : ""}
+                            {stockWinPct.toFixed(1)}%)
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    {cryptoWin != null && (
+                      <span
+                        className={cn(
+                          cryptoWin >= 0 ? "text-ok" : "text-danger",
+                        )}
+                        title={
+                          range === "1d"
+                            ? "Crypto last-24h performance (leg; not the chart headline on 1D)"
+                            : "Crypto performance over this range"
+                        }
+                      >
+                        Crypto{range === "1d" ? " (24h)" : " performance"}{" "}
+                        {cryptoWin >= 0 ? "+" : ""}
+                        {formatUsd(cryptoWin)}
+                        {cryptoWinPct != null && (
+                          <span className="text-ink-faint">
+                            {" "}
+                            ({cryptoWinPct >= 0 ? "+" : ""}
+                            {cryptoWinPct.toFixed(1)}%)
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  {range === "1d" && (
+                    <p className="max-w-[16rem] text-[10px] leading-snug text-ink-faint/90">
+                      Session legs use stock RTH + crypto 24h; may not sum to the chart
+                      above.
+                    </p>
                   )}
                 </div>
               )}
@@ -618,7 +640,7 @@ export function PositionHistoryChart({
         )}
       </div>
 
-      {/* Range chips + trades toggle */}
+      {/* Range chips + change mode + trades toggle */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1">
           {RANGES.map((r) => (
@@ -637,6 +659,36 @@ export function PositionHistoryChart({
             </button>
           ))}
         </div>
+        {showModeToggle && (
+          <div
+            className="flex rounded-md bg-white/5 p-0.5 ring-1 ring-white/10"
+            title="Performance = price move on qty at chart start. Market value Δ = last − first on the line."
+          >
+            {(
+              [
+                ["performance", "Performance"],
+                ["book", "Book"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setChangeMode(key);
+                  saveChartChangeMode(key);
+                }}
+                className={cn(
+                  "rounded px-2 py-1 text-[11px] font-semibold tracking-wide transition",
+                  changeMode === key
+                    ? "bg-brand/25 text-brand"
+                    : "text-ink-muted hover:text-ink",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <button
           type="button"
           onClick={toggleTrades}
@@ -890,7 +942,7 @@ export function PositionHistoryChart({
         <div className="space-y-2 border-t border-white/5 pt-3">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
-              Holdings · {range.toUpperCase()} performance
+              Holdings · {range.toUpperCase()} price move
             </h3>
             {perfLoading && (
               <span className="text-[11px] text-ink-faint">Updating returns…</span>
@@ -915,7 +967,7 @@ export function PositionHistoryChart({
                   )}
                   title={
                     pct != null
-                      ? `${t.ticker}: ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% over ${range}`
+                      ? `${t.ticker}: ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}% price move over ${range} (not market-value book)`
                       : `${t.ticker}: no price series for ${range}`
                   }
                 >

@@ -4,6 +4,14 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Chart performance clarity (Performance | Book toggle)
+
+- UX only: MV charts default primary **Performance** (`mark_pnl_*`); toggle **Book** for market value Δ (`change_abs` = last−first, matches line).
+- Secondary line when they diverge: other metric + **Cash/qty effect** (`net_capital_abs`).
+- Ticker charts: **Price change** only (no toggle). Strip: **price move** (not ambiguous “performance”).
+- Portfolio legs: Stocks (session) / Crypto (24h) + note legs may not sum to chart on 1D.
+- Shared helpers: `lib/chartChangeMode.ts`, `lib/chartChangeHeadline.ts`. Backend math unchanged.
+
 ## 2026-08-11 — PR6 hygiene + cache single-flight + light I/O (Wave 3 / P3)
 
 - Deleted remaining OS duplicate `* 2.*` sources (routes/services/frontend/docs); left `__pycache__` alone.

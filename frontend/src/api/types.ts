@@ -567,10 +567,11 @@ export type PriceHistory = {
     first_value?: string | null;
     last_value?: string | null;
     /**
-     * Headline change_abs = book Δ (chart last − first).
-     * mark_pnl_abs = pure mark on qty at window open.
-     * net_capital_abs = book − mark (capital in/out effect).
+     * change_abs / change_pct = book Δ (chart last − first MV).
+     * mark_pnl_abs / mark_pnl_pct = pure mark on qty at window open.
+     * net_capital_abs = book − mark (cash/qty residual).
      * Identity: Book = Mark + Net capital.
+     * UI toggle (Performance | Book) picks which is primary; math unchanged.
      */
     change_pct?: number | null;
     change_abs?: string | null;
