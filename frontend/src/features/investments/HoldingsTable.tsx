@@ -1,6 +1,6 @@
 import { Layers } from "lucide-react";
 import type { TickerDigest } from "../../api/types";
-import { formatQty, formatUsd } from "../../lib/money";
+import { d, formatQty, formatUsd } from "../../lib/money";
 import { cn } from "../../lib/cn";
 import { gradeStyleClass } from "./gradeStyles";
 import {
@@ -213,7 +213,7 @@ export function HoldingsTable({
                 dir={sortDir}
                 onSort={onSortColumn}
                 align="right"
-                title="Tax-free share of MV · next unlock if locked"
+                title="Sort by tax-free share of MV (then next unlock date)"
               />
             </tr>
           </thead>
@@ -280,7 +280,7 @@ export function HoldingsTable({
                       {pctCell(roi)}
                       {t.unrealized_usd != null && performanceMode === "total" && (
                         <div className="text-[10px] text-ink-faint">
-                          {Number(t.unrealized_usd) >= 0 ? "+" : ""}
+                          {d(t.unrealized_usd) >= 0 ? "+" : ""}
                           {formatUsd(t.unrealized_usd)}
                         </div>
                       )}
@@ -301,8 +301,17 @@ export function HoldingsTable({
                     </td>
                     <td className="px-2 py-2 text-right text-[11px]">
                       {freePct != null ? (
-                        <span className={freePct >= 99 ? "text-ok" : "text-ink-muted"}>
-                          {freePct >= 99 ? "100%" : `${freePct}%`}
+                        <span
+                          className={
+                            freePct >= 100
+                              ? "text-ok"
+                              : freePct <= 0
+                                ? "text-warn"
+                                : "text-ink-muted"
+                          }
+                          title="Tax-free share of position (MV when priced)"
+                        >
+                          {freePct.toFixed(freePct % 1 === 0 ? 0 : 1)}%
                         </span>
                       ) : (
                         <span className="text-ink-faint">—</span>

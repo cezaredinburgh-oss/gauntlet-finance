@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Investment desk review fixes (sort, tax-free, chart mode)
+
+- **Holdings table:** null ROI metrics always sort last; Tax-free column sorts by free-share % (unlock date tie-break); display honest % (no 99→100, show 0% locked).
+- **Chart:** area stroke follows book MV endpoints; portfolio legs use `mv_change_usd` in Book mode; mode chips reflect effective mode + a11y radiogroup; equity strip includes ETF.
+- **Reliability:** Holdings load uses generation token; cold errors keep Investments shell; DCA teaser loads once (no prices thrash); deleted dead `PortfolioMvChart.tsx`.
+
 ## 2026-08-11 — Investment Desk rework (Holdings + Analysis + DCA + Tax)
 
 - **Holdings** executive desk: hero (grade + MV + price status), nested wealth KPIs, scannable holdings table + detail panel (replaces chip strip), live chart below, tax runway, DCA top-3 teaser.

@@ -185,7 +185,10 @@ export function PositionHistoryChart({
     });
   };
 
-  const hasStock = digests.some((t) => (t.asset_class || "").toLowerCase() === "stock");
+  const hasStock = digests.some((t) => {
+    const ac = (t.asset_class || "").toLowerCase();
+    return ac === "stock" || ac === "etf" || ac === "equity";
+  });
   const hasCrypto = digests.some((t) => (t.asset_class || "").toLowerCase() === "crypto");
   const hasAny = digests.length > 0;
 
@@ -323,7 +326,11 @@ export function PositionHistoryChart({
     let list = digests.slice();
     if (scope.kind === "asset_class") {
       const want = scope.asset_class.toLowerCase();
-      list = list.filter((t) => (t.asset_class || "").toLowerCase() === want);
+      list = list.filter((t) => {
+        const ac = (t.asset_class || "").toLowerCase();
+        if (want === "stock") return ac === "stock" || ac === "etf" || ac === "equity";
+        return ac === want;
+      });
     }
     // Prefer API sort (best first); fall back to digest order with perf overlay
     return list
@@ -378,18 +385,64 @@ export function PositionHistoryChart({
         : null;
 
   const wc = data?.meta.window_components;
-  const stockWin =
-    wc?.stocks?.change_usd != null ? d(wc.stocks.change_usd) : null;
-  const cryptoWin =
-    wc?.crypto?.change_usd != null ? d(wc.crypto.change_usd) : null;
-  const stockWinPct = wc?.stocks?.change_pct ?? null;
-  const cryptoWinPct = wc?.crypto?.change_pct ?? null;
+  /** Legs follow active mode: Book → MV Δ; Performance → mark performance. */
+  const bookMode = headline.effectiveMode === "book";
+  const stockWin = bookMode
+    ? wc?.stocks?.mv_change_usd != null
+      ? d(wc.stocks.mv_change_usd)
+      : wc?.stocks?.change_usd != null
+        ? d(wc.stocks.change_usd)
+        : null
+    : wc?.stocks?.change_usd != null
+      ? d(wc.stocks.change_usd)
+      : null;
+  const cryptoWin = bookMode
+    ? wc?.crypto?.mv_change_usd != null
+      ? d(wc.crypto.mv_change_usd)
+      : wc?.crypto?.change_usd != null
+        ? d(wc.crypto.change_usd)
+        : null
+    : wc?.crypto?.change_usd != null
+      ? d(wc.crypto.change_usd)
+      : null;
+  // Book legs: derive % from first/last when present; else fall back to mark %
+  const stockWinPct = bookMode
+    ? wc?.stocks?.first_usd != null &&
+      wc?.stocks?.last_usd != null &&
+      d(wc.stocks.first_usd) !== 0
+      ? ((d(wc.stocks.last_usd) - d(wc.stocks.first_usd)) / Math.abs(d(wc.stocks.first_usd))) *
+        100
+      : null
+    : (wc?.stocks?.change_pct ?? null);
+  const cryptoWinPct = bookMode
+    ? wc?.crypto?.first_usd != null &&
+      wc?.crypto?.last_usd != null &&
+      d(wc.crypto.first_usd) !== 0
+      ? ((d(wc.crypto.last_usd) - d(wc.crypto.first_usd)) / Math.abs(d(wc.crypto.first_usd))) *
+        100
+      : null
+    : (wc?.crypto?.change_pct ?? null);
 
   const missing = data?.meta.missing_tickers ?? [];
-  const positive = primaryPct != null ? primaryPct >= 0 : primaryAbs != null ? primaryAbs >= 0 : true;
+  // Series is always market value — paint stroke from book endpoints so green/red matches the line
+  const bookStrokeAbs =
+    changeAbs != null
+      ? changeAbs
+      : last && first
+        ? last.value - first.value
+        : null;
+  const seriesPositive =
+    changePct != null
+      ? changePct >= 0
+      : bookStrokeAbs != null
+        ? bookStrokeAbs >= 0
+        : true;
   const dayPositive = dayPct != null ? dayPct >= 0 : true;
-  const stroke = positive ? "#2dd4a8" : "#f87171";
+  const stroke = seriesPositive ? "#2dd4a8" : "#f87171";
   const showModeToggle = !isPrice && scope.kind !== "ticker";
+  /** Highlight the mode that is actually driving the primary number (fallback → Book). */
+  const modeChipActive: "performance" | "book" =
+    headline.effectiveMode === "performance" ? "performance" : "book";
 
   const title =
     scope.kind === "ticker"
@@ -521,12 +574,23 @@ export function PositionHistoryChart({
                           stockWin >= 0 ? "text-ok" : "text-danger",
                         )}
                         title={
-                          range === "1d"
-                            ? "Stocks US session performance (leg; not the chart headline on 1D)"
-                            : "Stocks performance over this range"
+                          bookMode
+                            ? range === "1d"
+                              ? "Stocks market value Δ this session (leg; may not match headline on 1D)"
+                              : "Stocks market value Δ over this range"
+                            : range === "1d"
+                              ? "Stocks US session performance (leg; not the chart headline on 1D)"
+                              : "Stocks performance over this range"
                         }
                       >
-                        Stocks{range === "1d" ? " (session)" : " performance"}{" "}
+                        Stocks
+                        {range === "1d"
+                          ? bookMode
+                            ? " (session MV)"
+                            : " (session)"
+                          : bookMode
+                            ? " MV Δ"
+                            : " performance"}{" "}
                         {stockWin >= 0 ? "+" : ""}
                         {formatUsd(stockWin)}
                         {stockWinPct != null && (
@@ -544,12 +608,23 @@ export function PositionHistoryChart({
                           cryptoWin >= 0 ? "text-ok" : "text-danger",
                         )}
                         title={
-                          range === "1d"
-                            ? "Crypto last-24h performance (leg; not the chart headline on 1D)"
-                            : "Crypto performance over this range"
+                          bookMode
+                            ? range === "1d"
+                              ? "Crypto market value Δ last 24h (leg; may not match headline on 1D)"
+                              : "Crypto market value Δ over this range"
+                            : range === "1d"
+                              ? "Crypto last-24h performance (leg; not the chart headline on 1D)"
+                              : "Crypto performance over this range"
                         }
                       >
-                        Crypto{range === "1d" ? " (24h)" : " performance"}{" "}
+                        Crypto
+                        {range === "1d"
+                          ? bookMode
+                            ? " (24h MV)"
+                            : " (24h)"
+                          : bookMode
+                            ? " MV Δ"
+                            : " performance"}{" "}
                         {cryptoWin >= 0 ? "+" : ""}
                         {formatUsd(cryptoWin)}
                         {cryptoWinPct != null && (
@@ -661,32 +736,50 @@ export function PositionHistoryChart({
         </div>
         {showModeToggle && (
           <div
+            role="radiogroup"
+            aria-label="Chart return basis"
             className="flex rounded-md bg-white/5 p-0.5 ring-1 ring-white/10"
-            title="Performance = price move on qty at chart start. Market value Δ = last − first on the line."
+            title="Performance = price move on qty at chart start. Book = market value Δ (last − first on the line)."
           >
             {(
               [
                 ["performance", "Performance"],
                 ["book", "Book"],
               ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => {
-                  setChangeMode(key);
-                  saveChartChangeMode(key);
-                }}
-                className={cn(
-                  "rounded px-2 py-1 text-[11px] font-semibold tracking-wide transition",
-                  changeMode === key
-                    ? "bg-brand/25 text-brand"
-                    : "text-ink-muted hover:text-ink",
-                )}
-              >
-                {label}
-              </button>
-            ))}
+            ).map(([key, label]) => {
+              const pressed = modeChipActive === key;
+              const perfDisabled =
+                key === "performance" && headline.performanceUnavailable;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  role="radio"
+                  aria-checked={pressed}
+                  aria-pressed={pressed}
+                  disabled={perfDisabled}
+                  title={
+                    perfDisabled
+                      ? "Performance (mark) unavailable for this window — showing Book"
+                      : undefined
+                  }
+                  onClick={() => {
+                    if (perfDisabled) return;
+                    setChangeMode(key);
+                    saveChartChangeMode(key);
+                  }}
+                  className={cn(
+                    "rounded px-2 py-1 text-[11px] font-semibold tracking-wide transition",
+                    pressed
+                      ? "bg-brand/25 text-brand"
+                      : "text-ink-muted hover:text-ink",
+                    perfDisabled && "cursor-not-allowed opacity-50",
+                  )}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </div>
         )}
         <button

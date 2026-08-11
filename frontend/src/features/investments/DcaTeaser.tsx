@@ -24,43 +24,34 @@ const TONE_CLS: Record<string, string> = {
 
 /**
  * Top DCA opportunities strip for Holdings desk (links to full board).
+ * Loads once on mount — does not re-hit the DCA board on every prices-updated tick.
  */
 export function DcaTeaser() {
   const [items, setItems] = useState<DcaOpportunityItem[]>([]);
   const [asOf, setAsOf] = useState<string | null>(null);
 
-  const applyBoard = (board: Awaited<ReturnType<typeof api.investmentsDcaOpportunities>>) => {
-    const merged = [...(board.stocks || []), ...(board.crypto || [])]
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
-    setItems(merged);
-    setAsOf(board.as_of);
-  };
-
   useEffect(() => {
     let cancelled = false;
-    void api
-      .investmentsDcaOpportunities()
-      .then((board) => {
-        if (!cancelled) applyBoard(board);
-      })
-      .catch(() => {
-        /* optional teaser */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    const onPrices = () => {
+    // Defer slightly so snapshot + digests win the first paint / Sheets quota
+    const timer = window.setTimeout(() => {
       void api
         .investmentsDcaOpportunities()
-        .then(applyBoard)
-        .catch(() => {});
+        .then((board) => {
+          if (cancelled) return;
+          const merged = [...(board.stocks || []), ...(board.crypto || [])]
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 3);
+          setItems(merged);
+          setAsOf(board.as_of);
+        })
+        .catch(() => {
+          /* optional teaser */
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
     };
-    window.addEventListener("prices-updated", onPrices);
-    return () => window.removeEventListener("prices-updated", onPrices);
   }, []);
 
   if (items.length === 0) return null;

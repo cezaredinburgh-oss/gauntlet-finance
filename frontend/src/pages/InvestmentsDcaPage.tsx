@@ -211,11 +211,6 @@ export function InvestmentsDcaPage() {
     return () => window.removeEventListener("prices-updated", onPrices);
   }, [load]);
 
-  if (loading && !board) return <PageLoader label="Loading DCA board…" />;
-  if (error && !board) {
-    return <EmptyState title="Couldn’t load DCA board" description={error} />;
-  }
-
   const stocks = board?.stocks ?? [];
   const crypto = board?.crypto ?? [];
 
@@ -225,37 +220,59 @@ export function InvestmentsDcaPage() {
       title="DCA opportunities"
       subtitle="Rank holdings by add-size signal — below cost, 3M pullback, under 52-week average"
     >
-      <div className="card flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-xs text-ink-faint">
-        <span className="font-medium text-ink-muted">As of {board?.as_of ?? "—"}</span>
-        <ToneLegend />
-        {board?.meta?.history_available === false && (
-          <span className="rounded-lg bg-warn/10 px-2 py-0.5 text-warn">
-            History offline — ranking from cost discount only
-          </span>
-        )}
-        <Link to="/expenses/alerts" className="ml-auto font-medium text-brand hover:underline">
-          Alerts →
-        </Link>
-      </div>
+      {loading && !board && <PageLoader label="Loading DCA board…" />}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <DcaColumn
-          title="Stocks"
-          items={stocks}
-          emptyHint="No priced stock/ETF positions on the board yet."
+      {error && !board && (
+        <EmptyState
+          title="Couldn’t load DCA board"
+          description={error}
+          action={
+            <button type="button" className="btn-primary" onClick={() => void load()}>
+              Retry
+            </button>
+          }
         />
-        <DcaColumn
-          title="Crypto"
-          items={crypto}
-          emptyHint="No priced crypto positions on the board yet."
-        />
-      </div>
+      )}
 
-      <p className="text-[11px] leading-relaxed text-ink-faint">
-        Ranked by continuous score (cost discount, pullback, 52-week average, days since
-        last buy, size). Color tracks opportunity strength only — alert eligibility lives on
-        the Alerts page. Not investment advice — statement lots + live marks only.
-      </p>
+      {board && (
+        <>
+          <div className="card flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-xs text-ink-faint">
+            <span className="font-medium text-ink-muted">As of {board.as_of ?? "—"}</span>
+            <ToneLegend />
+            {board.meta?.history_available === false && (
+              <span className="rounded-lg bg-warn/10 px-2 py-0.5 text-warn">
+                History offline — ranking from cost discount only
+              </span>
+            )}
+            <Link
+              to="/expenses/alerts"
+              className="ml-auto font-medium text-brand hover:underline"
+            >
+              Alerts →
+            </Link>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <DcaColumn
+              title="Stocks"
+              items={stocks}
+              emptyHint="No priced stock/ETF positions on the board yet."
+            />
+            <DcaColumn
+              title="Crypto"
+              items={crypto}
+              emptyHint="No priced crypto positions on the board yet."
+            />
+          </div>
+
+          <p className="text-[11px] leading-relaxed text-ink-faint">
+            Ranked by continuous score (cost discount, pullback, 52-week average, days
+            since last buy, size). Color tracks opportunity strength only — alert
+            eligibility lives on the Alerts page. Not investment advice — statement lots +
+            live marks only.
+          </p>
+        </>
+      )}
     </InvestmentsPageShell>
   );
 }

@@ -80,8 +80,8 @@ export function InvestmentsPage() {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortColumn(col);
-      // Default: best first for metrics, A-first for grade, soonest unlock, A-Z ticker
-      if (col === "ticker" || col === "grade" || col === "unlock") {
+      // Default: best first for metrics & tax-free share; A-first for grade; A-Z ticker
+      if (col === "ticker" || col === "grade") {
         setSortDir("asc");
       } else {
         setSortDir("desc");
@@ -89,15 +89,19 @@ export function InvestmentsPage() {
     }
   }
 
+  const loadGen = useRef(0);
+
   const load = async (opts?: { quiet?: boolean; preserveSelection?: boolean }) => {
     const quiet = opts?.quiet ?? false;
     const preserveSelection = opts?.preserveSelection ?? false;
+    const gen = ++loadGen.current;
     if (!quiet) setLoading(true);
     try {
       const [snapR, digR] = await Promise.all([
         api.investmentsSnapshot(),
         api.tickerDigests(),
       ]);
+      if (gen !== loadGen.current) return;
       setSnap(snapR);
       setDigests(digR.tickers);
       setError(null);
@@ -123,7 +127,15 @@ export function InvestmentsPage() {
           }
           if (prev.kind === "asset_class") {
             const ac = prev.asset_class.toLowerCase();
-            if (digR.tickers.some((t) => (t.asset_class || "").toLowerCase() === ac)) {
+            if (
+              digR.tickers.some((t) => {
+                const tac = (t.asset_class || "").toLowerCase();
+                if (ac === "stock") {
+                  return tac === "stock" || tac === "etf" || tac === "equity";
+                }
+                return tac === ac;
+              })
+            ) {
               return prev;
             }
           }
@@ -131,6 +143,7 @@ export function InvestmentsPage() {
         return defaultChartScope(digR.tickers);
       });
     } catch (e) {
+      if (gen !== loadGen.current) return;
       const msg = e instanceof Error ? e.message : "Failed";
       if (quiet && snapRef.current) {
         setSoftError(msg);
@@ -138,38 +151,14 @@ export function InvestmentsPage() {
       }
       setError(msg);
     } finally {
-      if (!quiet) setLoading(false);
+      if (gen === loadGen.current && !quiet) setLoading(false);
     }
   };
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const [snapR, digR] = await Promise.all([
-          api.investmentsSnapshot(),
-          api.tickerDigests(),
-        ]);
-        if (!cancelled) {
-          setSnap(snapR);
-          setDigests(digR.tickers);
-          setError(null);
-          setSoftError(null);
-          const best = [...digR.tickers].sort((a, b) =>
-            comparePerformance(a, b, "total"),
-          )[0];
-          setSelectedTicker(best?.ticker ?? null);
-          setChartScope(defaultChartScope(digR.tickers));
-        }
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Failed");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    void load();
     return () => {
-      cancelled = true;
+      loadGen.current += 1; // invalidate in-flight on unmount
     };
   }, []);
 
@@ -216,12 +205,39 @@ export function InvestmentsPage() {
     [digests, performanceMode],
   );
 
-  if (loading && !snap) return <PageLoader label="Loading investments…" />;
-  if (error && !snap) {
-    return <EmptyState title="Couldn’t load investments" description={error} />;
+  const hasHoldings = digests.length > 0 || (snap != null && snap.ticker_count > 0);
+
+  if (loading && !snap) {
+    return (
+      <InvestmentsPageShell
+        active="holdings"
+        title="Investments"
+        subtitle="Portfolio desk · verify holdings · Czech tax runway"
+      >
+        <PageLoader label="Loading investments…" />
+      </InvestmentsPageShell>
+    );
   }
 
-  const hasHoldings = digests.length > 0 || (snap != null && snap.ticker_count > 0);
+  if (error && !snap) {
+    return (
+      <InvestmentsPageShell
+        active="holdings"
+        title="Investments"
+        subtitle="Portfolio desk · verify holdings · Czech tax runway"
+      >
+        <EmptyState
+          title="Couldn’t load investments"
+          description={error}
+          action={
+            <button type="button" className="btn-primary" onClick={() => void load()}>
+              Retry
+            </button>
+          }
+        />
+      </InvestmentsPageShell>
+    );
+  }
 
   return (
     <InvestmentsPageShell

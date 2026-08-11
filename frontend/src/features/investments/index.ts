@@ -16,7 +16,10 @@ export { GRADE_STYLE, GRADE_CHIP, gradeStyleClass } from "./gradeStyles";
 export {
   comparePerformance,
   compareHoldingsColumn,
+  compareNullableNumber,
   filterByAssetClass,
+  isEquityAssetClass,
+  isCryptoAssetClass,
   loadHoldingsSortMode,
   saveHoldingsSortMode,
   taxFreeSharePct,

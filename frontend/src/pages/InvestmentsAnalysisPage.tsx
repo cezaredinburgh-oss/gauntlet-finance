@@ -58,11 +58,6 @@ export function InvestmentsAnalysisPage() {
     return () => window.removeEventListener("prices-updated", onPrices);
   }, []);
 
-  if (loading) return <PageLoader label="Loading analysis…" />;
-  if (error) {
-    return <EmptyState title="Couldn’t load analysis" description={error} />;
-  }
-
   const hasHoldings = !!snap && snap.ticker_count > 0;
 
   return (
@@ -71,25 +66,59 @@ export function InvestmentsAnalysisPage() {
       title="Investments analysis"
       subtitle="Portfolio health · living draw · cashflow · fees · staking · CZK/USD"
     >
-      {!hasHoldings && (
+      {loading && !snap && <PageLoader label="Loading analysis…" />}
+
+      {error && !snap && (
         <EmptyState
-          title="No holdings yet"
-          description="Import statements first for health, fees, and staking. FX chart still loads when data exists."
+          title="Couldn’t load analysis"
+          description={error}
+          action={
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                setLoading(true);
+                void api
+                  .investmentsSnapshot()
+                  .then((s) => {
+                    setSnap(s);
+                    setError(null);
+                  })
+                  .catch((e) => setError(e instanceof Error ? e.message : "Failed"))
+                  .finally(() => setLoading(false));
+              }}
+            >
+              Retry
+            </button>
+          }
         />
       )}
 
-      {hasHoldings && snap.health && <HealthBand health={snap.health} />}
+      {snap && (
+        <>
+          {!hasHoldings && (
+            <EmptyState
+              title="No holdings yet"
+              description="Import statements first for health, fees, and staking. FX chart still loads when data exists."
+            />
+          )}
 
-      {hasHoldings && <DrawMetricsCard />}
+          {hasHoldings && snap.health && <HealthBand health={snap.health} />}
 
-      {hasHoldings && snap.cashflow_monthly && snap.cashflow_monthly.length > 0 && (
-        <CashflowMonthlyChart series={snap.cashflow_monthly} />
+          {hasHoldings && <DrawMetricsCard />}
+
+          {hasHoldings && snap.cashflow_monthly && snap.cashflow_monthly.length > 0 && (
+            <CashflowMonthlyChart series={snap.cashflow_monthly} />
+          )}
+
+          {hasHoldings && snap.fees && <FeesBreakdownSection fees={snap.fees} />}
+          {hasHoldings && snap.staking && (
+            <StakingRewardsSection staking={snap.staking} />
+          )}
+
+          <FxUsdCzkChart portfolioUsd={snap.total_market_value_usd} />
+        </>
       )}
-
-      {hasHoldings && snap.fees && <FeesBreakdownSection fees={snap.fees} />}
-      {hasHoldings && snap.staking && <StakingRewardsSection staking={snap.staking} />}
-
-      <FxUsdCzkChart portfolioUsd={snap?.total_market_value_usd} />
     </InvestmentsPageShell>
   );
 }
