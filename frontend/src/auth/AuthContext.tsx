@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, ApiError } from "../api/client";
+import { api, ApiError, AUTH_UNAUTHORIZED_EVENT } from "../api/client";
 import type { AuthMe } from "../api/types";
 
 type AuthState = {
@@ -47,6 +47,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Central 401 recovery: any API call that gets 401 clears session → login UI
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setUser(null);
+      setError(null);
+      setLoading(false);
+    };
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
 
   const login = useCallback(() => {
     // Backend sets httpOnly session cookie after Google OAuth

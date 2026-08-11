@@ -466,3 +466,186 @@ def test_specific_lot_id_on_sell():
     lots = {lot.open_event_id: lot for lot in result.lots}
     assert lots[buy_b.id].quantity_remaining == Decimal("0")
     assert lots[buy_a.id].quantity_remaining == Decimal("5")
+
+
+def test_missing_fx_does_not_invent_phantom_realized_loss():
+    """C4: sell in non-USD/CZK without FX rates → realized_gain_usd/czk is None, not -cost."""
+    account = uuid4()
+    engine = LotEngine(fx=None)  # no FX table at all
+    buy = inv_event(
+        account_id=account,
+        event_date=date(2023, 1, 1),
+        ticker="SAP",
+        quantity="10",
+        value_native="1000",
+        native_currency="USD",
+    )
+    # Sell denominated in EUR with no FX available
+    sell = inv_event(
+        account_id=account,
+        event_type=InvestmentEventType.SELL,
+        event_date=date(2024, 6, 1),
+        ticker="SAP",
+        quantity="10",
+        value_native="900",
+        native_currency="EUR",
+    )
+    result = engine.apply_events([], [buy, sell])
+    alloc = next(
+        e for e in result.events if e.event_type == InvestmentEventType.LOT_ALLOCATION
+    )
+    # Cost was USD 1000 → cost_basis_usd on lot is 1000; without EUR→USD rates,
+    # must NOT report gain = 0 - 1000 as a phantom loss.
+    assert alloc.realized_gain_usd is None
+    assert alloc.realized_gain_czk is None
+    assert alloc.value_usd is None
+    assert alloc.value_czk is None
+    # Native proceeds still recorded
+    assert alloc.value_native == Decimal("900.00")
+
+
+def test_missing_fx_with_fx_service_but_no_rates():
+    """C4: FXService present but convert returns None for EUR → same as no FX."""
+    account = uuid4()
+    fx = FXService()  # empty rates
+    engine = LotEngine(fx=fx)
+    buy = inv_event(
+        account_id=account,
+        event_date=date(2023, 1, 1),
+        ticker="SAP",
+        quantity="5",
+        value_native="500",
+        native_currency="USD",
+    )
+    sell = inv_event(
+        account_id=account,
+        event_type=InvestmentEventType.SELL,
+        event_date=date(2024, 6, 1),
+        ticker="SAP",
+        quantity="5",
+        value_native="12000",
+        native_currency="CZK",
+    )
+    # Sell is CZK native → proc_czk set from native; USD still needs convert
+    result = engine.apply_events([], [buy, sell])
+    alloc = next(
+        e for e in result.events if e.event_type == InvestmentEventType.LOT_ALLOCATION
+    )
+    assert alloc.value_czk == Decimal("12000.00")
+    assert alloc.realized_gain_czk is not None  # CZK proceeds known
+    # USD leg: no CZK→USD rate → None (not 0 - cost_usd)
+    assert alloc.value_usd is None
+    assert alloc.realized_gain_usd is None
+
+
+def test_short_sell_annotates_unallocated_qty():
+    """H5: sell more than held → allocate available only; tag short_sell_unallocated."""
+    account = uuid4()
+    engine = LotEngine()
+    buy = inv_event(
+        account_id=account,
+        event_date=date(2023, 1, 1),
+        ticker="SHORT",
+        quantity="1",
+        value_native="100",
+        native_currency="USD",
+    )
+    sell = inv_event(
+        account_id=account,
+        event_type=InvestmentEventType.SELL,
+        event_date=date(2024, 1, 1),
+        ticker="SHORT",
+        quantity="2",
+        value_native="200",
+        native_currency="USD",
+    )
+    result = engine.apply_events([], [buy, sell])
+    allocs = [
+        e
+        for e in result.events
+        if e.event_type == InvestmentEventType.LOT_ALLOCATION
+    ]
+    assert len(allocs) == 1
+    assert allocs[0].quantity == Decimal("1")
+    sell_out = next(
+        e for e in result.events if e.event_type == InvestmentEventType.SELL
+    )
+    notes = (sell_out.notes or "").lower()
+    assert "unallocated_qty=" in notes
+    assert "short_sell_unallocated" in notes
+    assert "1" in notes  # remaining 1
+    lot = result.lots[0]
+    assert lot.quantity_remaining == Decimal("0")
+    assert lot.status == LotStatus.CLOSED
+
+
+def test_cross_currency_fee_does_not_pollute_native_cost():
+    """H6: EUR fee on USD lot without FX → native cost unchanged; no EUR into USD."""
+    account = uuid4()
+    engine = LotEngine(fx=None)
+    buy = inv_event(
+        account_id=account,
+        event_date=date(2023, 1, 1),
+        ticker="AAPL",
+        quantity="10",
+        value_native="1000",
+        native_currency="USD",
+    )
+    mid = engine.apply_events([], [buy])
+    lot = mid.lots[0]
+    assert lot.cost_basis_native == Decimal("1000")
+    fee = inv_event(
+        account_id=account,
+        event_type=InvestmentEventType.FEE,
+        event_date=date(2023, 1, 2),
+        ticker="AAPL",
+        quantity=None,
+        value_native="15",
+        fees_native="15",
+        native_currency="EUR",
+        parent_event_id=buy.id,
+    )
+    result = engine.apply_events(mid.lots, [fee])
+    lot2 = next(lot for lot in result.lots if lot.id == mid.lots[0].id)
+    # Must not add 15 EUR into USD cost_basis_native
+    assert lot2.cost_basis_native == Decimal("1000")
+
+
+def test_cross_currency_fee_converts_when_fx_available():
+    """H6: EUR fee on USD lot with FX → add converted amount to native cost."""
+    account = uuid4()
+    fx = FXService()
+    fx.load_rates(
+        [
+            # 1 EUR = 1.10 USD (via CZK path: EUR/CZK and USD/CZK)
+            fx_rate(rate_date=date(2023, 1, 1), base="EUR", rate="25.00"),
+            fx_rate(rate_date=date(2023, 1, 1), base="USD", rate="22.00"),
+            fx_rate(rate_date=date(2023, 1, 2), base="EUR", rate="25.00"),
+            fx_rate(rate_date=date(2023, 1, 2), base="USD", rate="22.00"),
+        ]
+    )
+    engine = LotEngine(fx=fx)
+    buy = inv_event(
+        account_id=account,
+        event_date=date(2023, 1, 1),
+        ticker="AAPL",
+        quantity="10",
+        value_native="1000",
+        native_currency="USD",
+    )
+    mid = engine.apply_events([], [buy])
+    fee = inv_event(
+        account_id=account,
+        event_type=InvestmentEventType.FEE,
+        event_date=date(2023, 1, 2),
+        ticker="AAPL",
+        quantity=None,
+        value_native="22",  # 22 EUR → 22 * 25/22 = 25 USD
+        fees_native="22",
+        native_currency="EUR",
+        parent_event_id=buy.id,
+    )
+    result = engine.apply_events(mid.lots, [fee])
+    lot2 = result.lots[0]
+    # 22 EUR * (25 CZK/EUR) / (22 CZK/USD) = 25 USD
+    assert lot2.cost_basis_native == Decimal("1025.00")

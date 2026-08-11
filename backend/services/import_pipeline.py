@@ -5,14 +5,14 @@ lots FIFO → persist via repository.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
 from uuid import UUID, uuid4
 
 from backend.common.timeutil import utc_now
 from backend.engines.categorize import CategoryEngine
-from backend.engines.lots import LotEngine
+from backend.engines.lots import FifoResult, LotEngine
 from backend.engines.statements import StatementService
 from backend.engines.transfer_match import match_internal_transfers
 from backend.parsers import parse_statement_bytes
@@ -21,6 +21,7 @@ from backend.schema.models import (
     Category,
     CategoryRule,
     InvestmentEvent,
+    InvestmentEventType,
     InvestmentLot,
     StatementFile,
     StatementFileStatus,
@@ -28,7 +29,15 @@ from backend.schema.models import (
 )
 from backend.services.fx_amounts import build_fx_service, enrich_transaction_amounts
 from backend.services.lot_costs import enrich_lots, ensure_fx_coverage
+from backend.services.lot_rebuild import (
+    collect_tickers,
+    rebuild_lots_for_tickers,
+    should_rebuild_tickers,
+)
 from backend.sheets.repository import SheetsRepository
+
+# Process-level serialize: concurrent uploads wait (do not reject).
+_IMPORT_LOCK = threading.Lock()
 
 
 @dataclass
@@ -144,6 +153,23 @@ class ImportPipeline:
         self.lot_engine = LotEngine(exemption_days=exemption_days)
 
     def upload(
+        self,
+        *,
+        filename: str,
+        content: bytes,
+        account_ids: dict[str, UUID] | None = None,
+        now: datetime | None = None,
+    ) -> UploadSummary:
+        # Serialize concurrent imports process-wide (wait, do not reject).
+        with _IMPORT_LOCK:
+            return self._upload_unlocked(
+                filename=filename,
+                content=content,
+                account_ids=account_ids,
+                now=now,
+            )
+
+    def _upload_unlocked(
         self,
         *,
         filename: str,
@@ -328,6 +354,14 @@ class ImportPipeline:
         d_tx = StatementService.dedupe_transactions(existing_tx, parsed.transactions)
         d_ev = StatementService.dedupe_events(existing_ev, parsed.investment_events)
 
+        # Ensure Digital Assets Europe crypto-pot rule before categorize
+        try:
+            from backend.schema.ensure_defaults import ensure_digital_assets_rule
+
+            ensure_digital_assets_rule(self.repo)
+        except Exception:  # noqa: BLE001
+            pass
+
         # Categorize new transactions
         categories = [
             r for r in self.repo.list_rows("Categories") if isinstance(r, Category)
@@ -352,19 +386,66 @@ class ImportPipeline:
             ):
                 existing_updates.append(m)
 
-        # Lots: apply new events via FIFO against existing lots (with FX for CZK costs)
+        # Lots: ticker-scoped rebuild when ledger already has events/lots for
+        # the same tickers (ERROR retry / incremental), else incremental FIFO.
         fx = build_fx_service(self.repo)
         self.lot_engine = LotEngine(exemption_days=self.exemption_days, fx=fx)
         existing_lots = [
             r for r in self.repo.list_rows("InvestmentLots") if isinstance(r, InvestmentLot)
         ]
-        events_for_fifo = []
-        for e in d_ev.investment_events:
-            if e.event_type.value == "LotAllocation":
-                continue
-            events_for_fifo.append(e)
+        new_non_alloc = [
+            e
+            for e in d_ev.investment_events
+            if e.event_type != InvestmentEventType.LOT_ALLOCATION
+        ]
+        parsed_non_alloc = [
+            e
+            for e in parsed.investment_events
+            if e.event_type != InvestmentEventType.LOT_ALLOCATION
+        ]
 
-        fifo = self.lot_engine.apply_events(existing_lots, events_for_fifo, now=ts)
+        # Tickers from new events; on full dedupe retry use parse tickers so we
+        # still rebuild lots that were never written.
+        touched = collect_tickers(new_non_alloc)
+        force_rebuild = False
+        if not touched and parsed_non_alloc:
+            touched = collect_tickers(parsed_non_alloc)
+            force_rebuild = True
+
+        fifo: FifoResult
+        stale_alloc_ids: list[UUID] = []
+        stale_lot_ids: list[UUID] = []
+
+        if touched and (
+            force_rebuild
+            or should_rebuild_tickers(
+                touched_tickers=touched,
+                existing_lots=existing_lots,
+                existing_events=existing_ev,
+            )
+        ):
+            plan = rebuild_lots_for_tickers(
+                existing_lots=existing_lots,
+                existing_events=existing_ev,
+                new_events=new_non_alloc,
+                touched_tickers=touched,
+                engine=self.lot_engine,
+                now=ts,
+            )
+            fifo = FifoResult(
+                lots=plan.lots,
+                events=plan.events,
+                allocations_created=plan.allocations_created,
+            )
+            stale_alloc_ids = plan.stale_allocation_ids
+            stale_lot_ids = plan.stale_lot_ids
+        elif new_non_alloc:
+            fifo = self.lot_engine.apply_events(
+                existing_lots, new_non_alloc, now=ts
+            )
+        else:
+            fifo = FifoResult(lots=list(existing_lots), events=[], allocations_created=0)
+
         enriched_lots = enrich_lots(
             fifo.lots,
             fx,
@@ -392,11 +473,20 @@ class ImportPipeline:
             self.repo.upsert_rows("Transactions", new_tx_final)
         if existing_updates:
             self.repo.upsert_rows("Transactions", existing_updates)
+
+        # Drop stale lots/allocs for rebuilt tickers before writing fresh rows
+        for alloc_id in stale_alloc_ids:
+            self.repo.delete_by_id("InvestmentEvents", alloc_id)
+        for lot_id in stale_lot_ids:
+            self.repo.delete_by_id("InvestmentLots", lot_id)
+
         if fifo.events:
             self.repo.upsert_rows("InvestmentEvents", fifo.events)
         if enriched_lots:
+            # On ticker rebuild, write full lot set for those tickers (plus others
+            # already in fifo.lots). On incremental path, upsert changed lots.
             self.repo.upsert_rows("InvestmentLots", enriched_lots)
-            fifo = type(fifo)(
+            fifo = FifoResult(
                 lots=enriched_lots,
                 events=fifo.events,
                 allocations_created=fifo.allocations_created,
@@ -419,6 +509,16 @@ class ImportPipeline:
             transactions_deduped=d_tx.dropped_transactions,
             events_deduped=d_ev.dropped_events,
         )
+        # Count lots for touched tickers when we rebuilt; else all fifo lots written
+        if touched and (force_rebuild or stale_lot_ids or stale_alloc_ids or fifo.events):
+            lots_written = sum(
+                1
+                for lot in fifo.lots
+                if (lot.ticker or "").strip().upper() in touched
+            )
+        else:
+            lots_written = len(fifo.lots) if new_non_alloc else 0
+
         return UploadSummary(
             status="imported",
             content_sha256=content_sha256,
@@ -428,7 +528,7 @@ class ImportPipeline:
             rows_parsed=parsed.row_count,
             transactions_written=tx_written,
             events_written=ev_written,
-            lots_written=len(fifo.lots),
+            lots_written=lots_written,
             transfer_pairs_linked=match_result.pairs_linked,
             transactions_deduped=d_tx.dropped_transactions,
             events_deduped=d_ev.dropped_events,

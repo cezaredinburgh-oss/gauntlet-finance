@@ -426,23 +426,25 @@ class LotEngine:
             frac_sell = take / total_qty if total_qty else Decimal("0")
             proc_share = _q2(net_proceeds * frac_sell)
 
-            proc_czk = Decimal("0")
-            proc_usd = Decimal("0")
-            if self.fx is not None:
+            # Do not invent FX: leave CZK/USD proceeds None when convert fails
+            # (and native ccy is neither). Avoids phantom losses of 0 - cost.
+            proc_czk: Decimal | None = None
+            proc_usd: Decimal | None = None
+            if ccy == "CZK":
+                proc_czk = proc_share
+            elif self.fx is not None:
                 pc = self.fx.convert(proc_share, ccy, "CZK", sell.event_date)
-                pu = self.fx.convert(proc_share, ccy, "USD", sell.event_date)
                 if pc is not None:
                     proc_czk = pc
+            if ccy == "USD":
+                proc_usd = proc_share
+            elif self.fx is not None:
+                pu = self.fx.convert(proc_share, ccy, "USD", sell.event_date)
                 if pu is not None:
                     proc_usd = pu
-            else:
-                if ccy == "CZK":
-                    proc_czk = proc_share
-                if ccy == "USD":
-                    proc_usd = proc_share
 
-            gain_czk = _q2(proc_czk - cost_czk) if (proc_czk or cost_czk) else None
-            gain_usd = _q2(proc_usd - cost_usd) if (proc_usd or cost_usd) else None
+            gain_czk = _q2(proc_czk - cost_czk) if proc_czk is not None else None
+            gain_usd = _q2(proc_usd - cost_usd) if proc_usd is not None else None
             # Native gain always computable
             gain_native = _q2(proc_share - cost_n)
 
@@ -486,8 +488,9 @@ class LotEngine:
                 native_currency=ccy,
                 value_native=proc_share,
                 fees_native=Decimal("0"),
-                value_czk=proc_czk if proc_czk else None,
-                value_usd=proc_usd if proc_usd else None,
+                # Keep zero proceeds when legitimately zero; only None if unknown
+                value_czk=proc_czk,
+                value_usd=proc_usd,
                 lot_id=lot.id,
                 parent_event_id=sell.id,
                 realized_gain_czk=gain_czk,
@@ -503,6 +506,15 @@ class LotEngine:
             )
             allocs.append(alloc)
             remaining -= take
+
+        # H5: surface short-sell / unallocated remainder instead of silent drop
+        if remaining > 0:
+            note_bits: list[str] = []
+            if sell.notes:
+                note_bits.append(sell.notes)
+            note_bits.append(f"unallocated_qty={remaining}")
+            note_bits.append("short_sell_unallocated")
+            sell = sell.model_copy(update={"notes": "; ".join(note_bits)})
 
         return sell, allocs, lots
 
@@ -524,14 +536,32 @@ class LotEngine:
             lot = lots[lot_id]
             if lot.status == LotStatus.OPEN:
                 fee_abs = abs(fee.value_native or fee.fees_native or Decimal("0"))
-                ccy = lot.native_currency
-                add_n, add_czk, add_usd = self._enrich_cost(fee_abs, ccy, fee.event_date)
-                # If fee currency differs, still add native abs from event currency
-                if fee.native_currency and fee.native_currency.upper() != ccy:
-                    add_n = fee_abs
+                lot_ccy = (lot.native_currency or "USD").upper()
+                fee_ccy = (fee.native_currency or lot_ccy).upper()
+
+                if fee_ccy == lot_ccy:
                     add_n, add_czk, add_usd = self._enrich_cost(
-                        fee_abs, fee.native_currency, fee.event_date
+                        fee_abs, lot_ccy, fee.event_date
                     )
+                else:
+                    # H6: never add a foreign-currency number into cost_basis_native.
+                    # Prefer FX into lot native; if convert fails, add_n=0 and only
+                    # enrich CZK/USD legs from the fee's own currency.
+                    converted: Decimal | None = None
+                    if self.fx is not None:
+                        converted = self.fx.convert(
+                            fee_abs, fee_ccy, lot_ccy, fee.event_date
+                        )
+                    if converted is not None:
+                        add_n, add_czk, add_usd = self._enrich_cost(
+                            converted, lot_ccy, fee.event_date
+                        )
+                    else:
+                        add_n = Decimal("0")
+                        _, add_czk, add_usd = self._enrich_cost(
+                            fee_abs, fee_ccy, fee.event_date
+                        )
+
                 lots[lot_id] = lot.model_copy(
                     update={
                         "cost_basis_native": lot.cost_basis_native + add_n,

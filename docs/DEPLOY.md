@@ -61,12 +61,15 @@ Or use wizard step **Deploy → Generate env vars**.
 | Variable | Source |
 |----------|--------|
 | `SPREADSHEET_ID` | From wizard / `.env` |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | One-line contents of the JSON key |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | One-line contents of the JSON key (paste from local `secrets/` — the API never returns the private key) |
 | `SECRET_KEY` | Random string (wizard generates) |
-| `CORS_ORIGINS` | Your public HTTPS origin |
+| `CORS_ORIGINS` | Your public HTTPS origin (required in production; no `*` fallback) |
 | `APP_ENV` | `production` |
-| `AUTH_MODE` | `dev` (service account) |
+| `AUTH_MODE` | Prefer `oauth` for public hosts. For trusted **single-user** SA deploys only: `dev` **and** `ALLOW_OPEN_AUTH=true` |
+| `ALLOW_OPEN_AUTH` | `true` only with `AUTH_MODE=dev` on a private/trusted host. Omit (or `false`) with `oauth` |
 | `REQUIRE_SHEETS` | `true` |
+
+**Auth note:** Production refuses open API access when `AUTH_MODE` is `dev` or `disabled` unless `ALLOW_OPEN_AUTH=true`. Without that flag the API returns **503** on authenticated routes.
 
 ## 4. Render (alternative)
 

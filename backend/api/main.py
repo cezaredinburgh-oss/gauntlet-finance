@@ -52,6 +52,25 @@ def _health_payload() -> HealthResponse:
     )
 
 
+def _safe_dist_file(dist_root: Path, path: str) -> Path | None:
+    """
+    Resolve a static file under dist_root only if ``path`` stays inside the tree.
+
+    Prevents path traversal (e.g. ``../.env``) via SPA fallback.
+    """
+    if not path:
+        return None
+    root = dist_root.resolve()
+    candidate = (root / path).resolve()
+    try:
+        ok = candidate.is_relative_to(root)
+    except AttributeError:  # pragma: no cover — Python < 3.9
+        ok = str(candidate).startswith(str(root))
+    if ok and candidate.is_file():
+        return candidate
+    return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -64,6 +83,17 @@ async def lifespan(app: FastAPI):
             "REQUIRE_SHEETS=true but SPREADSHEET_ID is empty. "
             "Set SPREADSHEET_ID + GOOGLE_SERVICE_ACCOUNT_JSON in host variables. "
             "App is starting in degraded mode so deploys can succeed."
+        )
+    if (
+        settings.is_production
+        and settings.auth_mode in {"dev", "disabled"}
+        and not settings.allow_open_auth
+    ):
+        logger.critical(
+            "Production with AUTH_MODE=%s and ALLOW_OPEN_AUTH=false: "
+            "API will refuse open access (503). Set AUTH_MODE=oauth or "
+            "ALLOW_OPEN_AUTH=true for trusted single-user deploys only.",
+            settings.auth_mode,
         )
     logger.info(
         "Starting %s (auth_mode=%s, spreadsheet=%s)",
@@ -88,9 +118,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Never fall back to CORS * in production (empty list = no browser cross-origin).
+    cors_origins = settings.cors_origin_list
+    if not cors_origins:
+        cors_origins = [] if settings.is_production else ["*"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origin_list or ["*"],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -176,9 +211,9 @@ def create_app() -> FastAPI:
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
 
             if path:
-                candidate = _FRONTEND_DIST / path
-                if candidate.is_file():
-                    return FileResponse(candidate)
+                safe = _safe_dist_file(_FRONTEND_DIST, path)
+                if safe is not None:
+                    return FileResponse(safe)
 
             return FileResponse(_FRONTEND_DIST / "index.html")
 

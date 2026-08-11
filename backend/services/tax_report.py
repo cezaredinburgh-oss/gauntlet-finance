@@ -13,7 +13,18 @@ from backend.schema.models import (
     InvestmentLot,
     LotStatus,
 )
+from backend.services.realized import iter_unique_allocations
 from backend.sheets.repository import SheetsRepository
+
+
+def _is_taxable_disposal_allocation(e: InvestmentEvent) -> bool:
+    """True for lot allocations that count as tax disposals (not transfer-outs)."""
+    if e.archived:
+        return False
+    notes = (e.notes or "").lower()
+    if "transfer_out" in notes:
+        return False
+    return True
 
 
 def build_tax_report(
@@ -33,7 +44,7 @@ def build_tax_report(
 
     engine = LotEngine(exemption_days=exemption_days)
 
-    # Realized disposals in year (LotAllocation with gains)
+    # Realized disposals in year (unique LotAllocation with gains; no transfer_out)
     disposals: list[dict[str, Any]] = []
     exempt_disposals: list[dict[str, Any]] = []
     taxable_disposals: list[dict[str, Any]] = []
@@ -43,12 +54,10 @@ def build_tax_report(
     exempt_gain_czk = Decimal("0")
     taxable_gain_czk = Decimal("0")
 
-    for e in events:
-        if e.event_type != InvestmentEventType.LOT_ALLOCATION:
-            continue
+    for e in iter_unique_allocations(events):
         if e.event_date.year != year:
             continue
-        if e.archived:
+        if not _is_taxable_disposal_allocation(e):
             continue
         row = {
             "id": str(e.id),
@@ -151,10 +160,8 @@ def build_tax_report(
 def _allocation_years(events: list[InvestmentEvent]) -> list[int]:
     years = {
         e.event_date.year
-        for e in events
-        if not e.archived
-        and e.event_type == InvestmentEventType.LOT_ALLOCATION
-        and e.event_date is not None
+        for e in iter_unique_allocations(events)
+        if e.event_date is not None and _is_taxable_disposal_allocation(e)
     }
     return sorted(years)
 
@@ -177,15 +184,15 @@ def summary_by_year(
     as_of: date | None = None,
     exemption_days: int = 1095,
 ) -> dict[str, Any]:
-    """Aggregate realised gains per calendar year (LotAllocation only)."""
+    """Aggregate realised gains per calendar year (unique LotAllocation only)."""
     del exemption_days  # reserved for future cost adjustments
     as_of = as_of or date.today()
     events = [
         r for r in repo.list_rows("InvestmentEvents") if isinstance(r, InvestmentEvent)
     ]
     by: dict[int, dict[str, Decimal | int]] = {}
-    for e in events:
-        if e.archived or e.event_type != InvestmentEventType.LOT_ALLOCATION:
+    for e in iter_unique_allocations(events):
+        if not _is_taxable_disposal_allocation(e):
             continue
         y = e.event_date.year
         bucket = by.setdefault(

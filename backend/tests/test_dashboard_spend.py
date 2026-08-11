@@ -104,8 +104,9 @@ def test_pace_investment_split_and_by_category():
     assert Decimal(pace["spend_30d_living_usd"]) == Decimal("300.00")
     assert pace["investments_share_30d_pct"] == 50.0
 
-    # 180d: 600 + 600 inv older = 1200 total, 900 inv
-    assert Decimal(pace["spend_30d_usd"]) + Decimal("600.00")  # sanity
+    # 180d: 600 (30d) + 600 inv older = 1200 total, 900 inv → monthly avgs
+    assert Decimal(pace["avg_monthly_6m_usd"]) * Decimal("6") == Decimal("1200.00")
+    assert Decimal(pace["avg_monthly_6m_investments_usd"]) * Decimal("6") == Decimal("900.00")
     assert Decimal(pace["avg_monthly_6m_usd"]) == Decimal("200.00")  # 1200/6
     assert Decimal(pace["avg_monthly_6m_investments_usd"]) == Decimal("150.00")  # 900/6
     assert Decimal(pace["avg_monthly_6m_living_usd"]) == Decimal("50.00")  # 300/6

@@ -44,6 +44,83 @@ import type {
  */
 export const API_BASE = (import.meta.env.VITE_API_BASE ?? "/api").replace(/\/$/, "");
 
+/** Dispatched on any API 401 so AuthContext can clear session / show login. */
+export const AUTH_UNAUTHORIZED_EVENT = "auth:unauthorized";
+
+/** Optional hook for tests / custom hosts; also dispatches AUTH_UNAUTHORIZED_EVENT. */
+let onUnauthorized: (() => void) | null = null;
+
+export function setOnUnauthorized(handler: (() => void) | null): void {
+  onUnauthorized = handler;
+}
+
+function notifyUnauthorized(): void {
+  try {
+    onUnauthorized?.();
+  } catch {
+    /* ignore listener errors */
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(AUTH_UNAUTHORIZED_EVENT));
+  }
+}
+
+/**
+ * Format FastAPI / Pydantic error `detail` for display.
+ * Arrays of `{loc, msg, type}` become readable lines, not `[object Object]`.
+ */
+export function formatApiDetail(detail: unknown, fallback = "Request failed"): string {
+  if (detail == null || detail === "") return fallback;
+  if (typeof detail === "string") return detail;
+  if (typeof detail === "number" || typeof detail === "boolean") return String(detail);
+
+  if (Array.isArray(detail)) {
+    const parts = detail.map((item) => {
+      if (typeof item === "string") return item;
+      if (item && typeof item === "object") {
+        const rec = item as { loc?: unknown; msg?: unknown; message?: unknown };
+        const msg =
+          typeof rec.msg === "string"
+            ? rec.msg
+            : typeof rec.message === "string"
+              ? rec.message
+              : null;
+        const locParts = Array.isArray(rec.loc)
+          ? rec.loc.filter(
+              (x) => x !== "body" && x !== "query" && x !== "path" && x !== "header",
+            )
+          : [];
+        const loc = locParts.map(String).join(".");
+        if (msg) return loc ? `${loc}: ${msg}` : msg;
+        try {
+          return JSON.stringify(item);
+        } catch {
+          return String(item);
+        }
+      }
+      return String(item);
+    });
+    const joined = parts.filter(Boolean).join("; ");
+    return joined || fallback;
+  }
+
+  if (typeof detail === "object") {
+    const rec = detail as { msg?: unknown; message?: unknown; detail?: unknown };
+    if (typeof rec.msg === "string") return rec.msg;
+    if (typeof rec.message === "string") return rec.message;
+    if (rec.detail != null && rec.detail !== detail) {
+      return formatApiDetail(rec.detail, fallback);
+    }
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return fallback;
+    }
+  }
+
+  return String(detail);
+}
+
 export class ApiError extends Error {
   status: number;
   detail: string;
@@ -70,14 +147,17 @@ async function request<T>(
   });
 
   if (!res.ok) {
-    let detail = res.statusText;
+    if (res.status === 401) {
+      notifyUnauthorized();
+    }
+    let detail: unknown = res.statusText;
     try {
-      const body = await res.json();
-      detail = body.detail ?? JSON.stringify(body);
+      const body = (await res.json()) as { detail?: unknown };
+      detail = body.detail ?? body;
     } catch {
       /* ignore */
     }
-    throw new ApiError(res.status, String(detail));
+    throw new ApiError(res.status, formatApiDetail(detail, res.statusText || "Request failed"));
   }
 
   if (res.status === 204) return undefined as T;
@@ -429,9 +509,17 @@ export const api = {
       };
       xhr.onload = () => {
         try {
-          const body = JSON.parse(xhr.responseText);
-          if (xhr.status >= 200 && xhr.status < 300) resolve(body);
-          else reject(new ApiError(xhr.status, body.detail || xhr.statusText));
+          const body = JSON.parse(xhr.responseText) as { detail?: unknown };
+          if (xhr.status >= 200 && xhr.status < 300) resolve(body as UploadResult);
+          else {
+            if (xhr.status === 401) notifyUnauthorized();
+            reject(
+              new ApiError(
+                xhr.status,
+                formatApiDetail(body.detail ?? body, xhr.statusText || "Upload failed"),
+              ),
+            );
+          }
         } catch (err) {
           reject(err);
         }

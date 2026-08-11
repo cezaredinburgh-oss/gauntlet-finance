@@ -4,6 +4,30 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — PR6 hygiene + cache single-flight + light I/O (Wave 3 / P3)
+
+- Deleted remaining OS duplicate `* 2.*` sources (routes/services/frontend/docs); left `__pycache__` alone.
+- `response_cache.cached`: per-key single-flight so concurrent misses share one factory; concurrent unit test.
+- Offload heavy sync work from the event loop: `asyncio.to_thread` on upload/retry and dashboard/alerts `cached(...)`.
+- `parse_decimal`: EU/CZ comma-decimal path (`1.234,56`, `1234,56`) without breaking US `1,234.56`.
+
+## 2026-08-11 — PR5 critical product tests (Wave 2 / P2)
+
+- Tests: internal transfers excluded from dashboard `income_usd`/`expense_usd` + pace; fixed brittle pace assert in `test_dashboard_spend`; response_cache unit tests.
+
+## 2026-08-11 — PR3 import harden (lock + ticker-scoped lot rebuild)
+
+- Process-level `threading.Lock` serializes `ImportPipeline.upload` (wait, do not reject).
+- On ERROR/PENDING retry or when touched tickers already have events/lots: rebuild those tickers from all non-allocation events (`lot_rebuild.py`); drop stale LotAllocations/lots; preserve other tickers.
+- Ensure Digital Assets Europe category rule before categorize (`ensure_digital_assets_rule`).
+
+## 2026-08-11 — PR1 security: production auth gate + SPA path + deploy-env redaction
+
+- Production + `AUTH_MODE=dev|disabled` without `ALLOW_OPEN_AUTH=true` → API returns **503** (no open access). Tests/dev (`APP_ENV=test|development`) unchanged.
+- Setup wizard: blocked in production when sheet already configured unless `ALLOW_SETUP_WIZARD`; optional `SETUP_TOKEN` / `X-Setup-Token` on write endpoints.
+- `GET /setup/api/deploy-env` never returns SA private key (placeholder only + `has_service_account`); template uses `AUTH_MODE=dev` + `ALLOW_OPEN_AUTH=true` for trusted single-user (document prefer oauth).
+- SPA fallback path sandbox (`_safe_dist_file`); production CORS never falls back to `*`.
+
 ## 2026-08-11 — Chart-first book / mark reconciliation
 
 - Confusion: chart endpoints (+$4.9k book) vs headline mark P&L (+$13.7k) → “missing” $8.8k.
@@ -325,3 +349,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 **Backend:** `compute_cashflow_monthly(months=None)` auto-window from first Buy/Sell through `as_of`, cap **120** months (snapshot path). Explicit `months=N` unchanged for unit tests.
 
 **Tests:** existing months=2 cases; `test_cashflow_monthly_auto_history_spans_years`.
+
+## 2026-08-11 — Lots + tax: no phantom FX losses, short-sell notes, unique disposals
+
+- C4: sell allocation leaves `realized_gain_usd/czk` None when FX convert fails (no `0 - cost` phantom loss).
+- H5: short/over-sell tags sell notes `unallocated_qty=…; short_sell_unallocated`.
+- H6: cross-currency fee converts into lot native (or add_n=0); never mixes currencies in `cost_basis_native`.
+- C5/M8: tax report uses `iter_unique_allocations` and skips `transfer_out` notes.
+

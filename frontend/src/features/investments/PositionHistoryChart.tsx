@@ -261,19 +261,19 @@ export function PositionHistoryChart({
     };
   }, [range, refreshTick]);
 
-  // Soft refetch on prices-updated
+  // Soft refetch when Layout (price coordinator) refreshes marks — no second 60s poll
   useEffect(() => {
     const onPrices = () => setRefreshTick((n) => n + 1);
     window.addEventListener("prices-updated", onPrices);
     return () => window.removeEventListener("prices-updated", onPrices);
   }, []);
 
-  // Auto-refresh every 60s on 1D (watch mode)
+  // Pop-out has no Layout coordinator; keep light 1D watch poll there only
   useEffect(() => {
-    if (range !== "1d") return;
+    if (variant !== "popout" || range !== "1d") return;
     const id = window.setInterval(() => setRefreshTick((n) => n + 1), 60_000);
     return () => window.clearInterval(id);
-  }, [range]);
+  }, [range, variant]);
 
   const intraday = data?.interval === "5m" || data?.meta?.point_kind === "intraday";
 

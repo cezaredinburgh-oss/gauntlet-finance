@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from typing import Any, Literal
 
@@ -57,7 +58,8 @@ async def get_dashboard_summary(
             persist_fx=False,
         )
 
-    return cached(key, _DASH_TTL, _build)
+    # cached() is sync + may run heavy sheet/CPU work; offload from event loop.
+    return await asyncio.to_thread(cached, key, _DASH_TTL, _build)
 
 
 @router.get("/alerts")
@@ -67,7 +69,8 @@ async def get_alerts(
     _user: UserDep,
 ) -> dict[str, Any]:
     days = settings.holding_period_exemption_days
-    return cached(
+    return await asyncio.to_thread(
+        cached,
         f"alerts:v3:{days}",
         _ALERTS_TTL,
         lambda: build_alerts(repo, persist_fx=False, exemption_days=days),

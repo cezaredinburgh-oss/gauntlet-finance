@@ -23,6 +23,21 @@ def settings_dep() -> Settings:
 
 SettingsDep = Annotated[Settings, Depends(settings_dep)]
 
+_OPEN_AUTH_BLOCKED_DETAIL = (
+    "Open authentication is not allowed in production. "
+    "Set AUTH_MODE=oauth, or set ALLOW_OPEN_AUTH=true only for "
+    "trusted single-user deploys."
+)
+
+
+def _reject_unpermitted_open_auth(settings: Settings) -> None:
+    """Block AUTH_MODE=dev/disabled in production unless ALLOW_OPEN_AUTH."""
+    if settings.auth_mode in {"dev", "disabled"} and not settings.open_auth_permitted:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_OPEN_AUTH_BLOCKED_DETAIL,
+        )
+
 
 def get_session_user(
     request: Request,
@@ -31,6 +46,7 @@ def get_session_user(
     gf_session: Annotated[str | None, Cookie(alias="gf_session")] = None,
 ) -> SessionUser | None:
     if settings.auth_mode in {"dev", "disabled"}:
+        _reject_unpermitted_open_auth(settings)
         return SessionUser(
             email="dev@localhost",
             name="Dev User",
@@ -57,6 +73,7 @@ def require_user(
     user: Annotated[SessionUser | None, Depends(get_session_user)],
     settings: SettingsDep,
 ) -> SessionUser:
+    _reject_unpermitted_open_auth(settings)
     if settings.auth_mode == "disabled":
         return SessionUser(
             email="anonymous@localhost",

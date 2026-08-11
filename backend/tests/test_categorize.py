@@ -164,7 +164,18 @@ def test_repair_revolut_digital_assets_transfers():
     assert stats["transactions_updated"] == 2  # to + from
     assert stats["transactions_already_ok"] == 1
     assert stats["transactions_skipped_override"] == 1
-    assert stats["rules_updated"] >= 1
+    # Rule may already be seeded by ensure_default_categories (rules_updated=0)
+    # or created/updated here (rules_updated>=1). Either way it must exist.
+    from backend.schema.models import CategoryRule
+
+    da_rules = [
+        r
+        for r in repo.list_rows("CategoryRules")
+        if isinstance(r, CategoryRule)
+        and "digital assets" in (r.match_value or "").lower()
+    ]
+    assert len(da_rules) >= 1
+    assert da_rules[0].set_internal_transfer is True
 
     by_id = {t.id: t for t in repo.list_rows("Transactions")}
     assert by_id[to_da.id].is_internal_transfer is True

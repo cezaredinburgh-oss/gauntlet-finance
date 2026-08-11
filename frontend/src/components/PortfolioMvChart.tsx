@@ -146,17 +146,12 @@ export function PortfolioMvChart() {
     };
   }, [range, book, tick]);
 
+  // Soft refetch via Layout prices-updated (no dual 60s hard-poll)
   useEffect(() => {
     const onPrices = () => setTick((n) => n + 1);
     window.addEventListener("prices-updated", onPrices);
     return () => window.removeEventListener("prices-updated", onPrices);
   }, []);
-
-  useEffect(() => {
-    if (range !== "1d") return;
-    const id = window.setInterval(() => setTick((n) => n + 1), 60_000);
-    return () => window.clearInterval(id);
-  }, [range]);
 
   const intraday = data?.interval === "5m" || data?.meta?.point_kind === "intraday";
 

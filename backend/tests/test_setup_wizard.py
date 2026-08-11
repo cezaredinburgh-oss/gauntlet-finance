@@ -88,3 +88,42 @@ def test_upload_credentials_and_save_sheet(client):
     assert r2.json()["spreadsheet_id"] == "abcDEF1234567890xyz"
     env_text = (tmp / ".env").read_text(encoding="utf-8")
     assert "SPREADSHEET_ID=abcDEF1234567890xyz" in env_text
+
+
+def test_deploy_env_redacts_service_account(client, monkeypatch):
+    """deploy-env must never echo private keys even when a SA file is present."""
+    c, tmp = client
+    sa_path = tmp / "secrets" / "service-account.json"
+    sa_path.write_text(
+        json.dumps(
+            {
+                "type": "service_account",
+                "private_key": "-----BEGIN PRIVATE KEY-----\nLEAKME\n-----END PRIVATE KEY-----\n",
+                "client_email": "sa@demo.iam.gserviceaccount.com",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SPREADSHEET_ID", "abcDEF1234567890xyz")
+    monkeypatch.setenv(
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        str(sa_path),
+    )
+    get_settings.cache_clear()
+
+    from backend.sheets import google_sheets as gs_mod
+
+    monkeypatch.setattr(
+        gs_mod,
+        "resolve_service_account_path",
+        lambda path: sa_path,
+    )
+
+    r = c.get("/setup/api/deploy-env")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    blob = json.dumps(body)
+    assert "BEGIN PRIVATE KEY" not in blob
+    assert "LEAKME" not in blob
+    assert body.get("has_service_account") is True
+    assert "ALLOW_OPEN_AUTH" in body["env"]

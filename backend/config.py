@@ -35,7 +35,11 @@ class Settings(BaseSettings):
     # - dev: no browser login; uses service account for Sheets when SPREADSHEET_ID set
     # - oauth: Google user login (browser) for Sheets access
     # - disabled: no auth checks (still needs credentials for Sheets)
+    # Production refuses auth_mode=dev/disabled unless ALLOW_OPEN_AUTH=true.
     auth_mode: Literal["oauth", "dev", "disabled"] = "dev"
+    allow_open_auth: bool = False  # env ALLOW_OPEN_AUTH — required for open auth in production
+    allow_setup_wizard: bool = False  # env ALLOW_SETUP_WIZARD — re-enable wizard when sheet configured
+    setup_token: str = ""  # env SETUP_TOKEN — optional X-Setup-Token for wizard write APIs
     secret_key: str = Field(default="dev-change-me-use-long-random-string")
     google_client_id: str = ""
     google_client_secret: str = ""
@@ -87,6 +91,28 @@ class Settings(BaseSettings):
     @property
     def spreadsheet_configured(self) -> bool:
         return bool(self.spreadsheet_id)
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env == "production"
+
+    @property
+    def open_auth_permitted(self) -> bool:
+        """
+        Whether unauthenticated open access (auth_mode dev/disabled) is allowed.
+
+        True when:
+        - auth_mode is not open (e.g. oauth), or
+        - ALLOW_OPEN_AUTH=true, or
+        - APP_ENV is development/test (local and pytest).
+        """
+        if self.auth_mode not in {"dev", "disabled"}:
+            return True
+        if self.allow_open_auth:
+            return True
+        if self.app_env in {"development", "test"}:
+            return True
+        return False
 
 
 @lru_cache

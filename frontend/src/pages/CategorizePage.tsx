@@ -144,6 +144,8 @@ export function CategorizePage() {
   );
   const [sortKey, setSortKey] = useState<TxSortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  /** H12: ignore stale responses when filters race */
+  const loadGen = useRef(0);
 
   const dateFrom = searchParams.get("date_from") || "";
   const dateTo = searchParams.get("date_to") || "";
@@ -204,9 +206,10 @@ export function CategorizePage() {
 
   const load = useCallback(async (opts?: { quiet?: boolean }) => {
     const quiet = opts?.quiet ?? false;
+    const gen = ++loadGen.current;
     // Keep existing UI visible while refreshing (avoids full-page blank on reloads)
     if (!quiet) setLoading(true);
-    setError(null);
+    if (!quiet) setError(null);
     try {
       const apiCategoryId =
         categoryIdParam && isUuid(categoryIdParam) ? categoryIdParam : undefined;
@@ -227,6 +230,7 @@ export function CategorizePage() {
         api.merchantQueue(180, 25).catch(() => ({ items: [], days: 180, coverage_pct: 0 })),
         api.ruleSuggestions(180, 15).catch(() => ({ items: [], days: 180, coverage_pct: 0 })),
       ]);
+      if (gen !== loadGen.current) return;
       setItems(t.items);
       setTotal(t.total);
       setCats(c.items);
@@ -234,6 +238,7 @@ export function CategorizePage() {
       setRules(r.items);
       setQueue(mq.items || []);
       setSuggestions(sug.items || []);
+      setError(null);
       setQueueCat((prev) => {
         const next = { ...prev };
         for (const m of mq.items || []) {
@@ -244,8 +249,12 @@ export function CategorizePage() {
         return next;
       });
     } catch (e) {
+      if (gen !== loadGen.current) return;
+      // Quiet refresh failures must not blank a loaded workspace
+      if (quiet) return;
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
+      if (gen !== loadGen.current) return;
       if (!quiet) setLoading(false);
     }
   }, [currency, hideTransfers, dateFrom, dateTo, categoryIdParam, drilldownActive]);

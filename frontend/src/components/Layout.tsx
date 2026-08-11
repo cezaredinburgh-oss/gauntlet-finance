@@ -15,7 +15,7 @@ import {
   Receipt,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import { cn } from "../lib/cn";
@@ -100,6 +100,138 @@ const INVESTMENTS_OPEN_KEY = "nav.investments.open";
 function pathInGroup(pathname: string, group: NavGroup): boolean {
   return group.children.some(
     (c) => pathname === c.to || pathname.startsWith(c.to + "/"),
+  );
+}
+
+function leafActiveClass(isActive: boolean): string {
+  return cn(
+    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
+    isActive
+      ? "bg-brand/15 text-brand"
+      : "text-ink-muted hover:bg-white/5 hover:text-ink",
+  );
+}
+
+/** Stable sidebar/drawer nav (not recreated inside Layout each render). */
+function NavItems({
+  pathname,
+  expensesOpen,
+  investmentsOpen,
+  setExpensesOpen,
+  setInvestmentsOpen,
+  alertWarns,
+  onNavigate,
+  navigate,
+}: {
+  pathname: string;
+  expensesOpen: boolean;
+  investmentsOpen: boolean;
+  setExpensesOpen: Dispatch<SetStateAction<boolean>>;
+  setInvestmentsOpen: Dispatch<SetStateAction<boolean>>;
+  alertWarns: number;
+  onNavigate?: () => void;
+  navigate: (to: string) => void;
+}) {
+  function renderLeaf(
+    leaf: NavLeaf,
+    opts: { onNavigate?: () => void; nested?: boolean } = {},
+  ) {
+    const Icon = leaf.icon;
+    return (
+      <NavLink
+        key={leaf.to}
+        to={leaf.to}
+        end={leaf.end}
+        onClick={opts.onNavigate}
+        className={({ isActive }) =>
+          cn(leafActiveClass(isActive), opts.nested && "py-2 pl-3")
+        }
+      >
+        <Icon className={cn("shrink-0", opts.nested ? "h-4 w-4" : "h-5 w-5")} />
+        <span className="flex-1">{leaf.label}</span>
+        {leaf.badge === "alerts" && alertWarns > 0 && (
+          <span className="badge bg-warn/20 text-warn">{alertWarns}</span>
+        )}
+      </NavLink>
+    );
+  }
+
+  return (
+    <nav className="flex flex-col gap-1 p-3">
+      {nav.map((item) => {
+        if (item.kind === "leaf") {
+          return renderLeaf(item, { onNavigate });
+        }
+
+        const GroupIcon = item.icon;
+        const open =
+          item.id === "expenses"
+            ? expensesOpen
+            : item.id === "investments"
+              ? investmentsOpen
+              : true;
+        const groupActive = pathInGroup(pathname, item);
+
+        return (
+          <div key={item.id} className="space-y-0.5">
+            <div
+              className={cn(
+                "flex items-center gap-1 rounded-xl transition",
+                groupActive && !open
+                  ? "bg-brand/15 text-brand"
+                  : groupActive
+                    ? "text-brand"
+                    : "text-ink-muted",
+              )}
+            >
+              <button
+                type="button"
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition hover:bg-white/5 hover:text-ink",
+                  groupActive && "text-brand",
+                )}
+                onClick={() => {
+                  if (item.id === "expenses") setExpensesOpen(true);
+                  if (item.id === "investments") setInvestmentsOpen(true);
+                  navigate(item.defaultTo);
+                  onNavigate?.();
+                }}
+              >
+                <GroupIcon className="h-5 w-5 shrink-0" />
+                <span className="flex-1 truncate">{item.label}</span>
+                {item.id === "expenses" && alertWarns > 0 && (
+                  <span className="badge bg-warn/20 text-warn">{alertWarns}</span>
+                )}
+              </button>
+              <button
+                type="button"
+                className="rounded-lg p-2 text-ink-muted hover:bg-white/5 hover:text-ink"
+                aria-label={open ? `Collapse ${item.label}` : `Expand ${item.label}`}
+                aria-expanded={open}
+                onClick={() => {
+                  if (item.id === "expenses") setExpensesOpen((v) => !v);
+                  if (item.id === "investments") setInvestmentsOpen((v) => !v);
+                }}
+              >
+                <ChevronDown
+                  className={cn(
+                    "h-4 w-4 transition-transform",
+                    open ? "rotate-0" : "-rotate-90",
+                  )}
+                />
+              </button>
+            </div>
+            {open && (
+              <div className="ml-3 space-y-0.5 border-l border-white/10 pl-2">
+                {item.children.map((child) =>
+                  renderLeaf(child, { onNavigate, nested: true }),
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -258,117 +390,6 @@ export function Layout() {
     }
   }
 
-  function leafActiveClass(isActive: boolean) {
-    return cn(
-      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
-      isActive
-        ? "bg-brand/15 text-brand"
-        : "text-ink-muted hover:bg-white/5 hover:text-ink",
-    );
-  }
-
-  function renderLeaf(
-    leaf: NavLeaf,
-    opts: { onNavigate?: () => void; nested?: boolean } = {},
-  ) {
-    const Icon = leaf.icon;
-    return (
-      <NavLink
-        key={leaf.to}
-        to={leaf.to}
-        end={leaf.end}
-        onClick={opts.onNavigate}
-        className={({ isActive }) =>
-          cn(leafActiveClass(isActive), opts.nested && "py-2 pl-3")
-        }
-      >
-        <Icon className={cn("shrink-0", opts.nested ? "h-4 w-4" : "h-5 w-5")} />
-        <span className="flex-1">{leaf.label}</span>
-        {leaf.badge === "alerts" && alertWarns > 0 && (
-          <span className="badge bg-warn/20 text-warn">{alertWarns}</span>
-        )}
-      </NavLink>
-    );
-  }
-
-  const NavItems = ({ onNavigate }: { onNavigate?: () => void }) => (
-    <nav className="flex flex-col gap-1 p-3">
-      {nav.map((item) => {
-        if (item.kind === "leaf") {
-          return renderLeaf(item, { onNavigate });
-        }
-
-        const GroupIcon = item.icon;
-        const open =
-          item.id === "expenses"
-            ? expensesOpen
-            : item.id === "investments"
-              ? investmentsOpen
-              : true;
-        const groupActive = pathInGroup(location.pathname, item);
-
-        return (
-          <div key={item.id} className="space-y-0.5">
-            <div
-              className={cn(
-                "flex items-center gap-1 rounded-xl transition",
-                groupActive && !open
-                  ? "bg-brand/15 text-brand"
-                  : groupActive
-                    ? "text-brand"
-                    : "text-ink-muted",
-              )}
-            >
-              <button
-                type="button"
-                className={cn(
-                  "flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition hover:bg-white/5 hover:text-ink",
-                  groupActive && "text-brand",
-                )}
-                onClick={() => {
-                  if (item.id === "expenses") setExpensesOpen(true);
-                  if (item.id === "investments") setInvestmentsOpen(true);
-                  navigate(item.defaultTo);
-                  onNavigate?.();
-                }}
-              >
-                <GroupIcon className="h-5 w-5 shrink-0" />
-                <span className="flex-1 truncate">{item.label}</span>
-                {item.id === "expenses" && alertWarns > 0 && (
-                  <span className="badge bg-warn/20 text-warn">{alertWarns}</span>
-                )}
-              </button>
-              <button
-                type="button"
-                className="rounded-lg p-2 text-ink-muted hover:bg-white/5 hover:text-ink"
-                aria-label={open ? `Collapse ${item.label}` : `Expand ${item.label}`}
-                aria-expanded={open}
-                onClick={() => {
-                  if (item.id === "expenses") setExpensesOpen((v) => !v);
-                  if (item.id === "investments") setInvestmentsOpen((v) => !v);
-                }}
-              >
-                <ChevronDown
-                  className={cn(
-                    "h-4 w-4 transition-transform",
-                    open ? "rotate-0" : "-rotate-90",
-                  )}
-                />
-              </button>
-            </div>
-            {open && (
-              <div className="ml-3 space-y-0.5 border-l border-white/10 pl-2">
-                {item.children.map((child) =>
-                  renderLeaf(child, { onNavigate, nested: true }),
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </nav>
-  );
-
   return (
     <div className="min-h-screen bg-surface text-ink lg:flex">
       {/* Desktop sidebar — sticky so it stays visible while main scrolls */}
@@ -382,7 +403,15 @@ export function Layout() {
           </Link>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <NavItems />
+          <NavItems
+            pathname={location.pathname}
+            expensesOpen={expensesOpen}
+            investmentsOpen={investmentsOpen}
+            setExpensesOpen={setExpensesOpen}
+            setInvestmentsOpen={setInvestmentsOpen}
+            alertWarns={alertWarns}
+            navigate={navigate}
+          />
         </div>
         <div className="border-t border-slate-500/20 p-4 text-xs text-ink-muted">
           <div className="truncate font-medium text-ink">{user?.name || user?.email}</div>
@@ -460,7 +489,16 @@ export function Layout() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto">
-              <NavItems onNavigate={() => setMobileOpen(false)} />
+              <NavItems
+                pathname={location.pathname}
+                expensesOpen={expensesOpen}
+                investmentsOpen={investmentsOpen}
+                setExpensesOpen={setExpensesOpen}
+                setInvestmentsOpen={setInvestmentsOpen}
+                alertWarns={alertWarns}
+                navigate={navigate}
+                onNavigate={() => setMobileOpen(false)}
+              />
             </div>
           </div>
         </div>

@@ -8,8 +8,8 @@ from decimal import Decimal, InvalidOperation
 _CURRENCY_TOKEN = re.compile(
     r"(?i)\b(USD|EUR|CZK|GBP|INR|PLN|CHF|BTC|ETH)\b"
 )
-# Keep digits, sign, and decimal point only after stripping currency noise.
-_NON_NUMERIC = re.compile(r"[^\d.\-]")
+# Keep digits, sign, decimal point, and comma while normalizing separators.
+_NON_NUMERIC_KEEP_SEP = re.compile(r"[^\d.,\-]")
 
 
 def detect_currency_token(raw: str | None) -> str | None:
@@ -25,9 +25,42 @@ def detect_currency_token(raw: str | None) -> str | None:
     return token
 
 
+def _normalize_decimal_string(s: str) -> str:
+    """
+    Normalize US and European amount separators to a Decimal-friendly string.
+
+    - US: ``1,234.56`` / ``$1,922.70``
+    - EU/CZ: ``1.234,56`` / ``1234,56`` / ``1 234,56`` (space thousands)
+    - Plain: ``-185``, ``986.26``
+
+    Ambiguous single-dot forms (``1.234``) stay as US-style fractional.
+    """
+    s = s.replace(" ", "")
+    has_comma = "," in s
+    has_dot = "." in s
+    if has_comma and has_dot:
+        # Last separator is the decimal mark.
+        if s.rfind(",") > s.rfind("."):
+            # European: 1.234,56
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            # US: 1,234.56
+            s = s.replace(",", "")
+    elif has_comma:
+        parts = s.split(",")
+        # One comma + 1–2 fractional digits → European decimal (Raiffeisen).
+        if len(parts) == 2 and 1 <= len(parts[1]) <= 2 and parts[1].isdigit():
+            s = f"{parts[0]}.{parts[1]}"
+        else:
+            # Thousands groups: 1,234 or 1,234,567
+            s = s.replace(",", "")
+    return s
+
+
 def parse_decimal(raw: str | None) -> Decimal:
     """
-    Parse amounts like ``$1,922.70``, ``USD 986.26``, ``4,263.92 CZK``, ``-185``.
+    Parse amounts like ``$1,922.70``, ``USD 986.26``, ``4,263.92 CZK``,
+    ``-185``, and European forms ``1.234,56`` / ``1234,56``.
     """
     if raw is None:
         raise ValueError("empty amount")
@@ -36,8 +69,9 @@ def parse_decimal(raw: str | None) -> Decimal:
         raise ValueError("empty amount")
     s = s.replace("\u00a0", " ").replace("\u202f", " ")
     s = _CURRENCY_TOKEN.sub("", s)
-    s = s.replace("$", "").replace(",", "").strip()
-    s = _NON_NUMERIC.sub("", s)
+    s = s.replace("$", "").strip()
+    s = _NON_NUMERIC_KEEP_SEP.sub("", s)
+    s = _normalize_decimal_string(s)
     if s in {"", "-", ".", "-."}:
         raise ValueError(f"unparseable amount: {raw!r}")
     try:

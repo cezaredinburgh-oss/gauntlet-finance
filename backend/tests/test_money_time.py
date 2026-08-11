@@ -19,6 +19,14 @@ def test_parse_decimal_currency_noise():
     assert parse_decimal("USD 986.26") == Decimal("986.26")
 
 
+def test_parse_decimal_european_comma():
+    """Raiffeisen / CZ style: comma decimal, optional dot or space thousands."""
+    assert parse_decimal("1.234,56") == Decimal("1234.56")
+    assert parse_decimal("1234,56") == Decimal("1234.56")
+    assert parse_decimal("-1 234,50") == Decimal("-1234.50")
+    assert parse_decimal("80,00 CZK") == Decimal("80.00")
+
+
 def test_parse_money_with_currency():
     amount, ccy = parse_money_with_currency("94.75 CZK")
     assert amount == Decimal("94.75")

@@ -135,7 +135,11 @@ export function InvestmentsPage() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** Soft banner only — never gates the page when snap already loaded */
+  const [softError, setSoftError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const snapRef = useRef<PortfolioSnapshot | null>(null);
+  snapRef.current = snap;
 
   const setHoldingsSortMode = (mode: HoldingsSortMode) => {
     setHoldingsSort(mode);
@@ -170,6 +174,7 @@ export function InvestmentsPage() {
       setSnap(snapR);
       setDigests(digR.tickers);
       setError(null);
+      setSoftError(null);
       setSelectedTicker((prev) => {
         if (preserveSelection && prev && digR.tickers.some((t) => t.ticker === prev)) {
           return prev;
@@ -196,7 +201,13 @@ export function InvestmentsPage() {
         return defaultChartScope(digR.tickers);
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed");
+      const msg = e instanceof Error ? e.message : "Failed";
+      // H9: quiet/prices-updated failure must keep last good data — never full-page wipe
+      if (quiet && snapRef.current) {
+        setSoftError(msg);
+        return;
+      }
+      setError(msg);
     } finally {
       if (!quiet) setLoading(false);
     }
@@ -214,6 +225,8 @@ export function InvestmentsPage() {
         if (!cancelled) {
           setSnap(snapR);
           setDigests(digR.tickers);
+          setError(null);
+          setSoftError(null);
           const best = [...digR.tickers].sort((a, b) =>
           comparePerformance(a, b, "total"),
         )[0];
@@ -353,8 +366,9 @@ export function InvestmentsPage() {
     };
   }, [snap, digests]);
 
-  if (loading) return <PageLoader label="Loading investments…" />;
-  if (error) {
+  // Only full-page gate when we have nothing to show (H9: keep last good snap)
+  if (loading && !snap) return <PageLoader label="Loading investments…" />;
+  if (error && !snap) {
     return <EmptyState title="Couldn’t load investments" description={error} />;
   }
 
@@ -369,6 +383,22 @@ export function InvestmentsPage() {
         </p>
         <InvestmentsSubNav active="holdings" />
       </div>
+
+      {softError && snap && (
+        <div className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+          Couldn’t refresh marks: {softError}
+          <button
+            type="button"
+            className="ml-2 font-semibold underline"
+            onClick={() => {
+              setSoftError(null);
+              void load({ quiet: true, preserveSelection: true });
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {!hasHoldings ? (
         <EmptyState

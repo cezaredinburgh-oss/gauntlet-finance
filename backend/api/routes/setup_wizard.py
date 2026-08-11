@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -32,16 +33,44 @@ router = APIRouter(tags=["setup-wizard"])
 
 _WIZARD_HTML = Path(__file__).resolve().parents[2] / "setup_wizard" / "static" / "wizard.html"
 
+# Never put real SA private keys in deploy-env responses.
+_SA_JSON_PLACEHOLDER = (
+    "<set from secrets/service-account.json — not returned by API>"
+)
 
-def _wizard_allowed() -> None:
+
+def _wizard_allowed(
+    *,
+    write: bool = False,
+    x_setup_token: str | None = None,
+) -> None:
+    """
+    Gate setup wizard access.
+
+    - Production with SPREADSHEET_ID already set requires ALLOW_SETUP_WIZARD=true
+      (even when DEBUG=true).
+    - First-time production (no sheet yet) remains allowed for onboarding.
+    - When SETUP_TOKEN is configured, write endpoints require matching X-Setup-Token.
+    """
     settings = get_settings()
-    # Allow in development / debug; block pure production unless explicitly enabled
-    if settings.app_env == "production" and not settings.debug:
-        # still allow if no sheet configured (first-time setup)
-        if settings.spreadsheet_id:
+    if (
+        settings.app_env == "production"
+        and settings.spreadsheet_id
+        and not settings.allow_setup_wizard
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Setup wizard disabled in production when a sheet is already configured. "
+                "Set ALLOW_SETUP_WIZARD=true to re-enable."
+            ),
+        )
+    if write and settings.setup_token:
+        provided = (x_setup_token or "").strip()
+        if not provided or not secrets.compare_digest(provided, settings.setup_token):
             raise HTTPException(
                 status_code=403,
-                detail="Setup wizard disabled in production when a sheet is already configured.",
+                detail="Invalid or missing X-Setup-Token header.",
             )
 
 
@@ -91,9 +120,12 @@ async def setup_status() -> dict[str, Any]:
 
 
 @router.post("/setup/api/upload-credentials")
-async def upload_credentials(file: UploadFile = File(...)) -> dict[str, Any]:
+async def upload_credentials(
+    file: UploadFile = File(...),
+    x_setup_token: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
     """Save service-account JSON to secrets/service-account.json and update .env."""
-    _wizard_allowed()
+    _wizard_allowed(write=True, x_setup_token=x_setup_token)
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -136,8 +168,11 @@ async def upload_credentials(file: UploadFile = File(...)) -> dict[str, Any]:
 
 
 @router.post("/setup/api/save-spreadsheet")
-async def save_spreadsheet(body: SpreadsheetBody) -> dict[str, Any]:
-    _wizard_allowed()
+async def save_spreadsheet(
+    body: SpreadsheetBody,
+    x_setup_token: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    _wizard_allowed(write=True, x_setup_token=x_setup_token)
     sid = extract_spreadsheet_id(body.spreadsheet_id)
     if len(sid) < 10:
         raise HTTPException(
@@ -159,14 +194,17 @@ async def save_spreadsheet(body: SpreadsheetBody) -> dict[str, Any]:
 
 
 @router.post("/setup/api/create-spreadsheet")
-async def create_spreadsheet_route(body: CreateSpreadsheetBody | None = None) -> dict[str, Any]:
+async def create_spreadsheet_route(
+    body: CreateSpreadsheetBody | None = None,
+    x_setup_token: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
     """
     Create a new Google Spreadsheet with the service account (Drive/Sheets API).
 
     Prefer this over manual create+share: the SA owns the file; optionally share
     with your human Gmail so you can open it in the browser.
     """
-    _wizard_allowed()
+    _wizard_allowed(write=True, x_setup_token=x_setup_token)
     body = body or CreateSpreadsheetBody()
     _reload_settings()
     settings = get_settings()
@@ -250,9 +288,11 @@ async def create_spreadsheet_route(body: CreateSpreadsheetBody | None = None) ->
 
 
 @router.post("/setup/api/prepare-ledger")
-async def prepare_ledger() -> dict[str, Any]:
+async def prepare_ledger(
+    x_setup_token: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
     """Ensure tabs + default categories + Digital Assets seed rule."""
-    _wizard_allowed()
+    _wizard_allowed(write=True, x_setup_token=x_setup_token)
     _reload_settings()
     settings = get_settings()
     if not settings.spreadsheet_id:
@@ -307,35 +347,39 @@ async def deploy_env_preview(public_url: str = "") -> dict[str, Any]:
     """
     Build Railway/Render environment variables from local config (for copy-paste).
 
-    Does not write secrets to disk. JSON key is returned only if present locally.
+    Never returns the service-account private key. When a key is present locally,
+    env includes a placeholder and ``has_service_account`` is true — paste the real
+    JSON from secrets/ into the host yourself.
     """
     _wizard_allowed()
     _reload_settings()
     settings = get_settings()
-    import secrets as _secrets
 
     origin = (public_url or "").strip().rstrip("/")
-    sa_json = ""
+    has_service_account = False
     path = settings.google_application_credentials or "secrets/service-account.json"
     try:
         from backend.sheets.google_sheets import resolve_service_account_path
 
         p = resolve_service_account_path(path)
         if p and p.is_file():
-            sa_json = p.read_text(encoding="utf-8").replace("\n", "").replace("\r", "")
+            has_service_account = True
     except Exception:  # noqa: BLE001
-        sa_json = ""
+        has_service_account = False
     if settings.google_service_account_json:
-        sa_json = settings.google_service_account_json.replace("\n", "").replace("\r", "")
+        has_service_account = True
 
     secret = settings.secret_key
     if not secret or secret.startswith("dev-change") or secret.startswith("change-me"):
-        secret = _secrets.token_urlsafe(32)
+        secret = secrets.token_urlsafe(32)
 
+    # Trusted single-user SA deploys: explicit open auth. Prefer AUTH_MODE=oauth
+    # on public multi-user hosts (set GOOGLE_CLIENT_ID/SECRET + redirect URI).
     env = {
         "APP_ENV": "production",
         "DEBUG": "false",
         "AUTH_MODE": "dev",
+        "ALLOW_OPEN_AUTH": "true",
         "REQUIRE_SHEETS": "true",
         "SPREADSHEET_ID": settings.spreadsheet_id or "",
         "SECRET_KEY": secret,
@@ -347,18 +391,25 @@ async def deploy_env_preview(public_url: str = "") -> dict[str, Any]:
             settings.holding_period_exemption_days or 1095
         ),
     }
-    if sa_json:
-        env["GOOGLE_SERVICE_ACCOUNT_JSON"] = sa_json
+    if has_service_account:
+        env["GOOGLE_SERVICE_ACCOUNT_JSON"] = _SA_JSON_PLACEHOLDER
 
     lines = [f"{k}={v}" for k, v in env.items()]
+    ready = bool(settings.spreadsheet_id and has_service_account)
+    message = (
+        "Copy these into Railway → Variables (or Render → Environment). "
+        "Never commit them to GitHub. "
+        "GOOGLE_SERVICE_ACCOUNT_JSON is redacted — paste the real one-line JSON "
+        "from secrets/service-account.json yourself. "
+        "AUTH_MODE=dev + ALLOW_OPEN_AUTH=true is for trusted single-user hosts only; "
+        "prefer AUTH_MODE=oauth (and omit ALLOW_OPEN_AUTH) for public URLs."
+        if ready
+        else "Complete service account + spreadsheet steps first."
+    )
     return {
-        "ok": bool(settings.spreadsheet_id and sa_json),
-        "message": (
-            "Copy these into Railway → Variables (or Render → Environment). "
-            "Never commit them to GitHub."
-            if settings.spreadsheet_id and sa_json
-            else "Complete service account + spreadsheet steps first."
-        ),
+        "ok": ready,
+        "has_service_account": has_service_account,
+        "message": message,
         "env": env,
         "env_file_text": "\n".join(lines) + "\n",
         "checklist": [
@@ -366,6 +417,7 @@ async def deploy_env_preview(public_url: str = "") -> dict[str, Any]:
             "Push code with scripts/Prepare-GitHub.ps1 or git push",
             "Railway: New Project → Deploy from GitHub",
             "Paste Variables from this page",
+            "Set GOOGLE_SERVICE_ACCOUNT_JSON from local secrets (not from this API)",
             "Set public URL, rebuild if CORS must match final domain",
             "Open /health then / on the public HTTPS URL",
         ],
@@ -413,8 +465,11 @@ async def test_connection() -> dict[str, Any]:
 
 
 @router.post("/setup/api/ensure-tabs")
-async def ensure_tabs(body: EnsureTabsBody | None = None) -> dict[str, Any]:
-    _wizard_allowed()
+async def ensure_tabs(
+    body: EnsureTabsBody | None = None,
+    x_setup_token: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    _wizard_allowed(write=True, x_setup_token=x_setup_token)
     body = body or EnsureTabsBody()
     _reload_settings()
     settings = get_settings()

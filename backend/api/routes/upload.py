@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from uuid import UUID
 
@@ -68,7 +69,10 @@ async def upload_statement(
         exemption_days=settings.holding_period_exemption_days,
     )
     try:
-        summary = pipeline.upload(filename=file.filename, content=content)
+        # Heavy sync parse/categorize/lots — keep the event loop free.
+        summary = await asyncio.to_thread(
+            pipeline.upload, filename=file.filename, content=content
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -94,7 +98,8 @@ async def statement_files_retry(
     _user: UserDep,
 ) -> UploadResponse:
     try:
-        summary = retry_statement_file(
+        summary = await asyncio.to_thread(
+            retry_statement_file,
             repo,
             statement_id,
             exemption_days=settings.holding_period_exemption_days,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   TrendingDown,
@@ -63,17 +63,22 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [wealthRefreshing, setWealthRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** H12: ignore stale responses when cashTf / loads race */
+  const loadGen = useRef(0);
 
   const load = useCallback(
     async (opts?: { quiet?: boolean; pricesOnly?: boolean }) => {
       const quiet = opts?.quiet ?? false;
       const pricesOnly = opts?.pricesOnly ?? false;
+      // pricesOnly must not invalidate an in-flight full load; full loads bump gen
+      const gen = pricesOnly ? loadGen.current : ++loadGen.current;
       if (!quiet && !pricesOnly) setLoading(true);
       if (pricesOnly) setWealthRefreshing(true);
-      setError(null);
+      if (!pricesOnly) setError(null);
       try {
         if (pricesOnly) {
           const isnap = await api.investmentsSnapshot();
+          if (gen !== loadGen.current) return;
           setSnap(isnap);
           return;
         }
@@ -86,12 +91,17 @@ export function DashboardPage() {
           api.investmentsSnapshot(),
           api.alerts().catch(() => ({ items: [] as AlertItem[], warn_count: 0, total: 0 })),
         ]);
+        if (gen !== loadGen.current) return;
         setDash(dsum);
         setSnap(isnap);
         setAlerts(al.items || []);
       } catch (e) {
+        if (gen !== loadGen.current) return;
+        // Keep last good dashboard on quiet/partial failures when data exists
+        if (pricesOnly) return;
         setError(e instanceof Error ? e.message : "Failed to load");
       } finally {
+        if (gen !== loadGen.current) return;
         if (!quiet && !pricesOnly) setLoading(false);
         if (pricesOnly) setWealthRefreshing(false);
       }
