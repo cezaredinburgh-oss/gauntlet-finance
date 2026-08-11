@@ -246,8 +246,20 @@ export function TaxPage() {
                     <Legend
                       formatter={(v) => (v === "taxable" ? "Taxable CZK" : "Exempt CZK")}
                     />
-                    <Bar dataKey="taxable" stackId="g" fill="#fbbf24" radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="exempt" stackId="g" fill="#34d399" radius={[4, 4, 0, 0]} />
+                    <Bar
+                      dataKey="taxable"
+                      stackId="g"
+                      fill="#fbbf24"
+                      radius={[0, 0, 0, 0]}
+                      activeBar={false}
+                    />
+                    <Bar
+                      dataKey="exempt"
+                      stackId="g"
+                      fill="#34d399"
+                      radius={[4, 4, 0, 0]}
+                      activeBar={false}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

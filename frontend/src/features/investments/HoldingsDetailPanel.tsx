@@ -150,7 +150,12 @@ export function HoldingsDetailPanel({
                     }}
                     formatter={(v: number) => [formatQty(String(v)), "Qty"]}
                   />
-                  <Bar dataKey="quantity" radius={[0, 6, 6, 0]} barSize={16}>
+                  <Bar
+                    dataKey="quantity"
+                    radius={[0, 6, 6, 0]}
+                    barSize={16}
+                    activeBar={false}
+                  >
                     {platformData.map((e) => (
                       <Cell key={e.name} fill={e.fill} />
                     ))}

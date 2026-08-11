@@ -135,7 +135,12 @@ function FeeBarChart({
                 "Fees",
               ]}
             />
-            <Bar dataKey="amount" fill="rgba(45, 212, 168, 0.75)" radius={[4, 4, 0, 0]} />
+            <Bar
+              dataKey="amount"
+              fill="rgba(45, 212, 168, 0.75)"
+              radius={[4, 4, 0, 0]}
+              activeBar={false}
+            />
           </BarChart>
         </ResponsiveContainer>
       </div>
