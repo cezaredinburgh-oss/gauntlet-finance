@@ -149,6 +149,8 @@ export function HoldingsDetailPanel({
                       border: "1px solid #2e3a4d",
                       borderRadius: 12,
                     }}
+                    labelStyle={{ color: "#94a3b8" }}
+                    itemStyle={{ color: "#34d399" }}
                     formatter={(v: number) => [formatQty(String(v)), "Qty"]}
                   />
                   <Bar
