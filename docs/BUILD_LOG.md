@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Dashboard takes portfolio desk hero
+
+- Home uses former Holdings hero (MV, wealth KPIs, tax runway) + cash month dial + compact alert counts (Spending / Stocks / Crypto → Alerts).
+- Removed dashboard triage list, signals strip, cash insight.
+- Holdings page: chart + table/detail only (no bottom hero); tax runway deep-link notes Home.
+
 ## 2026-08-12 — Live chart values stay top-right (Portfolio + popout)
 
 - Header values block uses `ml-auto` so Portfolio (extra Stocks/Crypto legs) does not wrap to the left; same layout for embedded and popout.

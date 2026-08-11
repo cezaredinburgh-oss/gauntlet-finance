@@ -11,23 +11,22 @@ import {
 } from "../lib/timeframe";
 import { d } from "../lib/money";
 import {
-  buildTriageItems,
-  CashInsight,
-  compactDrawFromSnap,
+  ExecutiveHero,
   HomeDeepLinks,
-  HomeHero,
-  SignalStrip,
-  TriageList,
+  summarizeAlertBuckets,
 } from "../features/dashboard";
+import { buildKpiBreakdown } from "../features/investments";
+import type { TickerDigest } from "../api/types";
 
 /**
- * Home = two dials (portfolio MV + month net cash) + triage + secondary signals.
- * Depth lives on Investments / Spending / Analysis — not a second portfolio annex.
+ * Home: portfolio desk hero (wealth + tax runway + cash dial + alert counts).
+ * Detail lives on Investments / Spending / Alerts.
  */
 export function DashboardPage() {
   const [cashTf, setCashTf] = useState<TimeframeValue>(() => loadStoredSpendingTimeframe());
   const [dash, setDash] = useState<DashboardSummary | null>(null);
   const [snap, setSnap] = useState<PortfolioSnapshot | null>(null);
+  const [digests, setDigests] = useState<TickerDigest[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [wealthRefreshing, setWealthRefreshing] = useState(false);
@@ -44,23 +43,29 @@ export function DashboardPage() {
       if (!pricesOnly) setError(null);
       try {
         if (pricesOnly) {
-          const isnap = await api.investmentsSnapshot();
+          const [isnap, dig] = await Promise.all([
+            api.investmentsSnapshot(),
+            api.tickerDigests().catch(() => null),
+          ]);
           if (gen !== loadGen.current) return;
           setSnap(isnap);
+          if (dig) setDigests(dig.tickers);
           return;
         }
-        const [dsum, isnap, al] = await Promise.all([
+        const [dsum, isnap, dig, al] = await Promise.all([
           api.dashboard({
             date_from: cashTf.from ?? undefined,
             date_to: cashTf.to,
             period_key: cashTf.key,
           }),
           api.investmentsSnapshot(),
+          api.tickerDigests().catch(() => ({ tickers: [] as TickerDigest[] })),
           api.alerts().catch(() => ({ items: [] as AlertItem[], warn_count: 0, total: 0 })),
         ]);
         if (gen !== loadGen.current) return;
         setDash(dsum);
         setSnap(isnap);
+        setDigests(dig.tickers || []);
         setAlerts(al.items || []);
       } catch (e) {
         if (gen !== loadGen.current) return;
@@ -93,16 +98,15 @@ export function DashboardPage() {
     saveStoredSpendingTimeframe(next);
   }
 
-  const triage = useMemo(() => {
-    if (!dash) return [];
-    return buildTriageItems({
-      alerts,
-      health: snap?.health,
-      uncategorizedPct: dash.spending?.uncategorized_pct ?? 0,
-    });
-  }, [alerts, snap?.health, dash]);
+  const kpiBreakdown = useMemo(() => {
+    if (!snap) return null;
+    return buildKpiBreakdown(snap, digests);
+  }, [snap, digests]);
 
-  const drawStatus = useMemo(() => compactDrawFromSnap(snap), [snap]);
+  const alertBuckets = useMemo(
+    () => summarizeAlertBuckets(alerts, digests),
+    [alerts, digests],
+  );
 
   if (loading && !dash) return <PageLoader label="Loading executive snapshot…" />;
   if (error && !dash) {
@@ -123,44 +127,28 @@ export function DashboardPage() {
   const cf = dash.cashflow;
   const net = d(cf.net_usd ?? cf.net);
   const comp = dash.comparison;
-  const pace = dash.pace;
-  const health = snap?.health;
-  const grade = health?.grade ?? "—";
-  const asOf = snap?.as_of || new Date().toISOString().slice(0, 10);
-  const priceNote = snap?.price_status?.note;
-  const taxFree =
-    snap?.tax_runway?.available_usd ?? snap?.tax_free_now_usd ?? null;
 
   return (
     <div className="space-y-6">
-      <HomeHero
-        asOf={asOf}
-        cashLabel={cashTf.label}
-        priceNote={priceNote}
-        wealthRefreshing={wealthRefreshing}
-        grade={grade}
-        healthScore={health?.score}
-        healthSummary={health?.summary}
-        marketValueUsd={snap?.total_market_value_usd}
-        unrealizedPct={snap?.unrealized_pct}
-        netCashflow={net}
-        netCzk={cf.net_czk}
-        netChangePct={comp?.net_change_pct}
-        canGoNext={canGoNextMonth(cashTf)}
-        onShiftMonth={shiftCashMonth}
-      />
-
-      <TriageList items={triage} max={5} />
-
-      <SignalStrip
-        unrealizedPct={snap?.unrealized_pct}
-        pacePct={pace?.pace_pct}
-        pacePctLiving={pace?.pace_pct_living}
-        draw={drawStatus}
-        taxFreeNowUsd={taxFree}
-      />
-
-      <CashInsight dash={dash} periodLabel={cashTf.label} />
+      {snap ? (
+        <ExecutiveHero
+          snap={snap}
+          breakdown={kpiBreakdown}
+          wealthRefreshing={wealthRefreshing}
+          cashLabel={cashTf.label}
+          netCashflow={net}
+          netCzk={cf.net_czk}
+          netChangePct={comp?.net_change_pct}
+          canGoNext={canGoNextMonth(cashTf)}
+          onShiftMonth={shiftCashMonth}
+          alertBuckets={alertBuckets}
+        />
+      ) : (
+        <div className="card p-5 text-sm text-ink-muted">
+          Portfolio snapshot unavailable. Cash period: {cashTf.label}. Net{" "}
+          {String(net)}.
+        </div>
+      )}
 
       <HomeDeepLinks />
     </div>

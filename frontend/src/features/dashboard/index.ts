@@ -1,8 +1,6 @@
-export { HomeHero, HomeDeepLinks } from "./HomeHero";
-export { TriageList } from "./TriageList";
-export { SignalStrip } from "./SignalStrip";
-export { CashInsight } from "./CashInsight";
-export { buildTriageItems } from "./buildTriage";
-export type { TriageItem, TriageLevel } from "./buildTriage";
+export { ExecutiveHero } from "./ExecutiveHero";
+export { HomeDeepLinks } from "./HomeHero";
+export { summarizeAlertBuckets } from "./alertBuckets";
+export type { AlertBucketCounts, AlertDomain } from "./alertBuckets";
 export { compactDrawFromSnap, SAFE_DRAW_PCT } from "./drawStatus";
 export type { CompactDrawStatus } from "./drawStatus";

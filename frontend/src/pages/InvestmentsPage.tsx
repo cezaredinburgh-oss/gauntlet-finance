@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { PortfolioSnapshot, TickerDigest } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
@@ -14,9 +14,7 @@ import {
   type HoldingsSortColumn,
   type HoldingsSortMode,
   HoldingsDetailPanel,
-  HoldingsHero,
   HoldingsTable,
-  buildKpiBreakdown,
   InvestmentsPageShell,
   PositionHistoryChart,
   PriceStatusBanner,
@@ -35,7 +33,6 @@ function defaultChartScope(tickers: TickerDigest[]): ChartScope | null {
 export function InvestmentsPage() {
   const [searchParams] = useSearchParams();
   const focus = searchParams.get("focus") || "";
-  const taxRunwayRef = useRef<HTMLDivElement | null>(null);
   const pricesRef = useRef<HTMLDivElement | null>(null);
 
   const [snap, setSnap] = useState<PortfolioSnapshot | null>(null);
@@ -169,9 +166,8 @@ export function InvestmentsPage() {
   useEffect(() => {
     if (loading || !focus) return;
     const id = window.setTimeout(() => {
-      if (focus === "tax_runway") {
-        taxRunwayRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      } else if (focus === "prices") {
+      if (focus === "prices" || focus === "tax_runway") {
+        // tax_runway summary lives on Home; prices banner still on this page
         pricesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     }, 120);
@@ -189,11 +185,6 @@ export function InvestmentsPage() {
     () => digests.find((t) => t.ticker === selectedTicker) || null,
     [digests, selectedTicker],
   );
-
-  const kpiBreakdown = useMemo(() => {
-    if (!snap) return null;
-    return buildKpiBreakdown(snap, digests);
-  }, [snap, digests]);
 
   const chartDigests = useMemo(
     () => [...digests].sort((a, b) => comparePerformance(a, b, performanceMode)),
@@ -314,23 +305,24 @@ export function InvestmentsPage() {
           )}
 
           {snap && (
-            <HoldingsHero
-              snap={snap}
-              breakdown={kpiBreakdown}
-              focus={focus}
-              runwayRef={taxRunwayRef}
-            />
-          )}
-
-          {snap && (
             <div
               ref={pricesRef}
               className={cn(
                 "scroll-mt-24",
-                focus === "prices" && "rounded-2xl ring-2 ring-brand/50",
+                (focus === "prices" || focus === "tax_runway") &&
+                  "rounded-2xl ring-2 ring-brand/50",
               )}
             >
               <PriceStatusBanner snap={snap} />
+              {focus === "tax_runway" && (
+                <p className="mt-2 text-xs text-ink-muted">
+                  Tax-free runway and wealth summary are on the{" "}
+                  <Link to="/" className="font-medium text-brand hover:underline">
+                    Home
+                  </Link>{" "}
+                  executive snapshot.
+                </p>
+              )}
             </div>
           )}
         </>
