@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Home executive redesign (two dials + triage)
+
+- Dashboard: number-first **portfolio MV** + **month net cash** hero; unified Needs attention (alerts + health + uncat); secondary Signals (unrealized %, pace, TTM draw vs safe from snap, tax-free now); cash insight from existing dashboard top domain/merchant.
+- Removed from Home: flat 6-tile wealth grid, full tax runway, top-holdings chips, DrawMetricsCard (extra GET), footer quick-link sitemap.
+- Safe draw on Home: display-only `min(4%×MV, tax_free_now)` matching backend heuristic — no formula change.
+
 ## 2026-08-11 — Investment desk review fixes (sort, tax-free, chart mode)
 
 - **Holdings table:** null ROI metrics always sort last; Tax-free column sorts by free-share % (unlock date tie-break); display honest % (no 99→100, show 0% locked).
