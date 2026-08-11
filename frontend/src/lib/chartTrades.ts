@@ -64,6 +64,14 @@ type RowLike = {
   value?: number | null;
 };
 
+export type TradeSegmentOptions = {
+  yKey?: "mv" | "value";
+  buyColor?: string;
+  sellColor?: string;
+  bothColor?: string;
+  maxSegments?: number;
+};
+
 /**
  * Attach short y-series columns so Recharts can draw colored Line segments
  * only across bars that end on a buy/sell (cashflow jump on the MV curve).
@@ -72,13 +80,14 @@ type RowLike = {
  */
 export function withTradeCurveSegments<T extends RowLike>(
   rows: T[],
-  *,
-  yKey: "mv" | "value" = "mv",
-  buyColor: string = BUY_SEG,
-  sellColor: string = SELL_SEG,
-  bothColor: string = BOTH_SEG,
-  maxSegments: number = MAX_SEGMENTS,
+  opts: TradeSegmentOptions = {},
 ): { rows: T[]; segments: TradeSegmentSpec[] } {
+  const yKey = opts.yKey ?? "mv";
+  const buyColor = opts.buyColor ?? BUY_SEG;
+  const sellColor = opts.sellColor ?? SELL_SEG;
+  const bothColor = opts.bothColor ?? BOTH_SEG;
+  const maxSegments = opts.maxSegments ?? MAX_SEGMENTS;
+
   if (rows.length < 2) return { rows, segments: [] };
 
   type Cand = { i: number; color: string; absJump: number };
