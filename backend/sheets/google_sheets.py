@@ -56,14 +56,18 @@ def execute_sheets_request(
     max_delay_s: float = 75.0,
 ) -> Any:
     """
-    Execute a googleapiclient request with exponential backoff on 429/5xx.
+    Execute a googleapiclient request with exponential backoff on 429/5xx
+    and transient network timeouts (SSL read TimeoutError / socket errors).
 
     Google Sheets free-tier write quota is ~60 writes/min/user; large statement
     imports can hit that mid-append. Retrying with backoff is safer than
     marking the whole file imported-or-lost.
+
+    Unhandled socket timeouts used to bubble as ASGI 500s and leave uvicorn
+    blocked long enough for Railway's edge to return 502 (~250s).
     """
     delay = base_delay_s
-    last_exc: HttpError | None = None
+    last_exc: BaseException | None = None
     for attempt in range(1, max_attempts + 1):
         try:
             return request.execute()
@@ -88,6 +92,23 @@ def execute_sheets_request(
                 "Sheets %s hit %s (attempt %s/%s); sleeping %.1fs then retry",
                 what,
                 _http_status(exc) or exc,
+                attempt,
+                max_attempts,
+                sleep_for,
+            )
+            time.sleep(sleep_for)
+            delay = min(max_delay_s, delay * 2)
+        except (TimeoutError, OSError, ConnectionError) as exc:
+            # SSL read timeouts show as TimeoutError from ssl.py; treat as retryable.
+            last_exc = exc
+            if attempt >= max_attempts:
+                raise
+            sleep_for = min(max_delay_s, delay + random.uniform(0, 0.5))
+            logger.warning(
+                "Sheets %s network timeout/error %s (attempt %s/%s); "
+                "sleeping %.1fs then retry",
+                what,
+                type(exc).__name__,
                 attempt,
                 max_attempts,
                 sleep_for,
