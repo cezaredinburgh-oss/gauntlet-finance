@@ -143,6 +143,7 @@ export function HoldingsDetailPanel({
                     fontSize={11}
                   />
                   <Tooltip
+                    cursor={false}
                     contentStyle={{
                       background: "#1a2332",
                       border: "1px solid #2e3a4d",

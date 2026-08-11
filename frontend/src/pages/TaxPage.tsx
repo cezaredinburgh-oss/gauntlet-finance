@@ -232,6 +232,7 @@ export function TaxPage() {
                       }
                     />
                     <Tooltip
+                      cursor={false}
                       contentStyle={{
                         background: "#0f172a",
                         border: "1px solid rgba(148,163,184,0.25)",
