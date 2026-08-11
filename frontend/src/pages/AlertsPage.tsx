@@ -6,6 +6,7 @@ import type { AlertItem } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import { cn } from "../lib/cn";
 import { summarizeAlertBuckets } from "../features/dashboard/alertBuckets";
+import { loadSeenAlertIds, markAlertSeen } from "../lib/alertSeen";
 
 type DomainKey = "spending" | "stocks" | "crypto";
 
@@ -54,6 +55,7 @@ export function AlertsPage() {
   const [items, setItems] = useState<AlertItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [seenIds, setSeenIds] = useState<Set<string>>(() => loadSeenAlertIds());
 
   useEffect(() => {
     let cancelled = false;
@@ -72,6 +74,11 @@ export function AlertsPage() {
       cancelled = true;
     };
   }, []);
+
+  function onAlertActivate(id: string) {
+    markAlertSeen(id);
+    setSeenIds(loadSeenAlertIds());
+  }
 
   const byDomain = useMemo(() => {
     const map: Record<DomainKey, AlertItem[]> = {
@@ -165,47 +172,68 @@ export function AlertsPage() {
                     <p className="text-xs text-ink-faint">No alerts in this domain.</p>
                   ) : (
                     <ul className="space-y-2">
-                      {list.map((a) => (
-                        <li
-                          key={a.id}
-                          className="rounded-lg border border-white/10 bg-white/[0.03] p-3"
-                        >
-                          <div className="flex gap-2">
-                            <span
-                              className={cn(
-                                "mt-0.5 shrink-0 rounded-md p-1.5",
-                                levelStyle(String(a.level)),
-                              )}
-                            >
-                              <LevelIcon level={String(a.level)} />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="text-sm font-semibold text-ink">
-                                  {a.title}
-                                </span>
-                                <span
-                                  className={cn(
-                                    "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
-                                    levelStyle(String(a.level)),
+                      {list.map((a) => {
+                        const seen = seenIds.has(a.id);
+                        return (
+                          <li
+                            key={a.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => onAlertActivate(a.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                onAlertActivate(a.id);
+                              }
+                            }}
+                            className={cn(
+                              "cursor-pointer rounded-lg border border-white/10 bg-white/[0.03] p-3 text-left transition hover:border-white/20",
+                              seen && "opacity-55",
+                            )}
+                          >
+                            <div className="flex gap-2">
+                              <span
+                                className={cn(
+                                  "mt-0.5 shrink-0 rounded-md p-1.5",
+                                  levelStyle(String(a.level)),
+                                )}
+                              >
+                                <LevelIcon level={String(a.level)} />
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="text-sm font-semibold text-ink">
+                                    {a.title}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+                                      levelStyle(String(a.level)),
+                                    )}
+                                  >
+                                    {a.level}
+                                  </span>
+                                  {seen && (
+                                    <span className="text-[10px] font-medium uppercase text-ink-faint">
+                                      Seen
+                                    </span>
                                   )}
-                                >
-                                  {a.level}
-                                </span>
+                                </div>
+                                <p className="mt-1 text-xs text-ink-muted">{a.body}</p>
+                                {a.href && (
+                                  <Link
+                                    to={a.href}
+                                    onClick={() => onAlertActivate(a.id)}
+                                    className="mt-1.5 inline-block text-[11px] font-medium text-brand hover:underline"
+                                  >
+                                    Open related page →
+                                  </Link>
+                                )}
                               </div>
-                              <p className="mt-1 text-xs text-ink-muted">{a.body}</p>
-                              {a.href && (
-                                <Link
-                                  to={a.href}
-                                  className="mt-1.5 inline-block text-[11px] font-medium text-brand hover:underline"
-                                >
-                                  Open related page →
-                                </Link>
-                              )}
                             </div>
-                          </div>
-                        </li>
-                      ))}
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>

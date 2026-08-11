@@ -18,6 +18,12 @@ import {
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
+import type { AlertItem } from "../api/types";
+import {
+  ALERTS_SEEN_EVENT,
+  countUnseenAlerts,
+  pruneSeenAlertIds,
+} from "../lib/alertSeen";
 import { cn } from "../lib/cn";
 import { Spinner } from "./Spinner";
 
@@ -119,7 +125,7 @@ function NavItems({
   investmentsOpen,
   setExpensesOpen,
   setInvestmentsOpen,
-  alertWarns,
+  alertBadge,
   onNavigate,
   navigate,
 }: {
@@ -128,7 +134,8 @@ function NavItems({
   investmentsOpen: boolean;
   setExpensesOpen: Dispatch<SetStateAction<boolean>>;
   setInvestmentsOpen: Dispatch<SetStateAction<boolean>>;
-  alertWarns: number;
+  /** Unseen active alerts (all levels); only on Alerts leaf, not group header */
+  alertBadge: number;
   onNavigate?: () => void;
   navigate: (to: string) => void;
 }) {
@@ -149,8 +156,8 @@ function NavItems({
       >
         <Icon className={cn("shrink-0", opts.nested ? "h-4 w-4" : "h-5 w-5")} />
         <span className="flex-1">{leaf.label}</span>
-        {leaf.badge === "alerts" && alertWarns > 0 && (
-          <span className="badge bg-warn/20 text-warn">{alertWarns}</span>
+        {leaf.badge === "alerts" && alertBadge > 0 && (
+          <span className="badge bg-warn/20 text-warn">{alertBadge}</span>
         )}
       </NavLink>
     );
@@ -199,9 +206,6 @@ function NavItems({
               >
                 <GroupIcon className="h-5 w-5 shrink-0" />
                 <span className="flex-1 truncate">{item.label}</span>
-                {item.id === "expenses" && alertWarns > 0 && (
-                  <span className="badge bg-warn/20 text-warn">{alertWarns}</span>
-                )}
               </button>
               <button
                 type="button"
@@ -242,7 +246,8 @@ export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [priceBusy, setPriceBusy] = useState(false);
   const [priceMsg, setPriceMsg] = useState<string | null>(null);
-  const [alertWarns, setAlertWarns] = useState(0);
+  const [alertItems, setAlertItems] = useState<AlertItem[]>([]);
+  const [alertBadge, setAlertBadge] = useState(0);
 
   const expensesGroup = useMemo(
     () => nav.find((n): n is NavGroup => n.kind === "group" && n.id === "expenses")!,
@@ -309,7 +314,11 @@ export function Layout() {
       api
         .alerts()
         .then((r) => {
-          if (!cancelled) setAlertWarns(r.warn_count || 0);
+          if (cancelled) return;
+          const items = r.items ?? [];
+          pruneSeenAlertIds(items.map((a) => a.id));
+          setAlertItems(items);
+          setAlertBadge(countUnseenAlerts(items));
         })
         .catch(() => {
           /* ignore badge errors */
@@ -320,6 +329,15 @@ export function Layout() {
       window.clearTimeout(t);
     };
   }, []);
+
+  // Recompute when Alerts page marks an item as seen (localStorage + event).
+  useEffect(() => {
+    function refreshBadge() {
+      setAlertBadge(countUnseenAlerts(alertItems));
+    }
+    window.addEventListener(ALERTS_SEEN_EVENT, refreshBadge);
+    return () => window.removeEventListener(ALERTS_SEEN_EVENT, refreshBadge);
+  }, [alertItems]);
 
   /**
    * Soft live marks (~60s) on Dashboard + Investments so portfolio MV tracks
@@ -409,7 +427,7 @@ export function Layout() {
             investmentsOpen={investmentsOpen}
             setExpensesOpen={setExpensesOpen}
             setInvestmentsOpen={setInvestmentsOpen}
-            alertWarns={alertWarns}
+            alertBadge={alertBadge}
             navigate={navigate}
           />
         </div>
@@ -495,7 +513,7 @@ export function Layout() {
                 investmentsOpen={investmentsOpen}
                 setExpensesOpen={setExpensesOpen}
                 setInvestmentsOpen={setInvestmentsOpen}
-                alertWarns={alertWarns}
+                alertBadge={alertBadge}
                 navigate={navigate}
                 onNavigate={() => setMobileOpen(false)}
               />
@@ -523,7 +541,7 @@ export function Layout() {
               }}
             >
               <Icon className="h-5 w-5" />
-              {matchPrefix === "/expenses" && alertWarns > 0 && (
+              {matchPrefix === "/expenses" && alertBadge > 0 && (
                 <span className="absolute right-2 top-1 h-1.5 w-1.5 rounded-full bg-warn" />
               )}
               {label.split(" ")[0]}
