@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Multi-file statement upload
+
+- Upload page: multi-select / multi-drop; sequential `POST /api/upload` per file (dedupe-safe).
+- Per-file results + batch summary; soft fail continues remaining files; max 25 per batch.
+
 ## 2026-08-10 — Dashboard realized annualized ROI
 
 - Snapshot: `realized_holding_years` (cost-weighted from LotAllocation `holding_period_days`) + `realized_annualized_pct` (CAGR, min 90d).

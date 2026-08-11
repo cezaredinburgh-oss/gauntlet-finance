@@ -1,20 +1,43 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FileUp, CheckCircle2, AlertCircle, Copy, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import type { StatementFileRow, UploadResult } from "../api/types";
 import { cn } from "../lib/cn";
 import { Spinner } from "../components/Spinner";
 
+const MAX_BATCH_FILES = 25;
+const ACCEPT =
+  ".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+type FileOutcome = {
+  fileName: string;
+  result?: UploadResult;
+  error?: string;
+};
+
+type BatchProgress = {
+  index: number;
+  total: number;
+  fileName: string;
+  /** Overall 0–100 across the whole batch */
+  pct: number;
+};
+
+function isStatementFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return name.endsWith(".csv") || name.endsWith(".xlsx");
+}
+
 export function UploadPage() {
   const [drag, setDrag] = useState(false);
-  const [progress, setProgress] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<UploadResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
+  const [outcomes, setOutcomes] = useState<FileOutcome[]>([]);
+  const [batchError, setBatchError] = useState<string | null>(null);
   const [history, setHistory] = useState<StatementFileRow[]>([]);
   const [histError, setHistError] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const inFlight = useRef(false);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -30,22 +53,72 @@ export function UploadPage() {
     void loadHistory();
   }, [loadHistory]);
 
-  const upload = useCallback(
-    async (file: File) => {
+  const uploadMany = useCallback(
+    async (rawFiles: File[]) => {
+      if (!rawFiles.length || inFlight.current) return;
+
+      if (rawFiles.length > MAX_BATCH_FILES) {
+        setBatchError(
+          `Too many files (${rawFiles.length}). Select at most ${MAX_BATCH_FILES} at a time.`,
+        );
+        return;
+      }
+
+      const files = rawFiles.filter(isStatementFile);
+      const skipped = rawFiles.length - files.length;
+      if (!files.length) {
+        setBatchError("No CSV or .xlsx statement files in the selection.");
+        return;
+      }
+
+      inFlight.current = true;
       setBusy(true);
-      setError(null);
-      setResult(null);
-      setFileName(file.name);
-      setProgress(0);
+      setBatchError(
+        skipped > 0
+          ? `Skipped ${skipped} non-statement file${skipped === 1 ? "" : "s"} (only .csv / .xlsx).`
+          : null,
+      );
+      setOutcomes([]);
+      setBatchProgress({
+        index: 0,
+        total: files.length,
+        fileName: files[0].name,
+        pct: 0,
+      });
+
+      const next: FileOutcome[] = [];
       try {
-        const r = await api.upload(file, setProgress);
-        setResult(r);
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          setBatchProgress({
+            index: i,
+            total: files.length,
+            fileName: file.name,
+            pct: Math.round((i / files.length) * 100),
+          });
+          try {
+            const result = await api.upload(file, (filePct) => {
+              setBatchProgress({
+                index: i,
+                total: files.length,
+                fileName: file.name,
+                pct: Math.round(((i + filePct / 100) / files.length) * 100),
+              });
+            });
+            next.push({ fileName: file.name, result });
+          } catch (e) {
+            next.push({
+              fileName: file.name,
+              error: e instanceof Error ? e.message : "Upload failed",
+            });
+          }
+          setOutcomes([...next]);
+        }
         await loadHistory();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Upload failed");
       } finally {
+        inFlight.current = false;
         setBusy(false);
-        setProgress(null);
+        setBatchProgress(null);
       }
     },
     [loadHistory],
@@ -53,14 +126,18 @@ export function UploadPage() {
 
   async function onRetry(row: StatementFileRow) {
     setRetryingId(row.id);
-    setError(null);
+    setBatchError(null);
     try {
       const r = await api.retryStatementFile(row.id);
-      setResult(r);
-      setFileName(row.original_filename);
+      setOutcomes([{ fileName: row.original_filename, result: r }]);
       await loadHistory();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Retry failed");
+      setOutcomes([
+        {
+          fileName: row.original_filename,
+          error: e instanceof Error ? e.message : "Retry failed",
+        },
+      ]);
     } finally {
       setRetryingId(null);
     }
@@ -69,17 +146,20 @@ export function UploadPage() {
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
     setDrag(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) void upload(f);
+    const list = e.dataTransfer.files;
+    if (list?.length) void uploadMany(Array.from(list));
   }
+
+  const summary = summarizeOutcomes(outcomes);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Upload</h1>
         <p className="text-sm text-ink-muted">
-          Drop a bank or broker statement (CSV or eToro Excel .xlsx). Institution is detected
-          automatically. Failed imports can be retried if the file was stored.
+          Drop one or more bank/broker statements (CSV or eToro Excel .xlsx). Institution is
+          detected automatically for each file. Failed imports can be retried if the file was
+          stored.
         </p>
       </div>
 
@@ -100,105 +180,67 @@ export function UploadPage() {
           <FileUp className="h-8 w-8" />
         </div>
         <div>
-          <p className="font-semibold">Drag & drop a statement</p>
-          <p className="text-sm text-ink-muted">CSV or eToro account statement (.xlsx)</p>
+          <p className="font-semibold">Drag & drop statements</p>
+          <p className="text-sm text-ink-muted">
+            One or many · CSV or eToro account statement (.xlsx)
+          </p>
         </div>
         <label className="btn-primary cursor-pointer">
           {busy ? <Spinner className="border-t-slate-900" /> : null}
           Browse files
           <input
             type="file"
-            accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            multiple
+            accept={ACCEPT}
             className="hidden"
             disabled={busy}
             onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void upload(f);
+              const list = e.target.files;
+              if (list?.length) void uploadMany(Array.from(list));
               e.target.value = "";
             }}
           />
         </label>
-        {fileName && <p className="text-xs text-ink-faint">Selected: {fileName}</p>}
-        {progress !== null && (
-          <div className="mt-2 w-full max-w-xs">
-            <div className="mb-1 flex justify-between text-xs text-ink-muted">
-              <span>Uploading</span>
-              <span>{progress}%</span>
+        {batchProgress && (
+          <div className="mt-2 w-full max-w-sm">
+            <div className="mb-1 flex justify-between gap-2 text-xs text-ink-muted">
+              <span className="truncate">
+                Uploading {batchProgress.index + 1} of {batchProgress.total}
+                {" · "}
+                {batchProgress.fileName}
+              </span>
+              <span className="shrink-0 tabular-nums">{batchProgress.pct}%</span>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-white/10">
               <div
                 className="h-full rounded-full bg-brand transition-all"
-                style={{ width: `${progress}%` }}
+                style={{ width: `${batchProgress.pct}%` }}
               />
             </div>
           </div>
         )}
       </div>
 
-      {error && (
-        <div className="card flex gap-3 border-danger/30 bg-danger/10 p-4 text-sm text-danger">
+      {batchError && (
+        <div className="card flex gap-3 border-warn/30 bg-warn/10 p-4 text-sm text-warn">
           <AlertCircle className="h-5 w-5 shrink-0" />
-          <div>
-            <div className="font-semibold">Upload failed</div>
-            <div>{error}</div>
-          </div>
+          <div>{batchError}</div>
         </div>
       )}
 
-      {result && (
-        <div
-          className={cn(
-            "card p-5",
-            result.status === "already_imported"
-              ? "border-warn/30 bg-warn/5"
-              : result.status === "imported"
-                ? "border-ok/30 bg-ok/5"
-                : "border-danger/30 bg-danger/5",
-          )}
-        >
-          <div className="mb-3 flex items-start gap-3">
-            {result.status === "imported" || result.status === "already_imported" ? (
-              <CheckCircle2
-                className={cn(
-                  "h-6 w-6 shrink-0",
-                  result.status === "already_imported" ? "text-warn" : "text-ok",
-                )}
-              />
-            ) : (
-              <AlertCircle className="h-6 w-6 shrink-0 text-danger" />
-            )}
-            <div>
-              <div className="text-lg font-semibold capitalize">
-                {result.status.replaceAll("_", " ")}
-              </div>
-              <p className="text-sm text-ink-muted">{result.message}</p>
+      {outcomes.length > 0 && (
+        <div className="space-y-3">
+          {summary && (
+            <div className="card border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-ink-muted">
+              <span className="font-medium text-ink">{summary.headline}</span>
+              {summary.detail ? (
+                <span className="text-ink-faint"> · {summary.detail}</span>
+              ) : null}
             </div>
-          </div>
-
-          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-            <Stat label="Institution" value={result.institution || "—"} />
-            <Stat label="Parser" value={result.parser_key || "—"} />
-            <Stat label="Rows parsed" value={String(result.rows_parsed)} />
-            <Stat label="Transactions" value={String(result.transactions_written)} />
-            <Stat label="Events" value={String(result.events_written)} />
-            <Stat label="Lots" value={String(result.lots_written)} />
-            <Stat label="Transfer pairs" value={String(result.transfer_pairs_linked)} />
-            <Stat label="Tx deduped" value={String(result.transactions_deduped)} />
-            <Stat label="Events deduped" value={String(result.events_deduped)} />
-          </dl>
-
-          <div className="mt-4 flex items-center gap-2 text-xs text-ink-faint">
-            <Copy className="h-3.5 w-3.5" />
-            <span className="font-mono break-all">SHA-256 {result.content_sha256}</span>
-          </div>
-
-          {result.errors?.length > 0 && (
-            <ul className="mt-3 list-disc pl-5 text-sm text-danger">
-              {result.errors.map((e) => (
-                <li key={e}>{e}</li>
-              ))}
-            </ul>
           )}
+          {outcomes.map((o, i) => (
+            <OutcomeCard key={`${i}-${o.fileName}`} outcome={o} />
+          ))}
         </div>
       )}
 
@@ -290,7 +332,115 @@ export function UploadPage() {
 
       <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 text-xs text-ink-muted">
         Supported: Raiffeisen CZ, Revolut expenses, Revolut stocks, Revolut crypto, eToro activity.
+        Multi-select up to {MAX_BATCH_FILES} files; imports run one after another so dedupe stays correct.
       </div>
+    </div>
+  );
+}
+
+function summarizeOutcomes(outcomes: FileOutcome[]): { headline: string; detail: string } | null {
+  if (!outcomes.length) return null;
+  let imported = 0;
+  let already = 0;
+  let failed = 0;
+  let other = 0;
+  let tx = 0;
+  let ev = 0;
+  for (const o of outcomes) {
+    if (o.error || !o.result) {
+      failed += 1;
+      continue;
+    }
+    const s = o.result.status;
+    if (s === "imported") imported += 1;
+    else if (s === "already_imported") already += 1;
+    else if (s === "error" || s === "failed") failed += 1;
+    else other += 1;
+    tx += o.result.transactions_written || 0;
+    ev += o.result.events_written || 0;
+  }
+  const parts = [`${outcomes.length} file${outcomes.length === 1 ? "" : "s"}`];
+  if (imported) parts.push(`${imported} imported`);
+  if (already) parts.push(`${already} already imported`);
+  if (failed) parts.push(`${failed} failed`);
+  if (other) parts.push(`${other} other`);
+  const detailParts: string[] = [];
+  if (tx) detailParts.push(`${tx} new tx`);
+  if (ev) detailParts.push(`${ev} new events`);
+  return { headline: parts.join(" · "), detail: detailParts.join(" · ") };
+}
+
+function OutcomeCard({ outcome }: { outcome: FileOutcome }) {
+  const { fileName, result, error } = outcome;
+
+  if (error || !result) {
+    return (
+      <div className="card flex gap-3 border-danger/30 bg-danger/10 p-4 text-sm text-danger">
+        <AlertCircle className="h-5 w-5 shrink-0" />
+        <div>
+          <div className="font-semibold">{fileName}</div>
+          <div className="text-danger/90">{error || "Upload failed"}</div>
+        </div>
+      </div>
+    );
+  }
+
+  const ok =
+    result.status === "imported" || result.status === "already_imported";
+  const warn = result.status === "already_imported";
+
+  return (
+    <div
+      className={cn(
+        "card p-5",
+        warn
+          ? "border-warn/30 bg-warn/5"
+          : ok
+            ? "border-ok/30 bg-ok/5"
+            : "border-danger/30 bg-danger/5",
+      )}
+    >
+      <div className="mb-3 flex items-start gap-3">
+        {ok ? (
+          <CheckCircle2
+            className={cn("h-6 w-6 shrink-0", warn ? "text-warn" : "text-ok")}
+          />
+        ) : (
+          <AlertCircle className="h-6 w-6 shrink-0 text-danger" />
+        )}
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-ink">{fileName}</div>
+          <div className="text-lg font-semibold capitalize">
+            {result.status.replaceAll("_", " ")}
+          </div>
+          <p className="text-sm text-ink-muted">{result.message}</p>
+        </div>
+      </div>
+
+      <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+        <Stat label="Institution" value={result.institution || "—"} />
+        <Stat label="Parser" value={result.parser_key || "—"} />
+        <Stat label="Rows parsed" value={String(result.rows_parsed)} />
+        <Stat label="Transactions" value={String(result.transactions_written)} />
+        <Stat label="Events" value={String(result.events_written)} />
+        <Stat label="Lots" value={String(result.lots_written)} />
+        <Stat label="Transfer pairs" value={String(result.transfer_pairs_linked)} />
+        <Stat label="Tx deduped" value={String(result.transactions_deduped)} />
+        <Stat label="Events deduped" value={String(result.events_deduped)} />
+      </dl>
+
+      <div className="mt-4 flex items-center gap-2 text-xs text-ink-faint">
+        <Copy className="h-3.5 w-3.5 shrink-0" />
+        <span className="font-mono break-all">SHA-256 {result.content_sha256}</span>
+      </div>
+
+      {result.errors?.length > 0 && (
+        <ul className="mt-3 list-disc pl-5 text-sm text-danger">
+          {result.errors.map((e) => (
+            <li key={e}>{e}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
