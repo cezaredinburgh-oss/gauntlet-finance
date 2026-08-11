@@ -358,211 +358,242 @@ export function SpendingPage() {
         )}
       </div>
 
-      {/* 3) Cash KPI cards */}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <Kpi
-          label="Net cash flow"
-          icon={net >= 0 ? TrendingUp : TrendingDown}
-          tone={net >= 0 ? "ok" : "danger"}
-          delta={netDelta}
-          hover={
-            <>
-              <HoverList
-                title="Summary"
-                rows={[
-                  { label: "Income", value: formatUsd(income) },
-                  { label: "Expenses", value: formatUsd(expense) },
-                  { label: "Net", value: formatUsd(net) },
-                  { label: "CZK net", value: `${d(cf.net_czk).toLocaleString("cs-CZ")} Kč` },
-                ]}
-              />
-              <HoverList
-                title="By currency (native)"
-                rows={(cf.by_currency || []).map((r) => ({
-                  label: r.currency,
-                  value: `${r.net} ${r.currency}`,
-                }))}
-              />
-              {comp && (
-                <div className="text-xs text-ink-faint">
-                  Prior {comp.prior_from} → {comp.prior_to}: {formatUsd(comp.net_usd)}
-                </div>
-              )}
-            </>
-          }
-        >
-          <Money
-            amount={net}
-            currency="USD"
-            amountCzk={cf.net_czk}
-            secondaryMode="hover"
-            size="lg"
-            signed
-          />
-        </Kpi>
-
-        <Kpi
-          label="Income"
-          icon={Wallet}
-          tone="ok"
-          delta={incomeDelta}
-          hover={
-            <>
-              <HoverList
-                title="Top sources"
-                rows={(cf.top_income || []).map((t) => ({
-                  label: t.label,
-                  value: formatUsd(t.amount_usd),
-                }))}
-              />
-              <HoverList
-                title="By currency"
-                rows={(cf.by_currency || [])
-                  .filter((r) => d(r.income) > 0)
-                  .map((r) => ({ label: r.currency, value: `${r.income} ${r.currency}` }))}
-              />
-              <div className="text-xs text-ink-faint">
-                CZK ≈ {d(cf.income_czk).toLocaleString("cs-CZ")} Kč · {cf.transaction_count} txs
-              </div>
-            </>
-          }
-        >
-          <Money
-            amount={income}
-            currency="USD"
-            amountCzk={cf.income_czk}
-            secondaryMode="hover"
-            size="lg"
-          />
-        </Kpi>
-
-        <Kpi
-          label="Expenses"
-          icon={TrendingDown}
-          tone="danger"
-          delta={expenseDelta}
-          hover={
-            <>
-              <HoverList
-                title="Top merchants"
-                rows={(cf.top_expense_merchants || []).map((t) => ({
-                  label: t.label,
-                  value: formatUsd(t.amount_usd),
-                }))}
-              />
-              <HoverList
-                title="Top domains"
-                rows={(cf.top_expense_domains || []).map((t) => ({
-                  label: t.label,
-                  value: formatUsd(t.amount_usd),
-                }))}
-              />
-              <div className="text-xs text-ink-faint">
-                CZK ≈ {d(cf.expense_czk).toLocaleString("cs-CZ")} Kč
-                {cf.unconverted_count > 0 && ` · ${cf.unconverted_count} unconverted`}
-              </div>
-            </>
-          }
-        >
-          <Money
-            amount={expense}
-            currency="USD"
-            amountCzk={cf.expense_czk}
-            secondaryMode="hover"
-            size="lg"
-          />
-        </Kpi>
-      </div>
-
-      {/* 4) Rolling 30-day pace strip */}
-      <div className="card grid gap-4 p-5 sm:grid-cols-3">
-        <div>
-          <div className="label">Rolling 30-day spend</div>
-          <Money
-            amount={pace?.spend_30d_usd}
-            currency="USD"
-            secondaryMode="hover"
-            size="lg"
-          />
-          <div className="mt-1 space-y-0.5 text-[11px] text-ink-faint">
-            <div>
-              Investments:{" "}
-              <span className="font-medium text-ink-muted">
-                {formatUsd(pace?.spend_30d_investments_usd ?? "0")}
-              </span>
-              {invShare30 != null && (
-                <span className="text-ink-faint"> ({invShare30.toFixed(0)}%)</span>
-              )}
+      {/* Bottom cash hero: period KPIs + rolling pace in one glass block */}
+      <section
+        className="relative overflow-hidden rounded-2xl border p-5 sm:p-6"
+        style={{
+          background:
+            "linear-gradient(135deg, rgba(59,130,246,0.12), rgba(16,185,129,0.08) 45%, rgba(15,23,42,0.9))",
+          borderColor: "rgba(52,211,153,0.28)",
+          boxShadow: "0 16px 40px rgba(0,0,0,0.3)",
+        }}
+      >
+        <div className="relative space-y-5">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
+              Cash pulse · {tf.label}
             </div>
-            <div>
-              Living:{" "}
-              <span className="font-medium text-ink-muted">
-                {formatUsd(pace?.spend_30d_living_usd ?? "0")}
-              </span>
-            </div>
+            <p className="mt-0.5 text-xs text-ink-faint">
+              Period income &amp; expenses · hover cards for CZK / merchants · pace is rolling 30d
+            </p>
           </div>
-        </div>
-        <div>
-          <div className="label">6‑mo avg monthly spend</div>
-          <Money
-            amount={pace?.avg_monthly_6m_usd}
-            currency="USD"
-            secondaryMode="hover"
-            size="lg"
-          />
-          <div className="mt-0.5 text-[11px] text-ink-faint">Last 180 days ÷ 6</div>
-          <div className="mt-1 space-y-0.5 text-[11px] text-ink-faint">
-            <div>
-              Investments:{" "}
-              <span className="font-medium text-ink-muted">
-                {formatUsd(pace?.avg_monthly_6m_investments_usd ?? "0")}/mo
-              </span>
-              {invShare6m != null && (
-                <span className="text-ink-faint"> ({invShare6m.toFixed(0)}%)</span>
-              )}
-            </div>
-            <div>
-              Living:{" "}
-              <span className="font-medium text-ink-muted">
-                {formatUsd(pace?.avg_monthly_6m_living_usd ?? "0")}/mo
-              </span>
-            </div>
-          </div>
-        </div>
-        <div>
-          <div className="label">30d vs monthly avg</div>
-          <div
-            className={`text-2xl font-semibold ${
-              pacePct != null && pacePct > 10
-                ? "text-warn"
-                : pacePct != null && pacePct < -10
-                  ? "text-ok"
-                  : "text-ink"
-            }`}
-          >
-            {pacePct == null
-              ? "—"
-              : `${pacePct >= 0 ? "+" : ""}${pacePct.toFixed(0)}%`}
-          </div>
-          <div className="mt-0.5 text-[11px] text-ink-faint">Total spend pace</div>
-          <div className="mt-1 text-[11px] text-ink-muted">
-            Living only:{" "}
-            <span
-              className={
-                pacePctLiving != null && pacePctLiving > 10
-                  ? "text-warn"
-                  : pacePctLiving != null && pacePctLiving < -10
-                    ? "text-ok"
-                    : "text-ink"
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <Kpi
+              label="Net cash flow"
+              icon={net >= 0 ? TrendingUp : TrendingDown}
+              tone={net >= 0 ? "ok" : "danger"}
+              delta={netDelta}
+              embedded
+              hover={
+                <>
+                  <HoverList
+                    title="Summary"
+                    rows={[
+                      { label: "Income", value: formatUsd(income) },
+                      { label: "Expenses", value: formatUsd(expense) },
+                      { label: "Net", value: formatUsd(net) },
+                      {
+                        label: "CZK net",
+                        value: `${d(cf.net_czk).toLocaleString("cs-CZ")} Kč`,
+                      },
+                    ]}
+                  />
+                  <HoverList
+                    title="By currency (native)"
+                    rows={(cf.by_currency || []).map((r) => ({
+                      label: r.currency,
+                      value: `${r.net} ${r.currency}`,
+                    }))}
+                  />
+                  {comp && (
+                    <div className="text-xs text-ink-faint">
+                      Prior {comp.prior_from} → {comp.prior_to}: {formatUsd(comp.net_usd)}
+                    </div>
+                  )}
+                </>
               }
             >
-              {pacePctLiving == null
-                ? "—"
-                : `${pacePctLiving >= 0 ? "+" : ""}${pacePctLiving.toFixed(0)}%`}
-            </span>
+              <Money
+                amount={net}
+                currency="USD"
+                amountCzk={cf.net_czk}
+                secondaryMode="hover"
+                size="lg"
+                signed
+              />
+            </Kpi>
+
+            <Kpi
+              label="Income"
+              icon={Wallet}
+              tone="ok"
+              delta={incomeDelta}
+              embedded
+              hover={
+                <>
+                  <HoverList
+                    title="Top sources"
+                    rows={(cf.top_income || []).map((t) => ({
+                      label: t.label,
+                      value: formatUsd(t.amount_usd),
+                    }))}
+                  />
+                  <HoverList
+                    title="By currency"
+                    rows={(cf.by_currency || [])
+                      .filter((r) => d(r.income) > 0)
+                      .map((r) => ({
+                        label: r.currency,
+                        value: `${r.income} ${r.currency}`,
+                      }))}
+                  />
+                  <div className="text-xs text-ink-faint">
+                    CZK ≈ {d(cf.income_czk).toLocaleString("cs-CZ")} Kč ·{" "}
+                    {cf.transaction_count} txs
+                  </div>
+                </>
+              }
+            >
+              <Money
+                amount={income}
+                currency="USD"
+                amountCzk={cf.income_czk}
+                secondaryMode="hover"
+                size="lg"
+              />
+            </Kpi>
+
+            <Kpi
+              label="Expenses"
+              icon={TrendingDown}
+              tone="danger"
+              delta={expenseDelta}
+              embedded
+              hover={
+                <>
+                  <HoverList
+                    title="Top merchants"
+                    rows={(cf.top_expense_merchants || []).map((t) => ({
+                      label: t.label,
+                      value: formatUsd(t.amount_usd),
+                    }))}
+                  />
+                  <HoverList
+                    title="Top domains"
+                    rows={(cf.top_expense_domains || []).map((t) => ({
+                      label: t.label,
+                      value: formatUsd(t.amount_usd),
+                    }))}
+                  />
+                  <div className="text-xs text-ink-faint">
+                    CZK ≈ {d(cf.expense_czk).toLocaleString("cs-CZ")} Kč
+                    {cf.unconverted_count > 0 &&
+                      ` · ${cf.unconverted_count} unconverted`}
+                  </div>
+                </>
+              }
+            >
+              <Money
+                amount={expense}
+                currency="USD"
+                amountCzk={cf.expense_czk}
+                secondaryMode="hover"
+                size="lg"
+              />
+            </Kpi>
+          </div>
+
+          <div className="grid gap-4 rounded-xl border border-white/10 bg-black/20 p-4 sm:grid-cols-3">
+            <div>
+              <div className="label">Rolling 30-day spend</div>
+              <Money
+                amount={pace?.spend_30d_usd}
+                currency="USD"
+                secondaryMode="hover"
+                size="lg"
+              />
+              <div className="mt-1 space-y-0.5 text-[11px] text-ink-faint">
+                <div>
+                  Investments:{" "}
+                  <span className="font-medium text-ink-muted">
+                    {formatUsd(pace?.spend_30d_investments_usd ?? "0")}
+                  </span>
+                  {invShare30 != null && (
+                    <span className="text-ink-faint"> ({invShare30.toFixed(0)}%)</span>
+                  )}
+                </div>
+                <div>
+                  Living:{" "}
+                  <span className="font-medium text-ink-muted">
+                    {formatUsd(pace?.spend_30d_living_usd ?? "0")}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div className="label">6‑mo avg monthly spend</div>
+              <Money
+                amount={pace?.avg_monthly_6m_usd}
+                currency="USD"
+                secondaryMode="hover"
+                size="lg"
+              />
+              <div className="mt-0.5 text-[11px] text-ink-faint">Last 180 days ÷ 6</div>
+              <div className="mt-1 space-y-0.5 text-[11px] text-ink-faint">
+                <div>
+                  Investments:{" "}
+                  <span className="font-medium text-ink-muted">
+                    {formatUsd(pace?.avg_monthly_6m_investments_usd ?? "0")}/mo
+                  </span>
+                  {invShare6m != null && (
+                    <span className="text-ink-faint"> ({invShare6m.toFixed(0)}%)</span>
+                  )}
+                </div>
+                <div>
+                  Living:{" "}
+                  <span className="font-medium text-ink-muted">
+                    {formatUsd(pace?.avg_monthly_6m_living_usd ?? "0")}/mo
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div className="label">30d vs monthly avg</div>
+              <div
+                className={`text-2xl font-semibold ${
+                  pacePct != null && pacePct > 10
+                    ? "text-warn"
+                    : pacePct != null && pacePct < -10
+                      ? "text-ok"
+                      : "text-ink"
+                }`}
+              >
+                {pacePct == null
+                  ? "—"
+                  : `${pacePct >= 0 ? "+" : ""}${pacePct.toFixed(0)}%`}
+              </div>
+              <div className="mt-0.5 text-[11px] text-ink-faint">Total spend pace</div>
+              <div className="mt-1 text-[11px] text-ink-muted">
+                Living only:{" "}
+                <span
+                  className={
+                    pacePctLiving != null && pacePctLiving > 10
+                      ? "text-warn"
+                      : pacePctLiving != null && pacePctLiving < -10
+                        ? "text-ok"
+                        : "text-ink"
+                  }
+                >
+                  {pacePctLiving == null
+                    ? "—"
+                    : `${pacePctLiving >= 0 ? "+" : ""}${pacePctLiving.toFixed(0)}%`}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
       <div className="flex flex-wrap gap-3 text-xs">
         <Link to="/expenses/categorize" className="font-medium text-brand hover:underline">
@@ -583,6 +614,7 @@ function Kpi({
   tone,
   delta,
   hover,
+  embedded = false,
 }: {
   label: string;
   children: React.ReactNode;
@@ -590,6 +622,8 @@ function Kpi({
   tone: "ok" | "danger" | "brand";
   delta?: { text: string; cls: string };
   hover?: React.ReactNode;
+  /** Nested glass cell inside a parent hero (no outer card chrome) */
+  embedded?: boolean;
 }) {
   const toneCls =
     tone === "ok"
@@ -599,7 +633,13 @@ function Kpi({
         : "text-brand bg-brand/10";
 
   const body = (
-    <div className="card p-4">
+    <div
+      className={
+        embedded
+          ? "rounded-xl border border-white/10 bg-black/20 p-4"
+          : "card p-4"
+      }
+    >
       <div className="mb-3 flex items-center justify-between">
         <span className="label mb-0">{label}</span>
         <span className={`rounded-lg p-1.5 ${toneCls}`}>

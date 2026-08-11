@@ -249,12 +249,16 @@ export type DashboardSummary = {
   };
 };
 
+export type AlertLevel = "info" | "warn" | "danger" | "opportunity";
+
 export type AlertItem = {
   id: string;
-  level: "info" | "warn" | "danger";
+  level: AlertLevel | string;
   title: string;
   body: string;
   href?: string | null;
+  /** Optional domain hint from API (spending | stocks | crypto) */
+  domain?: string | null;
 };
 
 export type AlertsResponse = {

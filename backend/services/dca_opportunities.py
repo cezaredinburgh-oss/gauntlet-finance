@@ -69,7 +69,7 @@ class PositionDcaRow:
 @dataclass(frozen=True)
 class DcaCandidate:
     ticker: str
-    level: str  # info | warn
+    level: str  # opportunity | info | warn
     score: float
     title: str
     body: str
@@ -79,6 +79,7 @@ class DcaCandidate:
     below_52w_avg_pct: float | None
     signal_a: bool
     signal_b: bool
+    asset_class: str = "Stock"
 
 
 def _d(v: Decimal | None) -> Decimal:
@@ -389,9 +390,10 @@ def evaluate_dca_opportunity(
     if not m.signal_a and m.signal_b:
         parts.append("Dip on an existing holding — consider a disciplined add.")
 
+    # Opportunities are not warnings — dedicated level for Alerts UI
     return DcaCandidate(
         ticker=row.ticker,
-        level=level,
+        level="opportunity",
         score=m.score,
         title=f"DCA opportunity: {row.ticker}",
         body=" ".join(parts),
@@ -401,6 +403,7 @@ def evaluate_dca_opportunity(
         below_52w_avg_pct=m.below_52w_avg_pct,
         signal_a=m.signal_a,
         signal_b=m.signal_b,
+        asset_class=row.asset_class or "Stock",
     )
 
 
@@ -428,10 +431,11 @@ def candidates_to_alerts(
         alerts.append(
             {
                 "id": f"dca_opportunity_{c.ticker}",
-                "level": c.level,
+                "level": "opportunity",
                 "title": c.title,
                 "body": body,
                 "href": c.href,
+                "domain": "crypto" if _is_crypto(c.asset_class) else "stocks",
             }
         )
     return alerts

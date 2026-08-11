@@ -297,10 +297,22 @@ export const api = {
     currency?: string;
     is_internal_transfer?: boolean;
     category_id?: string;
+    /** Comma-separated StatementFiles UUIDs */
+    source_file_ids?: string;
+    /** Only txs from latest multi-file import batch (~15m) */
+    latest_import_batch?: boolean | string;
     limit?: number;
     offset?: number;
   } = {}) =>
-    request<Paginated<Transaction>>(`/transactions${qs(params)}`),
+    request<
+      Paginated<Transaction> & {
+        latest_import_batch?: {
+          file_ids: string[];
+          filenames: string[];
+          uploaded_at_max: string | null;
+        };
+      }
+    >(`/transactions${qs(params)}`),
 
   categories: () => request<{ items: Category[] }>("/categories"),
 

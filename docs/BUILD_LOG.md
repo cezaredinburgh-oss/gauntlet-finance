@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Spending hero, Categorize latest import, Alerts desk
+
+- Spending: Net/Income/Expenses + pace strip combined into one bottom cash-pulse hero.
+- Categorize: default loads txs from latest import batch (`latest_import_batch`, ~15m multi-file window via `source_file_id`); removed suggested rules + merchant queue UI; active rules support Edit + Remove (PATCH/DELETE existing APIs).
+- Alerts: DCA level `opportunity` (not warn); page is Spending | Stocks | Crypto hero columns.
+
 ## 2026-08-12 — Dashboard takes portfolio desk hero
 
 - Home uses former Holdings hero (MV, wealth KPIs, tax runway) + cash month dial + compact alert counts (Spending / Stocks / Crypto → Alerts).

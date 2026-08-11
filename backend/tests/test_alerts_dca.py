@@ -111,15 +111,15 @@ def _row(
     )
 
 
-def test_signal_a_stock_15pct_under_cost_fires_info():
-    # avg cost 100, mark 85 → 15% discount
+def test_signal_a_stock_15pct_under_cost_fires_opportunity():
+    # avg cost 100, mark 85 → 15% discount — opportunity, not warn/info
     c = evaluate_dca_opportunity(
         _row(qty="10", cost="1000", mark="85"),
         as_of=AS_OF,
     )
     assert c is not None
     assert c.signal_a is True
-    assert c.level == "info"
+    assert c.level == "opportunity"
     assert "15%" in c.body or "below your average cost" in c.body
     assert c.ticker == "AAA"
 
@@ -245,14 +245,14 @@ def test_signal_b_blocks_extended_meltup_pullback():
     assert c is None
 
 
-def test_deep_discount_warn_level():
-    # 30% under stock → warn
+def test_deep_discount_still_opportunity_level():
+    # Deep discount remains opportunity (not warn) for Alerts desk
     c = evaluate_dca_opportunity(
         _row(qty="10", cost="1000", mark="70"),
         as_of=AS_OF,
     )
     assert c is not None
-    assert c.level == "warn"
+    assert c.level == "opportunity"
 
 
 def test_ranking_caps_at_three():

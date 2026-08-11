@@ -13,6 +13,56 @@ from backend.services.upload_store import has_upload, load_upload
 from backend.sheets.repository import SheetsRepository
 
 
+# Multi-file uploads in one session share nearly the same uploaded_at.
+LATEST_BATCH_WINDOW_SECONDS = 15 * 60
+
+
+def latest_import_batch_file_ids(
+    repo: SheetsRepository,
+    *,
+    window_seconds: int = LATEST_BATCH_WINDOW_SECONDS,
+) -> dict[str, Any]:
+    """
+    Statement file ids from the most recent import batch.
+
+    Takes the newest Imported/Pending file by uploaded_at (fallback created_at),
+    then includes every Imported file within ``window_seconds`` of that timestamp
+    (covers multi-file uploads at once).
+    """
+    rows = [
+        r
+        for r in repo.list_rows("StatementFiles")
+        if isinstance(r, StatementFile)
+        and not r.archived
+        and r.status
+        in (
+            StatementFileStatus.IMPORTED,
+            StatementFileStatus.PENDING,
+        )
+    ]
+    if not rows:
+        return {"ids": [], "filenames": [], "uploaded_at_max": None}
+
+    def _ts(r: StatementFile) -> datetime:
+        return r.uploaded_at or r.created_at
+
+    rows.sort(key=_ts, reverse=True)
+    latest_ts = _ts(rows[0])
+    batch = [
+        r
+        for r in rows
+        if abs((latest_ts - _ts(r)).total_seconds()) <= window_seconds
+    ]
+    # Only Imported files typically have txs written
+    imported = [r for r in batch if r.status == StatementFileStatus.IMPORTED]
+    use = imported if imported else batch
+    return {
+        "ids": [r.id for r in use],
+        "filenames": [r.original_filename for r in use],
+        "uploaded_at_max": latest_ts.isoformat() if latest_ts else None,
+    }
+
+
 def list_statement_files(
     repo: SheetsRepository,
     *,

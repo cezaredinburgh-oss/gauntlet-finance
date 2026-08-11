@@ -24,9 +24,41 @@ async def list_transactions(
     account_id: UUID | None = None,
     is_internal_transfer: bool | None = None,
     category_id: UUID | None = None,
+    source_file_ids: str | None = Query(
+        None,
+        description="Comma-separated StatementFiles UUIDs (source_file_id on txs)",
+    ),
+    latest_import_batch: bool = Query(
+        False,
+        description="If true, only txs from the latest import batch (~15m window)",
+    ),
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
+    from backend.services.statement_files import latest_import_batch_file_ids
+
+    file_id_set: set[UUID] | None = None
+    batch_meta: dict[str, Any] | None = None
+    if latest_import_batch:
+        batch = latest_import_batch_file_ids(repo)
+        file_id_set = set(batch["ids"])
+        batch_meta = {
+            "file_ids": [str(i) for i in batch["ids"]],
+            "filenames": batch["filenames"],
+            "uploaded_at_max": batch["uploaded_at_max"],
+        }
+    elif source_file_ids:
+        ids: list[UUID] = []
+        for part in source_file_ids.split(","):
+            p = part.strip()
+            if not p:
+                continue
+            try:
+                ids.append(UUID(p))
+            except ValueError:
+                continue
+        file_id_set = set(ids) if ids else set()
+
     rows = [r for r in repo.list_rows("Transactions") if isinstance(r, Transaction)]
     out: list[Transaction] = []
     for t in rows:
@@ -44,13 +76,19 @@ async def list_transactions(
             continue
         if category_id and t.category_id != category_id:
             continue
+        if file_id_set is not None:
+            if t.source_file_id is None or t.source_file_id not in file_id_set:
+                continue
         out.append(t)
     out.sort(key=lambda x: (x.booking_date, str(x.id)), reverse=True)
     total = len(out)
     page = out[offset : offset + limit]
-    return {
+    result: dict[str, Any] = {
         "total": total,
         "offset": offset,
         "limit": limit,
         "items": [t.model_dump(mode="json") for t in page],
     }
+    if batch_meta is not None:
+        result["latest_import_batch"] = batch_meta
+    return result

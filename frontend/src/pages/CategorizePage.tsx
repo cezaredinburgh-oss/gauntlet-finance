@@ -107,41 +107,17 @@ export function CategorizePage() {
     () => searchParams.get("panel") === "rules",
   );
   const [vendorBusy, setVendorBusy] = useState(false);
-  const [queue, setQueue] = useState<
-    Array<{
-      label: string;
-      match_field?: string;
-      match_value?: string;
-      amount_usd: string;
-      tx_count: number;
-      suggested_category_id?: string | null;
-      suggested_category_name?: string | null;
-      suggestion_confidence?: number | null;
-    }>
-  >([]);
-  const [suggestions, setSuggestions] = useState<
-    Array<{
-      label: string;
-      match_field: string;
-      match_type: string;
-      match_value: string;
-      amount_usd: string;
-      tx_count: number;
-      score: number;
-      suggested_category_id?: string | null;
-      suggested_category_name?: string | null;
-      suggestion_confidence?: number | null;
-      reason?: string;
-    }>
-  >([]);
-  const [queueCat, setQueueCat] = useState<Record<string, string>>({});
-  const [queueBusy, setQueueBusy] = useState<string | null>(null);
-  const [dismissedQueue, setDismissedQueue] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [dismissedSuggest, setDismissedSuggest] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [latestBatchLabel, setLatestBatchLabel] = useState<string | null>(null);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [editRuleDraft, setEditRuleDraft] = useState<{
+    match_field: string;
+    match_type: string;
+    match_value: string;
+    category_id: string;
+    priority: number;
+    is_active: boolean;
+  } | null>(null);
+  const [ruleActionBusy, setRuleActionBusy] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<TxSortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   /** H12: ignore stale responses when filters race */
@@ -166,6 +142,18 @@ export function CategorizePage() {
   }, [qFromUrl]);
 
   const txTableRef = useRef<HTMLDivElement | null>(null);
+  const showAllLedger = searchParams.get("scope") === "all";
+  /** No drill-down scope → default to latest import batch (faster than full ledger). */
+  const useLatestBatch =
+    !showAllLedger &&
+    !dateFrom &&
+    !dateTo &&
+    !categoryIdParam &&
+    !categoryIdsParam &&
+    !lifeDomainParam &&
+    !unconvertedOnly &&
+    !filterFlag &&
+    !qFromUrl;
   const drilldownActive = Boolean(
     dateFrom ||
       dateTo ||
@@ -175,7 +163,8 @@ export function CategorizePage() {
       unconvertedOnly ||
       filterFlag ||
       qFromUrl ||
-      expensesOnly,
+      expensesOnly ||
+      showAllLedger,
   );
 
   const multiCategoryIds = useMemo(
@@ -214,8 +203,8 @@ export function CategorizePage() {
       const apiCategoryId =
         categoryIdParam && isUuid(categoryIdParam) ? categoryIdParam : undefined;
       // Larger page when drill-down filters need client-side refinement
-      const limit = drilldownActive ? 3000 : 1000;
-      const [t, c, cov, r, mq, sug] = await Promise.all([
+      const limit = showAllLedger || drilldownActive ? 3000 : 800;
+      const [t, c, cov, r] = await Promise.all([
         api.transactions({
           limit,
           date_from: dateFrom || undefined,
@@ -223,12 +212,11 @@ export function CategorizePage() {
           currency: currency || undefined,
           is_internal_transfer: hideTransfers ? false : undefined,
           category_id: apiCategoryId,
+          latest_import_batch: useLatestBatch ? true : undefined,
         }),
         api.categories(),
         api.categoryCoverage(180),
         api.categoryRules(),
-        api.merchantQueue(180, 25).catch(() => ({ items: [], days: 180, coverage_pct: 0 })),
-        api.ruleSuggestions(180, 15).catch(() => ({ items: [], days: 180, coverage_pct: 0 })),
       ]);
       if (gen !== loadGen.current) return;
       setItems(t.items);
@@ -236,18 +224,17 @@ export function CategorizePage() {
       setCats(c.items);
       setCoverage(cov);
       setRules(r.items);
-      setQueue(mq.items || []);
-      setSuggestions(sug.items || []);
+      if (t.latest_import_batch?.filenames?.length) {
+        const names = t.latest_import_batch.filenames;
+        setLatestBatchLabel(
+          names.length === 1
+            ? names[0]
+            : `${names.length} files (${names.slice(0, 2).join(", ")}${names.length > 2 ? "…" : ""})`,
+        );
+      } else if (useLatestBatch) {
+        setLatestBatchLabel(null);
+      }
       setError(null);
-      setQueueCat((prev) => {
-        const next = { ...prev };
-        for (const m of mq.items || []) {
-          if (m.suggested_category_id && !next[m.label] && isUuid(m.suggested_category_id)) {
-            next[m.label] = m.suggested_category_id;
-          }
-        }
-        return next;
-      });
     } catch (e) {
       if (gen !== loadGen.current) return;
       // Quiet refresh failures must not blank a loaded workspace
@@ -257,7 +244,16 @@ export function CategorizePage() {
       if (gen !== loadGen.current) return;
       if (!quiet) setLoading(false);
     }
-  }, [currency, hideTransfers, dateFrom, dateTo, categoryIdParam, drilldownActive]);
+  }, [
+    currency,
+    hideTransfers,
+    dateFrom,
+    dateTo,
+    categoryIdParam,
+    drilldownActive,
+    useLatestBatch,
+    showAllLedger,
+  ]);
 
   useEffect(() => {
     void load();
@@ -830,217 +826,34 @@ export function CategorizePage() {
         </div>
       )}
 
-      {suggestions.filter((s) => !dismissedSuggest.has(s.label)).length > 0 && (
-        <div className="card p-4">
-          <div className="mb-2">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <Sparkles className="h-4 w-4 text-brand" />
-              Suggested rules
-            </div>
-            <p className="text-xs text-ink-faint">
-              Ranked residuals with category affinity — Draft opens the rule form; Apply guess creates rule + reclassifies
-            </p>
-          </div>
-          <ul className="max-h-64 space-y-2 overflow-y-auto">
-            {suggestions
-              .filter((s) => !dismissedSuggest.has(s.label))
-              .slice(0, 10)
-              .map((s) => (
-                <li
-                  key={`sug-${s.label}-${s.match_field}`}
-                  className="flex flex-wrap items-center gap-2 rounded-lg border border-brand/20 bg-brand/[0.04] px-2 py-1.5 text-xs"
-                >
-                  <div className="min-w-0 flex-1">
-                    <button
-                      type="button"
-                      className="truncate font-medium hover:text-brand"
-                      onClick={() => {
-                        setQ(s.label);
-                        patchParams({ category_id: "uncategorized", category_ids: null });
-                      }}
-                    >
-                      {s.label}
-                    </button>
-                    <div className="text-[10px] text-ink-faint">
-                      {s.reason || `${s.tx_count} tx`} · score {s.score}
-                      {s.suggested_category_name ? ` · guess: ${s.suggested_category_name}` : ""}
-                    </div>
-                  </div>
-                  <span className="shrink-0 text-ink-faint">
-                    {formatUsd(s.amount_usd)} · {s.tx_count} tx
-                  </span>
-                  <button
-                    type="button"
-                    className="btn-secondary px-2 py-0.5 text-[11px]"
-                    onClick={() => {
-                      setRuleDraft({
-                        match_field: s.match_field || "merchant",
-                        match_type: s.match_type || "contains",
-                        match_value: s.match_value || s.label,
-                        category_id: s.suggested_category_id || "",
-                        institution_scope: "",
-                        candidates: [{ value: s.match_value || s.label, count: s.tx_count }],
-                        seedTxs: [],
-                      });
-                      setRuleMsg(null);
-                      setShowRules(true);
-                    }}
-                  >
-                    Draft rule
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-primary px-2 py-0.5 text-[11px]"
-                    disabled={!s.suggested_category_id || queueBusy === `sug:${s.label}`}
-                    onClick={() => {
-                      const catId = s.suggested_category_id;
-                      if (!catId) return;
-                      const key = `sug:${s.label}`;
-                      setQueueBusy(key);
-                      void (async () => {
-                        try {
-                          const res = await api.merchantQueueApply({
-                            label: s.label,
-                            category_id: catId,
-                            match_field: s.match_field || "merchant",
-                            match_value: s.match_value || s.label,
-                            create_rule: true,
-                            also_apply: true,
-                          });
-                          const updated = Number(res.updated || 0);
-                          setDismissedSuggest((prev) => new Set(prev).add(s.label));
-                          setToolsMsg(
-                            `Suggested rule "${s.label}" -> ${updated} transaction${updated === 1 ? "" : "s"}`,
-                          );
-                          await load({ quiet: true });
-                        } catch (e) {
-                          setToolsMsg(e instanceof Error ? e.message : "Suggestion apply failed");
-                        } finally {
-                          setQueueBusy(null);
-                        }
-                      })();
-                    }}
-                  >
-                    {queueBusy === `sug:${s.label}` ? "..." : "Apply guess"}
-                  </button>
-                  <button
-                    type="button"
-                    className="text-[11px] text-ink-faint hover:text-ink"
-                    onClick={() => setDismissedSuggest((prev) => new Set(prev).add(s.label))}
-                  >
-                    Dismiss
-                  </button>
-                </li>
-              ))}
-          </ul>
+      {useLatestBatch && (
+        <div className="rounded-xl border border-brand/25 bg-brand/10 px-4 py-3 text-sm text-ink">
+          <span className="font-semibold text-brand">Latest import</span>
+          <span className="text-ink-muted">
+            {" "}
+            · showing transactions from the most recent upload batch
+            {latestBatchLabel ? ` (${latestBatchLabel})` : ""}
+            {total ? ` · ${total} row${total === 1 ? "" : "s"}` : ""}
+          </span>
+          <button
+            type="button"
+            className="ml-3 text-xs font-medium text-brand hover:underline"
+            onClick={() => patchParams({ scope: "all" })}
+          >
+            Show full ledger
+          </button>
         </div>
       )}
-
-      {queue.filter((m) => !dismissedQueue.has(m.label)).length > 0 && (
-        <div className="card p-4">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <div className="text-sm font-semibold">Merchant review queue</div>
-              <p className="text-xs text-ink-faint">
-                Top uncategorized labels · pick a category · create rule + apply
-              </p>
-            </div>
-          </div>
-          <ul className="max-h-56 space-y-2 overflow-y-auto">
-            {queue
-              .filter((m) => !dismissedQueue.has(m.label))
-              .slice(0, 12)
-              .map((m) => (
-                <li
-                  key={m.label}
-                  className="flex flex-wrap items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-2 py-1.5 text-xs"
-                >
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 truncate text-left font-medium hover:text-brand"
-                    onClick={() => {
-                      setQ(m.label);
-                      patchParams({ category_id: "uncategorized", category_ids: null });
-                    }}
-                  >
-                    {m.label}
-                    {m.suggested_category_name ? (
-                      <span className="ml-1 font-normal text-brand/80">
-                        → {m.suggested_category_name}
-                      </span>
-                    ) : null}
-                  </button>
-                  <span className="shrink-0 text-ink-faint">
-                    {formatUsd(m.amount_usd)} · {m.tx_count} tx
-                  </span>
-                  <select
-                    className="max-w-[10rem] rounded border border-white/15 bg-slate-950 px-1.5 py-0.5 text-[11px] text-ink"
-                    value={queueCat[m.label] || ""}
-                    onChange={(e) =>
-                      setQueueCat((prev) => ({ ...prev, [m.label]: e.target.value }))
-                    }
-                  >
-                    <option value="">Category…</option>
-                    {cats.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="btn-secondary px-2 py-0.5 text-[11px]"
-                    disabled={!queueCat[m.label] || queueBusy === m.label}
-                    onClick={() => {
-                      const catId = queueCat[m.label];
-                      if (!catId) return;
-                      const key = m.label;
-                      setQueueBusy(key);
-                      void (async () => {
-                        try {
-                          const res = await api.merchantQueueApply({
-                            label: m.label,
-                            category_id: catId,
-                            match_field: m.match_field || "merchant",
-                            match_value: m.match_value || m.label,
-                            create_rule: true,
-                            also_apply: true,
-                          });
-                          const updated = Number(res.updated || 0);
-                          if (updated > 0 || res.removed_from_queue) {
-                            setQueue((prev) => prev.filter((x) => x.label !== key));
-                            setDismissedQueue((s) => new Set(s).add(key));
-                            setToolsMsg(
-                              `Applied “${m.label}” → ${updated} transaction${updated === 1 ? "" : "s"}`,
-                            );
-                            await load({ quiet: true });
-                          } else {
-                            setToolsMsg(
-                              `No transactions matched “${m.label}” (${m.match_field || "merchant"}). Try another field or category.`,
-                            );
-                          }
-                        } catch (e) {
-                          setToolsMsg(e instanceof Error ? e.message : "Queue apply failed");
-                        } finally {
-                          setQueueBusy(null);
-                        }
-                      })();
-                    }}
-                  >
-                    {queueBusy === m.label ? "…" : "Apply"}
-                  </button>
-                  <button
-                    type="button"
-                    className="text-[11px] text-ink-faint hover:text-ink"
-                    onClick={() =>
-                      setDismissedQueue((s) => new Set(s).add(m.label))
-                    }
-                  >
-                    Skip
-                  </button>
-                </li>
-              ))}
-          </ul>
+      {showAllLedger && (
+        <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-xs text-ink-muted">
+          Viewing full ledger (capped page).{" "}
+          <button
+            type="button"
+            className="font-medium text-brand hover:underline"
+            onClick={() => patchParams({ scope: null })}
+          >
+            Back to latest import
+          </button>
         </div>
       )}
 
@@ -1755,36 +1568,233 @@ export function CategorizePage() {
                     <th className="px-4 py-2 font-medium">Match</th>
                     <th className="px-4 py-2 font-medium">Category</th>
                     <th className="px-4 py-2 font-medium">Active</th>
+                    <th className="px-4 py-2 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {rules
                     .slice()
                     .sort((a, b) => a.priority - b.priority)
-                    .slice(0, 40)
                     .map((r) => (
                       <tr key={r.id} className={!r.is_active ? "opacity-50" : undefined}>
-                        <td className="px-4 py-2 font-mono text-xs">{r.priority}</td>
-                        <td className="px-4 py-2">
-                          <div className="text-xs text-ink-faint">
-                            {r.match_field} · {r.match_type}
-                          </div>
-                          <div className="font-medium">{r.match_value}</div>
-                        </td>
-                        <td className="px-4 py-2">
-                          {catMap.get(r.category_id)?.name || r.category_id.slice(0, 8)}
-                        </td>
-                        <td className="px-4 py-2">{r.is_active ? "Yes" : "No"}</td>
+                        {editingRuleId === r.id && editRuleDraft ? (
+                          <>
+                            <td className="px-4 py-2">
+                              <input
+                                type="number"
+                                className="input w-16 py-1 text-xs"
+                                value={editRuleDraft.priority}
+                                onChange={(e) =>
+                                  setEditRuleDraft((d) =>
+                                    d
+                                      ? { ...d, priority: Number(e.target.value) || 0 }
+                                      : d,
+                                  )
+                                }
+                              />
+                            </td>
+                            <td className="px-4 py-2 space-y-1">
+                              <div className="flex flex-wrap gap-1">
+                                <select
+                                  className="input max-w-[7rem] py-1 text-[11px]"
+                                  value={editRuleDraft.match_field}
+                                  onChange={(e) =>
+                                    setEditRuleDraft((d) =>
+                                      d ? { ...d, match_field: e.target.value } : d,
+                                    )
+                                  }
+                                >
+                                  <option value="merchant">merchant</option>
+                                  <option value="description">description</option>
+                                  <option value="original_description">
+                                    original_description
+                                  </option>
+                                  <option value="counterparty_name">
+                                    counterparty_name
+                                  </option>
+                                  <option value="source_institution">
+                                    source_institution
+                                  </option>
+                                </select>
+                                <select
+                                  className="input max-w-[6rem] py-1 text-[11px]"
+                                  value={editRuleDraft.match_type}
+                                  onChange={(e) =>
+                                    setEditRuleDraft((d) =>
+                                      d ? { ...d, match_type: e.target.value } : d,
+                                    )
+                                  }
+                                >
+                                  <option value="contains">contains</option>
+                                  <option value="exact">exact</option>
+                                  <option value="exact_case">exact_case</option>
+                                  <option value="starts_with">starts_with</option>
+                                  <option value="regex">regex</option>
+                                </select>
+                              </div>
+                              <input
+                                className="input w-full py-1 text-xs"
+                                value={editRuleDraft.match_value}
+                                onChange={(e) =>
+                                  setEditRuleDraft((d) =>
+                                    d ? { ...d, match_value: e.target.value } : d,
+                                  )
+                                }
+                              />
+                            </td>
+                            <td className="px-4 py-2">
+                              <select
+                                className="input max-w-[10rem] py-1 text-xs"
+                                value={editRuleDraft.category_id}
+                                onChange={(e) =>
+                                  setEditRuleDraft((d) =>
+                                    d ? { ...d, category_id: e.target.value } : d,
+                                  )
+                                }
+                              >
+                                {catsSorted.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-4 py-2">
+                              <label className="flex items-center gap-1 text-xs">
+                                <input
+                                  type="checkbox"
+                                  checked={editRuleDraft.is_active}
+                                  onChange={(e) =>
+                                    setEditRuleDraft((d) =>
+                                      d ? { ...d, is_active: e.target.checked } : d,
+                                    )
+                                  }
+                                />
+                                Active
+                              </label>
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              <div className="flex justify-end gap-1">
+                                <button
+                                  type="button"
+                                  className="btn-primary px-2 py-0.5 text-[11px]"
+                                  disabled={ruleActionBusy === r.id}
+                                  onClick={() => {
+                                    if (!editRuleDraft) return;
+                                    setRuleActionBusy(r.id);
+                                    void (async () => {
+                                      try {
+                                        await api.updateCategoryRule(r.id, {
+                                          priority: editRuleDraft.priority,
+                                          match_field: editRuleDraft.match_field,
+                                          match_type: editRuleDraft.match_type,
+                                          match_value: editRuleDraft.match_value,
+                                          category_id: editRuleDraft.category_id,
+                                          is_active: editRuleDraft.is_active,
+                                        } as Partial<CategoryRule>);
+                                        setEditingRuleId(null);
+                                        setEditRuleDraft(null);
+                                        await load({ quiet: true });
+                                      } catch (e) {
+                                        setToolsMsg(
+                                          e instanceof Error
+                                            ? e.message
+                                            : "Rule update failed",
+                                        );
+                                      } finally {
+                                        setRuleActionBusy(null);
+                                      }
+                                    })();
+                                  }}
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-ghost px-2 py-0.5 text-[11px]"
+                                  onClick={() => {
+                                    setEditingRuleId(null);
+                                    setEditRuleDraft(null);
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="px-4 py-2 font-mono text-xs">{r.priority}</td>
+                            <td className="px-4 py-2">
+                              <div className="text-xs text-ink-faint">
+                                {r.match_field} · {r.match_type}
+                              </div>
+                              <div className="font-medium">{r.match_value}</div>
+                            </td>
+                            <td className="px-4 py-2">
+                              {catMap.get(r.category_id)?.name ||
+                                r.category_id.slice(0, 8)}
+                            </td>
+                            <td className="px-4 py-2">{r.is_active ? "Yes" : "No"}</td>
+                            <td className="px-4 py-2 text-right">
+                              <div className="flex justify-end gap-1">
+                                <button
+                                  type="button"
+                                  className="btn-secondary px-2 py-0.5 text-[11px]"
+                                  onClick={() => {
+                                    setEditingRuleId(r.id);
+                                    setEditRuleDraft({
+                                      match_field: r.match_field,
+                                      match_type: r.match_type,
+                                      match_value: r.match_value,
+                                      category_id: r.category_id,
+                                      priority: r.priority,
+                                      is_active: r.is_active,
+                                    });
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-ghost px-2 py-0.5 text-[11px] text-danger"
+                                  disabled={ruleActionBusy === r.id}
+                                  onClick={() => {
+                                    if (
+                                      !window.confirm(
+                                        `Deactivate rule “${r.match_value}”?`,
+                                      )
+                                    ) {
+                                      return;
+                                    }
+                                    setRuleActionBusy(r.id);
+                                    void (async () => {
+                                      try {
+                                        await api.deleteCategoryRule(r.id);
+                                        await load({ quiet: true });
+                                      } catch (e) {
+                                        setToolsMsg(
+                                          e instanceof Error
+                                            ? e.message
+                                            : "Rule delete failed",
+                                        );
+                                      } finally {
+                                        setRuleActionBusy(null);
+                                      }
+                                    })();
+                                  }}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </td>
+                          </>
+                        )}
                       </tr>
                     ))}
                 </tbody>
               </table>
             </div>
-            {rules.length > 40 && (
-              <p className="px-4 py-2 text-xs text-ink-faint">
-                Showing first 40 of {rules.length} rules
-              </p>
-            )}
           </div>
         )}
       </div>

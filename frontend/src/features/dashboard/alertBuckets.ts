@@ -46,6 +46,11 @@ function classifyAlert(
   a: AlertItem,
   acByTicker: Map<string, string>,
 ): AlertDomain {
+  const domainHint = (a.domain || "").toLowerCase();
+  if (domainHint === "crypto" || domainHint === "stocks" || domainHint === "spending") {
+    return domainHint;
+  }
+
   const href = (a.href || "").toLowerCase();
   const title = (a.title || "").toLowerCase();
   const body = (a.body || "").toLowerCase();
