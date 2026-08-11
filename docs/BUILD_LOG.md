@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Holdings layout: chart first, summary last
+
+- Order: live chart → holdings table + detail → hero (wealth KPIs + tax-free runway embedded).
+- Table/detail: no internal vertical scroll; table reserves height for full ticker count so asset filters do not shrink the card.
+- Removed DCA teaser from Holdings (DCA page unchanged).
+
 ## 2026-08-12 — Live chart + popout density / layout
 
 - Holdings ticker strip: square centered tiles (more per row); % only (price in title).

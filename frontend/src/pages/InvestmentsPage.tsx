@@ -13,16 +13,13 @@ import {
   type HoldingsAssetFilter,
   type HoldingsSortColumn,
   type HoldingsSortMode,
-  DcaTeaser,
   HoldingsDetailPanel,
   HoldingsHero,
   HoldingsTable,
-  HoldingsWealthBand,
   buildKpiBreakdown,
   InvestmentsPageShell,
   PositionHistoryChart,
   PriceStatusBanner,
-  TaxRunwayCard,
   type ChartScope,
 } from "../features/investments";
 
@@ -32,8 +29,8 @@ function defaultChartScope(tickers: TickerDigest[]): ChartScope | null {
 }
 
 /**
- * Investments Holdings desk — executive hero, wealth band, holdings table + detail,
- * live chart, tax runway, DCA teaser.
+ * Investments Holdings desk:
+ * Live chart → holdings table + detail → hero (wealth + tax runway).
  */
 export function InvestmentsPage() {
   const [searchParams] = useSearchParams();
@@ -80,7 +77,6 @@ export function InvestmentsPage() {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortColumn(col);
-      // Default: best first for metrics & tax-free share; A-first for grade; A-Z ticker
       if (col === "ticker" || col === "grade") {
         setSortDir("asc");
       } else {
@@ -158,7 +154,7 @@ export function InvestmentsPage() {
   useEffect(() => {
     void load();
     return () => {
-      loadGen.current += 1; // invalidate in-flight on unmount
+      loadGen.current += 1;
     };
   }, []);
 
@@ -199,7 +195,6 @@ export function InvestmentsPage() {
     return buildKpiBreakdown(snap, digests);
   }, [snap, digests]);
 
-  // Chart strip uses performance-sorted digests for consistency with ROI chip strip
   const chartDigests = useMemo(
     () => [...digests].sort((a, b) => comparePerformance(a, b, performanceMode)),
     [digests, performanceMode],
@@ -243,7 +238,7 @@ export function InvestmentsPage() {
     <InvestmentsPageShell
       active="holdings"
       title="Investments"
-      subtitle="Portfolio desk · verify holdings · Czech tax runway"
+      subtitle="Live chart · verify holdings · portfolio summary"
     >
       {softError && snap && (
         <div className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
@@ -268,14 +263,16 @@ export function InvestmentsPage() {
         />
       ) : (
         <>
-          {snap && <HoldingsHero snap={snap} />}
-
-          {snap && kpiBreakdown && (
-            <HoldingsWealthBand snap={snap} breakdown={kpiBreakdown} />
+          {digests.length > 0 && chartScope && (
+            <PositionHistoryChart
+              digests={chartDigests}
+              scope={chartScope}
+              onScopeChange={onChartScope}
+            />
           )}
 
           {digests.length > 0 && (
-            <div className="grid gap-4 xl:grid-cols-5">
+            <div className="grid items-start gap-4 xl:grid-cols-5">
               <div className="xl:col-span-3">
                 <HoldingsTable
                   rows={tableRows}
@@ -289,6 +286,7 @@ export function InvestmentsPage() {
                   assetFilter={assetFilter}
                   onAssetFilter={setAssetFilter}
                   totalCount={digests.length}
+                  reservedRowCount={digests.length}
                 />
               </div>
               <div className="xl:col-span-2">
@@ -315,19 +313,14 @@ export function InvestmentsPage() {
             </div>
           )}
 
-          {digests.length > 0 && chartScope && (
-            <PositionHistoryChart
-              digests={chartDigests}
-              scope={chartScope}
-              onScopeChange={onChartScope}
+          {snap && (
+            <HoldingsHero
+              snap={snap}
+              breakdown={kpiBreakdown}
+              focus={focus}
+              runwayRef={taxRunwayRef}
             />
           )}
-
-          {snap && (
-            <TaxRunwayCard snap={snap} focus={focus} runwayRef={taxRunwayRef} />
-          )}
-
-          <DcaTeaser />
 
           {snap && (
             <div

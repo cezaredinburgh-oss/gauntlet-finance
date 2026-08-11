@@ -532,15 +532,25 @@ function LivingDrawBreakdown({ draw }: { draw: LivingDraw12m }) {
 export function HoldingsWealthBand({
   snap,
   breakdown,
+  embedded = false,
 }: {
   snap: PortfolioSnapshot;
   breakdown: KpiBreakdown;
+  /** When true, no outer card — sits inside HoldingsHero */
+  embedded?: boolean;
 }) {
   return (
-    <section className="card p-5">
+    <section className={cn(embedded ? "pt-1" : "card p-5")}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold tracking-wide text-brand">Wealth</h2>
+          <h2
+            className={cn(
+              "text-sm font-semibold tracking-wide",
+              embedded ? "text-ink" : "text-brand",
+            )}
+          >
+            Wealth
+          </h2>
           <p className="text-xs text-ink-faint">
             Hover or tap a cell for breakdown · USD primary
           </p>

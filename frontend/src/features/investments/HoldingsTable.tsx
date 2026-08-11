@@ -69,6 +69,7 @@ export function HoldingsTable({
   assetFilter,
   onAssetFilter,
   totalCount,
+  reservedRowCount,
 }: {
   rows: TickerDigest[];
   selectedTicker: string | null;
@@ -81,9 +82,15 @@ export function HoldingsTable({
   assetFilter: HoldingsAssetFilter;
   onAssetFilter: (f: HoldingsAssetFilter) => void;
   totalCount: number;
+  /** When set, table body keeps height for this many rows (filter does not shrink layout). */
+  reservedRowCount?: number;
 }) {
+  // ~44px data row; reserve for full book so Stocks/Crypto filter doesn't collapse the card
+  const reserveRows = Math.max(reservedRowCount ?? totalCount, rows.length, 1);
+  const bodyMinPx = Math.max(reserveRows * 44, 120);
+
   return (
-    <div className="card flex min-h-0 flex-col overflow-hidden">
+    <div className="card flex flex-col">
       <div className="flex flex-wrap items-start justify-between gap-2 border-b border-white/5 px-4 py-3">
         <div>
           <h2 className="text-sm font-semibold tracking-tight">Holdings</h2>
@@ -150,9 +157,9 @@ export function HoldingsTable({
         </div>
       </div>
 
-      <div className="max-h-[min(28rem,55vh)] overflow-auto">
+      <div className="overflow-x-auto">
         <table className="w-full min-w-[36rem] text-left text-xs">
-          <thead className="sticky top-0 z-10 bg-surface-raised/95 backdrop-blur-sm">
+          <thead>
             <tr className="border-b border-white/10">
               <SortTh
                 label="Ticker"
@@ -217,10 +224,14 @@ export function HoldingsTable({
               />
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5">
+          <tbody className="divide-y divide-white/5" style={{ minHeight: bodyMinPx }}>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-ink-faint">
+                <td
+                  colSpan={7}
+                  className="px-3 text-center text-ink-faint"
+                  style={{ height: bodyMinPx }}
+                >
                   No holdings match this filter.
                 </td>
               </tr>
@@ -325,6 +336,16 @@ export function HoldingsTable({
                   </tr>
                 );
               })
+            )}
+            {/* Spacer row keeps card height stable when filter shows fewer rows */}
+            {rows.length > 0 && rows.length < reserveRows && (
+              <tr aria-hidden>
+                <td
+                  colSpan={7}
+                  style={{ height: (reserveRows - rows.length) * 44 }}
+                  className="p-0"
+                />
+              </tr>
             )}
           </tbody>
         </table>

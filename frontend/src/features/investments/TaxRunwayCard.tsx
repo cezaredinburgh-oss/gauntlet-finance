@@ -8,17 +8,21 @@ export function TaxRunwayCard({
   snap,
   focus,
   runwayRef,
+  embedded = false,
 }: {
   snap: PortfolioSnapshot;
   focus?: string;
   runwayRef?: React.Ref<HTMLDivElement>;
+  /** When true, no outer card chrome — sits inside HoldingsHero */
+  embedded?: boolean;
 }) {
   return (
     <div
       ref={runwayRef}
       className={cn(
-        "card scroll-mt-24 p-5",
-        focus === "tax_runway" && "ring-2 ring-brand/50",
+        "scroll-mt-24",
+        embedded ? "pt-1" : "card p-5",
+        focus === "tax_runway" && "ring-2 ring-brand/50 rounded-xl",
       )}
     >
       <div className="mb-3 flex flex-wrap items-center gap-2">

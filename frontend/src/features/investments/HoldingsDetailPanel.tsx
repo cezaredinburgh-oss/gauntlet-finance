@@ -53,14 +53,14 @@ export function HoldingsDetailPanel({
   const growthSign = growth != null && growth >= 0 ? "+" : "";
 
   return (
-    <div className="card flex min-h-0 flex-col overflow-hidden">
+    <div className="card flex h-full flex-col">
       <div className="border-b border-white/5 px-4 py-3">
         <h2 className="text-sm font-semibold tracking-tight">Position detail</h2>
         <p className="text-xs text-ink-faint">
           Compare quantities with your broker apps
         </p>
       </div>
-      <div className="max-h-[min(36rem,70vh)] space-y-5 overflow-y-auto p-4">
+      <div className="space-y-5 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
