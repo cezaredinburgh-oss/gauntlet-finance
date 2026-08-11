@@ -79,10 +79,17 @@ function MiniStat({
   sub?: string;
 }) {
   return (
-    <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
-      <div className="label mb-0.5">{label}</div>
-      <Money amount={value} currency="USD" secondaryMode="none" size="lg" />
-      {sub ? <div className="mt-0.5 text-[11px] text-ink-faint">{sub}</div> : null}
+    <div className="min-w-0 rounded-xl border border-white/5 bg-white/[0.02] p-2.5 sm:p-3">
+      <div className="label mb-0.5 truncate">{label}</div>
+      {/* size="md" keeps large amounts inside the cell (lg was overflowing in hero) */}
+      <div className="min-w-0 break-all tabular-nums">
+        <Money amount={value} currency="USD" secondaryMode="none" size="md" />
+      </div>
+      {sub ? (
+        <div className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-ink-faint sm:text-[11px]">
+          {sub}
+        </div>
+      ) : null}
     </div>
   );
 }
