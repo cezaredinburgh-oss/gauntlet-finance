@@ -44,3 +44,73 @@ export function tradesForPoint(
   const key = intraday ? pointDate : pointDate.slice(0, 10);
   return byKey.get(key) ?? [];
 }
+
+export type TradeSegmentSpec = {
+  key: string;
+  /** Column on each chart row holding the segment y (null elsewhere). */
+  dataKey: string;
+  color: string;
+};
+
+const BUY_SEG = "#2dd4a8";
+const SELL_SEG = "#f87171";
+const BOTH_SEG = "#fbbf24"; // amber — buy+sell on same bar
+const MAX_SEGMENTS = 24;
+
+type RowLike = {
+  buyCount?: number;
+  sellCount?: number;
+  mv?: number | null;
+  value?: number | null;
+};
+
+/**
+ * Attach short y-series columns so Recharts can draw colored Line segments
+ * only across bars that end on a buy/sell (cashflow jump on the MV curve).
+ *
+ * Returns the row list with `tradeSeg_N` fields and segment metadata.
+ */
+export function withTradeCurveSegments<T extends RowLike>(
+  rows: T[],
+  *,
+  yKey: "mv" | "value" = "mv",
+  buyColor: string = BUY_SEG,
+  sellColor: string = SELL_SEG,
+  bothColor: string = BOTH_SEG,
+  maxSegments: number = MAX_SEGMENTS,
+): { rows: T[]; segments: TradeSegmentSpec[] } {
+  if (rows.length < 2) return { rows, segments: [] };
+
+  type Cand = { i: number; color: string; absJump: number };
+  const cands: Cand[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const bc = rows[i].buyCount ?? 0;
+    const sc = rows[i].sellCount ?? 0;
+    if (bc <= 0 && sc <= 0) continue;
+    const y0 = Number(rows[i - 1][yKey] ?? NaN);
+    const y1 = Number(rows[i][yKey] ?? NaN);
+    if (!Number.isFinite(y0) || !Number.isFinite(y1)) continue;
+    const color = bc > 0 && sc > 0 ? bothColor : bc > 0 ? buyColor : sellColor;
+    cands.push({ i, color, absJump: Math.abs(y1 - y0) });
+  }
+  // Prefer largest jumps if many trades (keeps layer count bounded)
+  cands.sort((a, b) => b.absJump - a.absJump);
+  const picked = cands.slice(0, maxSegments).sort((a, b) => a.i - b.i);
+
+  const segments: TradeSegmentSpec[] = [];
+  const augmented = rows.map((r) => ({ ...r })) as T[];
+
+  picked.forEach((c, n) => {
+    const dataKey = `tradeSeg_${n}`;
+    segments.push({ key: dataKey, dataKey, color: c.color });
+    for (let j = 0; j < augmented.length; j++) {
+      const y =
+        j === c.i - 1 || j === c.i
+          ? (Number(rows[j][yKey]) as number)
+          : null;
+      (augmented[j] as Record<string, unknown>)[dataKey] = y;
+    }
+  });
+
+  return { rows: augmented, segments };
+}

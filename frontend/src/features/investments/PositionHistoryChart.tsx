@@ -9,7 +9,6 @@ import {
   Tooltip,
   XAxis,
   YAxis,
-  ReferenceArea,
   ReferenceLine,
 } from "recharts";
 import { ExternalLink } from "lucide-react";
@@ -23,7 +22,11 @@ import type {
 } from "../../api/types";
 import { d, formatUsd } from "../../lib/money";
 import { cn } from "../../lib/cn";
-import { indexTradesByPoint, tradesForPoint } from "../../lib/chartTrades";
+import {
+  indexTradesByPoint,
+  tradesForPoint,
+  withTradeCurveSegments,
+} from "../../lib/chartTrades";
 import {
   BUY_COLOR,
   LegendBuyIcon,
@@ -278,8 +281,8 @@ export function PositionHistoryChart({
 
   const intraday = data?.interval === "5m" || data?.meta?.point_kind === "intraday";
 
-  const rows = useMemo(() => {
-    if (!data?.points?.length) return [];
+  const { rows, segments: tradeSegments } = useMemo(() => {
+    if (!data?.points?.length) return { rows: [], segments: [] };
     const cost =
       data.series_kind === "price" && data.meta.avg_cost_usd != null
         ? d(data.meta.avg_cost_usd)
@@ -289,7 +292,7 @@ export function PositionHistoryChart({
     const trades = data.meta.trades ?? [];
     const isIntra = !!intraday;
     const byKey = indexTradesByPoint(trades, isIntra);
-    return data.points.map((p) => {
+    const base = data.points.map((p) => {
       const pointTrades = tradesForPoint(byKey, p.date, isIntra);
       const y = d(p.value);
       const buyCount = pointTrades.filter((t) => t.side === "buy").length;
@@ -305,6 +308,11 @@ export function PositionHistoryChart({
         sellCount,
         trades: pointTrades,
       };
+    });
+    return withTradeCurveSegments(base, {
+      yKey: "value",
+      buyColor: BUY_COLOR,
+      sellColor: SELL_COLOR,
     });
   }, [data, intraday]);
 
@@ -370,22 +378,6 @@ export function PositionHistoryChart({
     wc?.crypto?.change_usd != null ? d(wc.crypto.change_usd) : null;
   const stockWinPct = wc?.stocks?.change_pct ?? null;
   const cryptoWinPct = wc?.crypto?.change_pct ?? null;
-
-  const tradeBands = useMemo(() => {
-    const bands: Array<{ key: string; x1: string; x2: string; fill: string }> = [];
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const bc = row.buyCount ?? 0;
-      const sc = row.sellCount ?? 0;
-      if (bc <= 0 && sc <= 0) continue;
-      const x1 = rows[Math.max(0, i - 1)]?.label ?? row.label;
-      const x2 = row.label;
-      const fill =
-        bc > 0 && sc > 0 ? "#a78bfa" : bc > 0 ? BUY_COLOR : SELL_COLOR;
-      bands.push({ key: `tb-${i}`, x1, x2, fill });
-    }
-    return bands;
-  }, [rows]);
 
   const missing = data?.meta.missing_tickers ?? [];
   const positive = changePct != null ? changePct >= 0 : true;
@@ -635,18 +627,7 @@ export function PositionHistoryChart({
               <LegendSellIcon />
               Sell
             </span>
-            <span className="inline-flex items-center gap-1">
-              <span
-                className="inline-block h-2.5 w-2 rounded-sm"
-                style={{ background: BUY_COLOR, opacity: 0.35 }}
-              />
-              <span
-                className="inline-block h-2.5 w-2 rounded-sm"
-                style={{ background: SELL_COLOR, opacity: 0.35 }}
-              />
-              jump band
-            </span>
-            <span className="text-ink-faint/80">· badge = multi</span>
+            <span className="text-ink-faint/80">· colored curve = cashflow jump</span>
           </span>
         )}
       </div>
@@ -823,15 +804,18 @@ export function PositionHistoryChart({
                 />
               )}
               {showTrades &&
-                tradeBands.map((b) => (
-                  <ReferenceArea
-                    key={b.key}
-                    x1={b.x1}
-                    x2={b.x2}
-                    fill={b.fill}
-                    fillOpacity={0.16}
-                    strokeOpacity={0}
-                    ifOverflow="visible"
+                tradeSegments.map((seg) => (
+                  <Line
+                    key={seg.key}
+                    type="linear"
+                    dataKey={seg.dataKey}
+                    stroke={seg.color}
+                    strokeWidth={3}
+                    dot={false}
+                    connectNulls={false}
+                    isAnimationActive={false}
+                    legendType="none"
+                    name={seg.key}
                   />
                 ))}
               {showTrades && (
