@@ -3,7 +3,6 @@ import {
   Area,
   CartesianGrid,
   ComposedChart,
-  Line,
   ResponsiveContainer,
   Scatter,
   Tooltip,
@@ -16,11 +15,7 @@ import { api } from "../api/client";
 import type { PriceHistory, PriceHistoryRange, PriceHistoryTrade } from "../api/types";
 import { d, formatUsd } from "../lib/money";
 import { cn } from "../lib/cn";
-import {
-  indexTradesByPoint,
-  tradesForPoint,
-  withTradeCurveSegments,
-} from "../lib/chartTrades";
+import { indexTradesByPoint, tradesForPoint } from "../lib/chartTrades";
 import {
   BUY_COLOR,
   LegendBuyIcon,
@@ -165,14 +160,14 @@ export function PortfolioMvChart() {
 
   const intraday = data?.interval === "5m" || data?.meta?.point_kind === "intraday";
 
-  const { rows, segments: tradeSegments } = useMemo(() => {
-    if (!data?.points?.length) return { rows: [], segments: [] };
+  const rows = useMemo(() => {
+    if (!data?.points?.length) return [];
     const cost =
       data.meta.cost_basis_usd != null ? d(data.meta.cost_basis_usd) : undefined;
     const trades = data.meta.trades ?? [];
     const isIntra = !!intraday;
     const byKey = indexTradesByPoint(trades, isIntra);
-    const base = data.points.map((p) => {
+    return data.points.map((p) => {
       const pointTrades = tradesForPoint(byKey, p.date, isIntra);
       const y = d(p.value);
       const buyCount = pointTrades.filter((t) => t.side === "buy").length;
@@ -188,11 +183,6 @@ export function PortfolioMvChart() {
         sellCount,
         trades: pointTrades,
       };
-    });
-    return withTradeCurveSegments(base, {
-      yKey: "mv",
-      buyColor: BUY_COLOR,
-      sellColor: SELL_COLOR,
     });
   }, [data, intraday]);
 
@@ -394,7 +384,7 @@ export function PortfolioMvChart() {
               <LegendSellIcon />
               Sell
             </span>
-            <span className="text-ink-faint/80">· colored curve = cashflow jump</span>
+            <span className="text-ink-faint/80">· badge = multi</span>
           </span>
         )}
       </div>
@@ -524,21 +514,6 @@ export function PortfolioMvChart() {
                 dot={false}
                 isAnimationActive={false}
               />
-              {showTrades &&
-                tradeSegments.map((seg) => (
-                  <Line
-                    key={seg.key}
-                    type="linear"
-                    dataKey={seg.dataKey}
-                    stroke={seg.color}
-                    strokeWidth={3}
-                    dot={false}
-                    connectNulls={false}
-                    isAnimationActive={false}
-                    legendType="none"
-                    name={seg.key}
-                  />
-                ))}
               {costRef != null && range !== "1d" && (
                 <ReferenceLine
                   y={costRef}

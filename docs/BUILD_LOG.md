@@ -4,14 +4,15 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
-## 2026-08-11 — Trade jumps as colored curve segments
+## 2026-08-11 — Revert trade jump bands / curve colors
 
-- Replace vertical trade bands with green/red **line segments** on the MV curve at buy/sell steps.
+- Removed vertical trade bands and colored curve segments; buy/sell △▽ markers remain.
+- Kept performance headline (ex-buys/sells).
 
-## 2026-08-11 — Chart performance ex-buys/sells + trade bands
+## 2026-08-11 — Chart performance ex-buys/sells
 
 - Headline `change_*` = ΔMV − buys + sells (price P&amp;L); raw MV Δ kept as `mv_change_*`.
-- UI: “performance” label; trade markers on jumps.
+- UI: “performance” label.
 
 ## 2026-08-11 — Revolut statement times = Europe/Prague
 
