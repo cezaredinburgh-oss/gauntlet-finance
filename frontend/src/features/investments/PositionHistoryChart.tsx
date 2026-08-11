@@ -469,13 +469,18 @@ export function PositionHistoryChart({
           : "space-y-4 p-5",
       )}
     >
+      {/*
+        Title left · values always top-right (ml-auto).
+        Portfolio legs make the block wider; without ml-auto flex-wrap parks it on the left.
+        Same layout for embedded + popout variants.
+      */}
       <div
         className={cn(
-          "flex flex-wrap items-start justify-between gap-2 sm:gap-3",
+          "flex w-full flex-wrap items-start gap-2 sm:gap-3",
           isPopout && "shrink-0",
         )}
       >
-        <div className="min-w-0">
+        <div className="min-w-0 max-w-full flex-1 basis-[12rem]">
           <h2 className={cn("font-semibold", isPopout ? "text-xs sm:text-sm" : "text-sm")}>
             {isPopout ? "Live chart · " : "Price history · "}
             {title}
@@ -502,7 +507,7 @@ export function PositionHistoryChart({
             {range === "1d" && " · auto-refresh 60s"}
           </p>
         </div>
-        <div className="flex flex-wrap items-start gap-2 sm:gap-3">
+        <div className="ml-auto flex shrink-0 flex-wrap items-start justify-end gap-2 sm:gap-3">
           {last && (
             <div className="flex items-start justify-end gap-2 text-right">
               <div className="min-w-0">

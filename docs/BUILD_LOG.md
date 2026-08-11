@@ -4,6 +4,10 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Live chart values stay top-right (Portfolio + popout)
+
+- Header values block uses `ml-auto` so Portfolio (extra Stocks/Crypto legs) does not wrap to the left; same layout for embedded and popout.
+
 ## 2026-08-12 — Holdings layout: chart first, summary last
 
 - Order: live chart → holdings table + detail → hero (wealth KPIs + tax-free runway embedded).
