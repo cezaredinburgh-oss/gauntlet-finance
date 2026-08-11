@@ -73,10 +73,10 @@ export function HoldingsDetailPanel({
               )}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
-              <span className="text-2xl font-semibold tabular-nums">
+              <span className="text-2xl font-semibold tabular-nums text-ok">
                 {formatQty(digest.quantity_total)}
               </span>
-              <span className="text-sm text-ink-faint">units owned</span>
+              <span className="text-sm text-ok/80">units owned</span>
               <button
                 type="button"
                 className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-ink-muted hover:bg-white/10 hover:text-ink"
