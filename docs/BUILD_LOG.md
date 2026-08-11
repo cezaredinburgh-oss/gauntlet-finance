@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Mark performance (held-through qty × Δprice)
+
+- Headline no longer ΔMV−flows (missed CZK / null value_usd → purchases looked like gains).
+- `window_mark_performance`: Σ min(q_open,q_close)×(p_end−p_start); all ranges / books.
+
 ## 2026-08-11 — Revert trade jump bands / curve colors
 
 - Removed vertical trade bands and colored curve segments; buy/sell △▽ markers remain.

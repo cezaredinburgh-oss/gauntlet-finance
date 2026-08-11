@@ -205,6 +205,7 @@ export function PortfolioMvChart() {
     data?.meta.window_sells_usd != null ? d(data.meta.window_sells_usd) : null;
   const isPerf =
     data?.meta.change_basis === "performance_ex_flows" ||
+    data?.meta.change_basis === "mark_performance_start_qty" ||
     data?.series_kind === "market_value";
   const dayPct = data?.meta.day_change_pct ?? null;
   const dayAbs = data?.meta.day_change_abs != null ? d(data.meta.day_change_abs) : null;

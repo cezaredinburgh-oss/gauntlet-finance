@@ -855,11 +855,11 @@ def test_portfolio_1d_aligned_grid_full_book_and_additive():
 
 
 def test_performance_excludes_window_buys():
-    """Flat prices + mid-window buy: performance ~0; MV Δ = purchase."""
+    """Flat prices + mid-window buy: mark performance 0; MV Δ = purchase."""
     from backend.services.price_history import (
         aggregate_mv_series_time_aware,
         performance_change_meta,
-        window_external_flows,
+        window_mark_performance,
     )
 
     buy_dt = datetime(2026, 8, 11, 11, 45, 0, tzinfo=timezone.utc)
@@ -881,7 +881,6 @@ def test_performance_excludes_window_buys():
             asset_class=AssetClass.CRYPTO,
         ),
     ]
-    # value_usd = qty * 10 from helper
     tl = build_holdings_timeline(events, [])
     closes = {
         "BASE": [
@@ -898,21 +897,55 @@ def test_performance_excludes_window_buys():
     series, _ = aggregate_mv_series_time_aware(
         tl, closes, coverage_threshold=Decimal("0.5"), preseed_first_marks=True
     )
-    pts = [{"date": ts, "value": str(v)} for ts, v in series]
-    flows = window_external_flows(
-        events, pts, asset_class=AssetClass.CRYPTO
-    )
-    assert flows["buys_usd"] == Decimal("1000.00")  # 100 * 10
+    mark = window_mark_performance(tl, closes)
     ch = performance_change_meta(
         series[0][1],
         series[-1][1],
-        buys_usd=flows["buys_usd"],
-        sells_usd=flows["sells_usd"],
+        performance_abs=mark["performance_abs"],
+        open_basis_usd=mark["open_basis_usd"],
+        performance_pct=mark["performance_pct"],
     )
     assert Decimal(ch["mv_change_abs"]) == Decimal("1000.00")
     assert Decimal(ch["change_abs"]) == Decimal("0.00")
-    assert ch["change_pct"] == 0.0
-    assert ch["change_basis"] == "performance_ex_flows"
+    assert ch["change_basis"] == "mark_performance_start_qty"
+
+
+def test_mark_performance_price_move_held_through():
+    """Held qty × price change; mid-window buy excluded from performance."""
+    from backend.services.price_history import window_mark_performance
+
+    events = [
+        _event(
+            ticker="ETH",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            event_datetime=datetime(2020, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            qty="10",
+            asset_class=AssetClass.CRYPTO,
+        ),
+        _event(
+            ticker="ETH",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 8),
+            event_datetime=datetime(2026, 8, 8, 12, 0, 0, tzinfo=timezone.utc),
+            qty="5",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    # no value_usd on second buy — old flow method would fail; mark method must not
+    events[1] = events[1].model_copy(update={"value_usd": None, "value_native": None})
+    tl = build_holdings_timeline(events, [])
+    closes = {
+        "ETH": [
+            ("2026-08-05", Decimal("3000")),
+            ("2026-08-08", Decimal("3100")),
+            ("2026-08-11", Decimal("3200")),
+        ]
+    }
+    mark = window_mark_performance(tl, closes)
+    # open qty before 2026-08-05 = 10; end qty = 15; min = 10
+    # perf = 10 * (3200 - 3000) = 2000
+    assert mark["performance_abs"] == Decimal("2000.00")
 
 
 def test_portfolio_window_components_additive():

@@ -938,20 +938,117 @@ def window_external_flows(
     }
 
 
+def _qty_window_open(timeline: HoldingsTimeline, ticker: str, first_ts: str) -> Decimal:
+    """Qty at window open: prior day for daily bars; as-of first bar for intraday."""
+    if "T" in first_ts:
+        dt = _as_utc(_parse_ts(first_ts))
+        return timeline.qty_as_of_ts(ticker, dt)
+    d0 = _ts_to_date(first_ts)
+    return timeline.qty_as_of(ticker, d0 - timedelta(days=1))
+
+
+def _qty_window_close(timeline: HoldingsTimeline, ticker: str, last_ts: str) -> Decimal:
+    if "T" in last_ts:
+        return timeline.qty_as_of_ts(ticker, _as_utc(_parse_ts(last_ts)))
+    return timeline.qty_as_of(ticker, _ts_to_date(last_ts))
+
+
+def window_mark_performance(
+    timeline: HoldingsTimeline,
+    closes_by_ticker: dict[str, list[SeriesPoint]],
+    *,
+    tickers: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Pure mark performance on capital held through the window.
+
+    For each ticker:
+      q = min(qty_at_window_open, qty_at_window_close)
+      contrib = q * (price_last − price_first)
+
+    Mid-window buys are excluded (not in open qty). Full exits contribute 0.
+    Independent of trade value_usd — robust for CZK / missing cash fields.
+    """
+    universe = [
+        t.upper()
+        for t in (tickers if tickers is not None else list(closes_by_ticker.keys()))
+    ]
+    perf = Decimal("0")
+    open_basis = Decimal("0")  # Σ q * p0 for % denominator
+    for t in universe:
+        series = closes_by_ticker.get(t) or []
+        if len(series) < 1:
+            continue
+        # chronological
+        ordered = sorted(series, key=lambda p: _parse_ts(p[0]))
+        ts0, p0 = ordered[0]
+        ts1, p1 = ordered[-1]
+        try:
+            p0d = p0 if isinstance(p0, Decimal) else Decimal(str(p0))
+            p1d = p1 if isinstance(p1, Decimal) else Decimal(str(p1))
+        except Exception:  # noqa: BLE001
+            continue
+        q0 = _qty_window_open(timeline, t, ts0)
+        q1 = _qty_window_close(timeline, t, ts1)
+        if q0 <= 0 and q1 <= 0:
+            continue
+        q = min(q0, q1) if q0 > 0 and q1 > 0 else Decimal("0")
+        # Held through (or residual after partial sell)
+        if q <= 0:
+            continue
+        perf += q * (p1d - p0d)
+        open_basis += q * p0d
+    return {
+        "performance_abs": _q2(perf),
+        "open_basis_usd": _q2(open_basis),
+        "performance_pct": (
+            float((perf / open_basis) * 100) if open_basis != 0 else None
+        ),
+    }
+
+
 def performance_change_meta(
     first: Decimal | None,
     last: Decimal | None,
     *,
+    performance_abs: Decimal | None = None,
+    open_basis_usd: Decimal | None = None,
+    performance_pct: float | None = None,
     buys_usd: Decimal = Decimal("0"),
     sells_usd: Decimal = Decimal("0"),
     places: int = 2,
 ) -> dict[str, Any]:
     """
-    Headline performance ex external capital.
+    Headline = mark performance (preferred) with raw ΔMV for comparison.
 
-    performance = (last − first) − buys + sells
+    If ``performance_abs`` is provided, that is the headline change.
     """
     mv = _change_meta(first, last, places=places)
+    mv_delta = None
+    if first is not None and last is not None:
+        mv_delta = last - first
+    mv_pct = None
+    if first is not None and first != 0 and mv_delta is not None:
+        mv_pct = float((mv_delta / first) * 100)
+
+    if performance_abs is not None:
+        perf = performance_abs
+        pct = performance_pct
+        if pct is None and open_basis_usd is not None and open_basis_usd != 0:
+            pct = float((perf / open_basis_usd) * 100)
+        return {
+            "first_value": _str_dec(first, places) if first is not None else None,
+            "last_value": _str_dec(last, places) if last is not None else None,
+            "change_abs": _str_dec(perf, places),
+            "change_pct": round(pct, 2) if pct is not None else None,
+            "mv_change_abs": _str_dec(mv_delta, places) if mv_delta is not None else None,
+            "mv_change_pct": round(mv_pct, 2) if mv_pct is not None else None,
+            "window_buys_usd": _str_dec(buys_usd, places),
+            "window_sells_usd": _str_dec(sells_usd, places),
+            "change_basis": "mark_performance_start_qty",
+        }
+
+    # Legacy fallback: ΔMV − buys + sells
     if first is None or last is None:
         return {
             **mv,
@@ -961,14 +1058,8 @@ def performance_change_meta(
             "window_sells_usd": _str_dec(sells_usd, places),
             "change_basis": "performance_ex_flows",
         }
-    mv_delta = last - first
-    perf = mv_delta - buys_usd + sells_usd
-    perf_pct = None
-    if first != 0:
-        perf_pct = float((perf / first) * 100)
-    mv_pct = None
-    if first != 0:
-        mv_pct = float((mv_delta / first) * 100)
+    perf = mv_delta - buys_usd + sells_usd  # type: ignore[operator]
+    perf_pct = float((perf / first) * 100) if first != 0 else None
     return {
         "first_value": _str_dec(first, places),
         "last_value": _str_dec(last, places),
@@ -1208,28 +1299,26 @@ def portfolio_window_from_components(
     s_mv = s_mv if s_mv is not None else Decimal("0")
     c_mv = c_mv if c_mv is not None else Decimal("0")
 
+    s_mark = window_mark_performance(timeline, stock_closes, tickers=stock_ts)
+    c_mark = window_mark_performance(timeline, crypto_closes, tickers=crypto_ts)
+    s_perf = s_mark["performance_abs"]
+    c_perf = c_mark["performance_abs"]
+    total_perf = s_perf + c_perf
+    open_basis = s_mark["open_basis_usd"] + c_mark["open_basis_usd"]
+
     def _flows_for(
         closes: dict[str, list[SeriesPoint]],
         ac: AssetClass,
     ) -> tuple[Decimal, Decimal]:
         if not events or not closes:
             return Decimal("0"), Decimal("0")
-        # Build a synthetic series of union timestamps for window bounds
-        all_ts = sorted(
-            {ts for series in closes.values() for ts, _ in series},
-            key=_parse_ts,
-        )
-        if not all_ts:
-            return Decimal("0"), Decimal("0")
-        # Prefer full-book aligned points if available; else first ticker's path
-        pts = [{"date": ts, "value": "0"} for ts in all_ts]
-        # Prefer longest series for denser window end
         best: list[SeriesPoint] = []
         for series in closes.values():
             if len(series) > len(best):
                 best = series
-        if best:
-            pts = [{"date": ts, "value": str(px)} for ts, px in best]
+        if not best:
+            return Decimal("0"), Decimal("0")
+        pts = [{"date": ts, "value": str(px)} for ts, px in best]
         fl = window_external_flows(
             events,
             pts,
@@ -1240,9 +1329,6 @@ def portfolio_window_from_components(
 
     s_buys, s_sells = _flows_for(stock_closes, AssetClass.STOCK)
     c_buys, c_sells = _flows_for(crypto_closes, AssetClass.CRYPTO)
-    s_perf = s_mv - s_buys + s_sells
-    c_perf = c_mv - c_buys + c_sells
-    total_perf = s_perf + c_perf
 
     first_parts = [x for x in (s0, c0) if x is not None]
     first_total = sum(first_parts, Decimal("0")) if first_parts else None
@@ -1250,7 +1336,9 @@ def portfolio_window_from_components(
     last_total = sum(last_parts, Decimal("0")) if last_parts else None
 
     pct = None
-    if first_total is not None and first_total != 0:
+    if open_basis != 0:
+        pct = float((total_perf / open_basis) * 100)
+    elif first_total is not None and first_total != 0:
         pct = float((total_perf / first_total) * 100)
 
     def _leg(
@@ -1260,10 +1348,14 @@ def portfolio_window_from_components(
         last: Decimal | None,
         buys: Decimal,
         sells: Decimal,
+        open_basis_leg: Decimal,
+        perf_pct_leg: float | None,
     ) -> dict[str, Any]:
-        leg_pct = None
-        if first is not None and first != 0:
-            leg_pct = round(float((perf / first) * 100), 2)
+        leg_pct = perf_pct_leg
+        if leg_pct is None and open_basis_leg != 0:
+            leg_pct = round(float((perf / open_basis_leg) * 100), 2)
+        elif leg_pct is not None:
+            leg_pct = round(leg_pct, 2)
         return {
             "change_usd": _str_dec(perf),
             "change_pct": leg_pct,
@@ -1275,19 +1367,37 @@ def portfolio_window_from_components(
         }
 
     return {
-        "stocks": _leg(s_perf, s_mv, s0, s1, s_buys, s_sells),
-        "crypto": _leg(c_perf, c_mv, c0, c1, c_buys, c_sells),
+        "stocks": _leg(
+            s_perf,
+            s_mv,
+            s0,
+            s1,
+            s_buys,
+            s_sells,
+            s_mark["open_basis_usd"],
+            s_mark["performance_pct"],
+        ),
+        "crypto": _leg(
+            c_perf,
+            c_mv,
+            c0,
+            c1,
+            c_buys,
+            c_sells,
+            c_mark["open_basis_usd"],
+            c_mark["performance_pct"],
+        ),
         "sum_change_usd": _str_dec(total_perf),
         "sum_change_pct": round(pct, 2) if pct is not None else None,
         "sum_mv_change_usd": _str_dec(s_mv + c_mv),
         "first_usd": _str_dec(first_total) if first_total is not None else None,
         "last_usd": _str_dec(last_total) if last_total is not None else None,
         "method": (
-            "stocks_rth_plus_crypto_24h_ex_flows"
+            "stocks_rth_plus_crypto_24h_mark"
             if is_intraday
-            else "stocks_plus_crypto_same_range_ex_flows"
+            else "stocks_plus_crypto_mark_same_range"
         ),
-        "change_basis": "performance_ex_flows",
+        "change_basis": "mark_performance_start_qty",
     }
 
 
@@ -1717,15 +1827,20 @@ class PriceHistoryService:
             asset_class=ac_filter,
             asset_class_by_ticker=ac_map,
         )
+        # Pure mark P&L on qty held through window (ignores purchase cash)
+        mark = window_mark_performance(timeline, closes, tickers=tickers)
         ch = performance_change_meta(
             first,
             last,
+            performance_abs=mark["performance_abs"],
+            open_basis_usd=mark["open_basis_usd"],
+            performance_pct=mark["performance_pct"],
             buys_usd=flows["buys_usd"],
             sells_usd=flows["sells_usd"],
             places=2,
         )
         window_components: dict[str, Any] | None = None
-        # Portfolio: headline = Stocks + Crypto performance (ex-flows, additive)
+        # Portfolio: headline = Stocks + Crypto mark performance (additive)
         if (
             ac_filter is None
             and quantity_basis.startswith("holdings_as_of")
@@ -1753,7 +1868,21 @@ class PriceHistoryService:
                         or ch.get("last_value"),
                         "mv_change_abs": window_components.get("sum_mv_change_usd")
                         or ch.get("mv_change_abs"),
-                        "change_basis": "performance_ex_flows",
+                        "window_buys_usd": _str_dec(
+                            Decimal(window_components["stocks"].get("window_buys_usd") or 0)
+                            + Decimal(
+                                window_components["crypto"].get("window_buys_usd") or 0
+                            )
+                        ),
+                        "window_sells_usd": _str_dec(
+                            Decimal(
+                                window_components["stocks"].get("window_sells_usd") or 0
+                            )
+                            + Decimal(
+                                window_components["crypto"].get("window_sells_usd") or 0
+                            )
+                        ),
+                        "change_basis": "mark_performance_start_qty",
                     }
             except Exception as exc:  # noqa: BLE001
                 logger.warning("portfolio window components failed: %s", exc)
@@ -1788,11 +1917,11 @@ class PriceHistoryService:
         elif is_intraday and session_status == "last_24h":
             if ac_filter is None:
                 note = (
-                    "Performance = Stocks (US session) + Crypto (24h), "
-                    "ex-buys/sells cashflow. Chart path is last 24h book mark. "
+                    "Performance = mark P&L on qty held through window "
+                    "(Stocks RTH + Crypto 24h). Purchases excluded. "
                 ) + note
             else:
-                note = "Last 24h (5m) · performance ex-buys/sells. " + note
+                note = "Last 24h (5m) · mark P&L on held-through qty. " + note
         elif is_intraday and session_status == "regular":
             note = "US regular session (5m). " + note
         elif is_intraday and len(mv_series) <= 3:
