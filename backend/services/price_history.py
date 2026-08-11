@@ -639,11 +639,61 @@ def _ts_to_date(ts: str) -> date:
     return dt.date()
 
 
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _series_is_intraday(series_points: list[dict[str, str]]) -> bool:
+    """True when any point is a full ISO timestamp (5m / 1d charts)."""
+    return any("T" in str(p.get("date", "")) for p in series_points)
+
+
+def _event_ts(e: InvestmentEvent) -> datetime:
+    """Event instant for window filter; start-of-day UTC when time unknown."""
+    if e.event_datetime is not None:
+        return _as_utc(e.event_datetime)
+    return datetime(e.event_date.year, e.event_date.month, e.event_date.day, tzinfo=timezone.utc)
+
+
+def _snap_series_point(
+    series_points: list[dict[str, str]],
+    as_of: datetime,
+) -> tuple[str | None, Decimal | None]:
+    """
+    Last series bar on or before ``as_of`` (by full timestamp).
+
+    Returns (point date string as stored, value). Snaps before-window trades
+    to the first bar so markers still land on the curve.
+    """
+    as_of_u = _as_utc(as_of)
+    best_date: str | None = None
+    best_val: Decimal | None = None
+    for p in series_points:
+        try:
+            pts = _as_utc(_parse_ts(p["date"]))
+            v = Decimal(str(p["value"]))
+        except Exception:  # noqa: BLE001
+            continue
+        if pts <= as_of_u:
+            best_date = p["date"]
+            best_val = v
+        else:
+            break
+    if best_date is None and series_points:
+        try:
+            return series_points[0]["date"], Decimal(str(series_points[0]["value"]))
+        except Exception:  # noqa: BLE001
+            return series_points[0].get("date"), None
+    return best_date, best_val
+
+
 def _series_value_on_or_before(
     series_points: list[dict[str, str]],
     as_of: date,
 ) -> Decimal | None:
-    """Last chart point on or before as_of (by calendar date)."""
+    """Last chart point on or before as_of (by calendar date) — daily series."""
     best: Decimal | None = None
     for p in series_points:
         try:
@@ -677,13 +727,25 @@ def collect_trade_markers(
     """
     Buy/Sell markers for the chart window. Excludes staking, allocations, etc.
 
-    ``series_value`` is the MV/price line level on that day so markers sit on the curve.
+    Daily series: filter by calendar day; marker ``date`` is YYYY-MM-DD.
+    Intraday series: filter by full timestamp against first/last bar; marker
+    ``date`` is snapped to a series bar timestamp so the UI attaches once.
+    ``series_value`` is the MV/price line level on that bar.
     """
     if not series_points:
         return []
 
-    window_start = _ts_to_date(series_points[0]["date"])
-    window_end = _ts_to_date(series_points[-1]["date"])
+    intraday = _series_is_intraday(series_points)
+    if intraday:
+        win_start = _as_utc(_parse_ts(series_points[0]["date"]))
+        win_end = _as_utc(_parse_ts(series_points[-1]["date"]))
+        window_start_d: date | None = None
+        window_end_d: date | None = None
+    else:
+        win_start = win_end = None  # type: ignore[assignment]
+        window_start_d = _ts_to_date(series_points[0]["date"])
+        window_end_d = _ts_to_date(series_points[-1]["date"])
+
     ac_map = asset_class_by_ticker or {}
     want_ticker = ticker.upper() if ticker else None
     want_ac = asset_class.value if asset_class is not None else None
@@ -703,15 +765,27 @@ def collect_trade_markers(
             ev_ac = e.asset_class.value if e.asset_class is not None else ac_map.get(t)
             if (ev_ac or "").lower() != want_ac.lower():
                 continue
-        ed = e.event_date
-        if ed < window_start or ed > window_end:
-            continue
+
+        if intraday:
+            ets = _event_ts(e)
+            assert win_start is not None and win_end is not None
+            if ets < win_start or ets > win_end:
+                continue
+            snapped_date, series_val = _snap_series_point(series_points, ets)
+            marker_date = snapped_date or ets.isoformat()
+        else:
+            ed = e.event_date
+            assert window_start_d is not None and window_end_d is not None
+            if ed < window_start_d or ed > window_end_d:
+                continue
+            marker_date = ed.isoformat()
+            series_val = _series_value_on_or_before(series_points, ed)
+
         side = "buy" if e.event_type == InvestmentEventType.BUY else "sell"
-        series_val = _series_value_on_or_before(series_points, ed)
         value_usd = e.value_usd
         raw.append(
             {
-                "date": ed.isoformat(),
+                "date": marker_date,
                 "side": side,
                 "ticker": t,
                 "quantity": str(e.quantity),

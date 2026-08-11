@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Fix 1D phantom trade markers
+
+- Bug: day-level trade attach painted every buy/sell on **every** 5m bar of that calendar day.
+- Backend: intraday window uses event datetime; markers snap to one series bar timestamp.
+- Frontend: exact timestamp match on 1D; daily ranges keep day matching.
+
 ## 2026-08-11 — Multi-file statement upload
 
 - Upload page: multi-select / multi-drop; sequential `POST /api/upload` per file (dedupe-safe).

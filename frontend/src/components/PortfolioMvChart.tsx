@@ -15,6 +15,7 @@ import { api } from "../api/client";
 import type { PriceHistory, PriceHistoryRange, PriceHistoryTrade } from "../api/types";
 import { d, formatUsd } from "../lib/money";
 import { cn } from "../lib/cn";
+import { indexTradesByPoint, tradesForPoint } from "../lib/chartTrades";
 import {
   openChartPopout,
   type ChartScope,
@@ -158,25 +159,19 @@ export function PortfolioMvChart() {
     const cost =
       data.meta.cost_basis_usd != null ? d(data.meta.cost_basis_usd) : undefined;
     const trades = data.meta.trades ?? [];
-    const byDay = new Map<string, PriceHistoryTrade[]>();
-    for (const tr of trades) {
-      const day = tr.date.slice(0, 10);
-      const list = byDay.get(day) ?? [];
-      list.push(tr);
-      byDay.set(day, list);
-    }
+    const isIntra = !!intraday;
+    const byKey = indexTradesByPoint(trades, isIntra);
     return data.points.map((p) => {
-      const day = p.date.slice(0, 10);
-      const dayTrades = byDay.get(day) ?? [];
+      const pointTrades = tradesForPoint(byKey, p.date, isIntra);
       const y = d(p.value);
       return {
         date: p.date,
-        label: shortLabel(p.date, !!intraday),
+        label: shortLabel(p.date, isIntra),
         mv: y,
         cost,
-        buyMark: dayTrades.some((t) => t.side === "buy") ? y : (null as number | null),
-        sellMark: dayTrades.some((t) => t.side === "sell") ? y : (null as number | null),
-        trades: dayTrades,
+        buyMark: pointTrades.some((t) => t.side === "buy") ? y : (null as number | null),
+        sellMark: pointTrades.some((t) => t.side === "sell") ? y : (null as number | null),
+        trades: pointTrades,
       };
     });
   }, [data, intraday]);

@@ -22,6 +22,7 @@ import type {
 } from "../../api/types";
 import { d, formatUsd } from "../../lib/money";
 import { cn } from "../../lib/cn";
+import { indexTradesByPoint, tradesForPoint } from "../../lib/chartTrades";
 
 const RANGES: { key: PriceHistoryRange; label: string }[] = [
   { key: "1d", label: "1D" },
@@ -280,27 +281,21 @@ export function PositionHistoryChart({
           ? d(data.meta.cost_basis_usd)
           : undefined;
     const trades = data.meta.trades ?? [];
-    const byDay = new Map<string, PriceHistoryTrade[]>();
-    for (const tr of trades) {
-      const day = tr.date.slice(0, 10);
-      const list = byDay.get(day) ?? [];
-      list.push(tr);
-      byDay.set(day, list);
-    }
+    const isIntra = !!intraday;
+    const byKey = indexTradesByPoint(trades, isIntra);
     return data.points.map((p) => {
-      const day = p.date.slice(0, 10);
-      const dayTrades = byDay.get(day) ?? [];
+      const pointTrades = tradesForPoint(byKey, p.date, isIntra);
       const y = d(p.value);
-      const hasBuy = dayTrades.some((t) => t.side === "buy");
-      const hasSell = dayTrades.some((t) => t.side === "sell");
+      const hasBuy = pointTrades.some((t) => t.side === "buy");
+      const hasSell = pointTrades.some((t) => t.side === "sell");
       return {
         date: p.date,
-        label: shortLabel(p.date, !!intraday),
+        label: shortLabel(p.date, isIntra),
         value: y,
         cost,
         buyMark: hasBuy ? y : (null as number | null),
         sellMark: hasSell ? y : (null as number | null),
-        trades: dayTrades,
+        trades: pointTrades,
       };
     });
   }, [data, intraday]);

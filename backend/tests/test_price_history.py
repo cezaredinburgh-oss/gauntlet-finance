@@ -308,12 +308,14 @@ def _event(
     event_date: date,
     qty: str,
     asset_class: AssetClass = AssetClass.STOCK,
+    event_datetime: datetime | None = None,
 ) -> InvestmentEvent:
     return InvestmentEvent(
         id=uuid4(),
         account_id=uuid4(),
         event_type=event_type,
         event_date=event_date,
+        event_datetime=event_datetime,
         ticker=ticker,
         asset_class=asset_class,
         side=TradeSide.BUY if event_type == InvestmentEventType.BUY else TradeSide.SELL,
@@ -562,6 +564,66 @@ def test_collect_trade_markers_buy_sell_only():
     assert not any(m["date"] == "2021-09-01" for m in marks)
     buy = next(m for m in marks if m["side"] == "buy")
     assert buy["series_value"] == "100.00"
+
+
+def test_collect_trade_markers_intraday_window_and_snap():
+    """1D: datetime window + snap to one series bar (not whole calendar day)."""
+    from backend.services.price_history import collect_trade_markers
+
+    # 24h window: 2026-08-09 21:00 → 2026-08-10 21:00 UTC, 5m-ish bars
+    series = [
+        {"date": "2026-08-09T21:00:00+00:00", "value": "1000.00"},
+        {"date": "2026-08-09T21:05:00+00:00", "value": "1001.00"},
+        {"date": "2026-08-10T14:30:00+00:00", "value": "1100.00"},
+        {"date": "2026-08-10T14:35:00+00:00", "value": "1105.00"},
+        {"date": "2026-08-10T21:00:00+00:00", "value": "1120.00"},
+    ]
+    events = [
+        # Outside window (same calendar day as first bar, but earlier)
+        _event(
+            ticker="AAA",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 9),
+            event_datetime=datetime(2026, 8, 9, 10, 0, 0, tzinfo=timezone.utc),
+            qty="1",
+        ),
+        # Inside window — should snap to 14:30 bar (on or before 14:32)
+        _event(
+            ticker="PLTR",
+            event_type=InvestmentEventType.SELL,
+            event_date=date(2026, 8, 10),
+            event_datetime=datetime(2026, 8, 10, 14, 32, 0, tzinfo=timezone.utc),
+            qty="10",
+        ),
+        # Second trade same day — distinct snap if later bar
+        _event(
+            ticker="SPCX",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 10),
+            event_datetime=datetime(2026, 8, 10, 14, 36, 0, tzinfo=timezone.utc),
+            qty="12",
+        ),
+        _event(
+            ticker="ETH",
+            event_type=InvestmentEventType.STAKING_REWARD,
+            event_date=date(2026, 8, 10),
+            event_datetime=datetime(2026, 8, 10, 15, 0, 0, tzinfo=timezone.utc),
+            qty="0.01",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    marks = collect_trade_markers(events, series)
+    assert len(marks) == 2
+    sell = next(m for m in marks if m["side"] == "sell")
+    buy = next(m for m in marks if m["side"] == "buy")
+    assert sell["ticker"] == "PLTR"
+    assert sell["date"] == "2026-08-10T14:30:00+00:00"
+    assert sell["series_value"] == "1100.00"
+    assert buy["ticker"] == "SPCX"
+    assert buy["date"] == "2026-08-10T14:35:00+00:00"
+    assert buy["series_value"] == "1105.00"
+    # No date-only broadcast — markers must be ISO with T
+    assert all("T" in m["date"] for m in marks)
 
 
 def test_portfolio_1d_aligned_grid_full_book_and_additive():
