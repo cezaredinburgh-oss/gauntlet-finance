@@ -53,12 +53,23 @@ def _clamp_qty(q: Decimal) -> Decimal:
     return q
 
 
+def _event_instant(e: InvestmentEvent) -> datetime:
+    """UTC instant of an event (midnight UTC when only a date is known)."""
+    return _event_sort_key(e)[0]
+
+
 @dataclass
 class HoldingsTimeline:
-    """Per-ticker step functions of (date → qty after events on that date)."""
+    """Per-ticker step functions of qty after inventory events.
+
+    ``steps`` — end-of-day qty by calendar date (daily charts).
+    ``ts_steps`` — qty after each event instant (intraday 5m charts).
+    """
 
     # ticker -> sorted (as_of_date, qty) points (last write wins same day)
     steps: dict[str, list[tuple[date, Decimal]]] = field(default_factory=dict)
+    # ticker -> sorted (as_of_datetime UTC, qty) points
+    ts_steps: dict[str, list[tuple[datetime, Decimal]]] = field(default_factory=dict)
     asset_class: dict[str, str | None] = field(default_factory=dict)
 
     def qty_as_of(self, ticker: str, as_of: date) -> Decimal:
@@ -79,6 +90,33 @@ class HoldingsTimeline:
                 hi = mid - 1
         return best if best is not None else Decimal("0")
 
+    def qty_as_of_ts(self, ticker: str, as_of: datetime) -> Decimal:
+        """Qty after all events with instant ≤ ``as_of`` (UTC)."""
+        t = ticker.upper()
+        pts = self.ts_steps.get(t)
+        if not pts:
+            # Fall back to end-of-day steps when only date-level history exists
+            if as_of.tzinfo is None:
+                as_of_d = as_of.replace(tzinfo=timezone.utc).date()
+            else:
+                as_of_d = as_of.astimezone(timezone.utc).date()
+            return self.qty_as_of(t, as_of_d)
+        if as_of.tzinfo is None:
+            as_of_u = as_of.replace(tzinfo=timezone.utc)
+        else:
+            as_of_u = as_of.astimezone(timezone.utc)
+        lo, hi = 0, len(pts) - 1
+        best: Decimal | None = None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            dt, q = pts[mid]
+            if dt <= as_of_u:
+                best = q
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return best if best is not None else Decimal("0")
+
     def qty_map_as_of(self, as_of: date) -> dict[str, Decimal]:
         out: dict[str, Decimal] = {}
         for t in self.steps:
@@ -87,8 +125,17 @@ class HoldingsTimeline:
                 out[t] = q
         return out
 
+    def qty_map_as_of_ts(self, as_of: datetime) -> dict[str, Decimal]:
+        out: dict[str, Decimal] = {}
+        keys = set(self.ts_steps) | set(self.steps)
+        for t in keys:
+            q = self.qty_as_of_ts(t, as_of)
+            if q > 0:
+                out[t] = q
+        return out
+
     def tickers(self) -> list[str]:
-        return sorted(self.steps.keys())
+        return sorted(set(self.steps) | set(self.ts_steps))
 
     def tickers_for_asset_class(self, asset_class: AssetClass | str | None) -> list[str]:
         if asset_class is None:
@@ -100,7 +147,7 @@ class HoldingsTimeline:
         )
         return sorted(
             t
-            for t in self.steps
+            for t in self.tickers()
             if (self.asset_class.get(t) or "").lower() == want.lower()
         )
 
@@ -120,6 +167,7 @@ def build_holdings_timeline(
     """
     running: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
     steps: dict[str, list[tuple[date, Decimal]]] = defaultdict(list)
+    ts_steps: dict[str, list[tuple[datetime, Decimal]]] = defaultdict(list)
     ac_map: dict[str, str | None] = {}
     tickers_with_events: set[str] = set()
 
@@ -171,12 +219,21 @@ def build_holdings_timeline(
         tickers_with_events.add(t)
         new_q = _clamp_qty(running[t] + delta)
         running[t] = new_q
+        instant = _event_instant(e)
+
         # Collapse same-day updates: replace last point if same date
         pts = steps[t]
         if pts and pts[-1][0] == e.event_date:
             pts[-1] = (e.event_date, new_q)
         else:
             pts.append((e.event_date, new_q))
+
+        # Instant steps for intraday charts (collapse identical timestamps)
+        tpts = ts_steps[t]
+        if tpts and tpts[-1][0] == instant:
+            tpts[-1] = (instant, new_q)
+        else:
+            tpts.append((instant, new_q))
 
     # Fallback open lots when no events for that ticker
     for lot in lots:
@@ -201,6 +258,13 @@ def build_holdings_timeline(
         if existing:
             continue
         steps[t] = [(lot.acquisition_date, q)]
+        acq_dt = datetime(
+            lot.acquisition_date.year,
+            lot.acquisition_date.month,
+            lot.acquisition_date.day,
+            tzinfo=timezone.utc,
+        )
+        ts_steps[t] = [(acq_dt, q)]
         running[t] = q
 
     # Ensure asset class from any lot
@@ -213,4 +277,5 @@ def build_holdings_timeline(
 
     # Drop empty tickers
     clean = {t: pts for t, pts in steps.items() if pts}
-    return HoldingsTimeline(steps=clean, asset_class=ac_map)
+    clean_ts = {t: pts for t, pts in ts_steps.items() if pts}
+    return HoldingsTimeline(steps=clean, ts_steps=clean_ts, asset_class=ac_map)

@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — 1D holdings by event timestamp
+
+- Bug: 1D MV used date-only qty → same-day buys appeared at UTC midnight (~2am CEST).
+- Fix: `HoldingsTimeline.ts_steps` + `qty_as_of_ts`; intraday aggregate uses event instants.
+
 ## 2026-08-11 — Trade markers after last Yahoo bar
 
 - Bug: buys after last 5m bar (or today with no daily close) were dropped from the chart.

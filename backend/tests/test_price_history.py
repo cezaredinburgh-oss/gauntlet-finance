@@ -365,6 +365,92 @@ def test_timeline_buy_sell_qty_as_of():
     assert tl.qty_as_of("BBB", date(2023, 2, 1)) == Decimal("5")
 
 
+def test_timeline_qty_as_of_ts_not_premature_same_day():
+    """Same-day buys apply only after event_datetime (not at UTC midnight)."""
+    buy_dt = datetime(2026, 8, 11, 11, 45, 0, tzinfo=timezone.utc)
+    events = [
+        _event(
+            ticker="DOGE",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 11),
+            event_datetime=buy_dt,
+            qty="7000",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    tl = build_holdings_timeline(events, [])
+    # Calendar day still sees end-of-day qty (daily charts)
+    assert tl.qty_as_of("DOGE", date(2026, 8, 11)) == Decimal("7000")
+    # Before the trade instant — zero
+    assert tl.qty_as_of_ts(
+        "DOGE", datetime(2026, 8, 11, 0, 10, 0, tzinfo=timezone.utc)
+    ) == Decimal("0")
+    assert tl.qty_as_of_ts(
+        "DOGE", datetime(2026, 8, 11, 11, 40, 0, tzinfo=timezone.utc)
+    ) == Decimal("0")
+    # At/after the trade
+    assert tl.qty_as_of_ts("DOGE", buy_dt) == Decimal("7000")
+    assert tl.qty_as_of_ts(
+        "DOGE", datetime(2026, 8, 11, 12, 0, 0, tzinfo=timezone.utc)
+    ) == Decimal("7000")
+
+
+def test_aggregate_1d_no_midnight_qty_spike():
+    """1D MV must not jump at UTC midnight when buys happen later same day."""
+    buy_dt = datetime(2026, 8, 11, 11, 45, 0, tzinfo=timezone.utc)
+    events = [
+        _event(
+            ticker="BASE",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 1),
+            event_datetime=datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc),
+            qty="1",
+            asset_class=AssetClass.CRYPTO,
+        ),
+        _event(
+            ticker="DOGE",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 11),
+            event_datetime=buy_dt,
+            qty="100",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    tl = build_holdings_timeline(events, [])
+    # Flat prices; DOGE buy adds 100 * 10 = 1000 only after 11:45
+    closes = {
+        "BASE": [
+            ("2026-08-10T23:55:00+00:00", Decimal("1000")),
+            ("2026-08-11T00:00:00+00:00", Decimal("1000")),
+            ("2026-08-11T00:10:00+00:00", Decimal("1000")),
+            ("2026-08-11T11:40:00+00:00", Decimal("1000")),
+            ("2026-08-11T11:45:00+00:00", Decimal("1000")),
+            ("2026-08-11T12:00:00+00:00", Decimal("1000")),
+        ],
+        "DOGE": [
+            ("2026-08-10T23:55:00+00:00", Decimal("10")),
+            ("2026-08-11T00:00:00+00:00", Decimal("10")),
+            ("2026-08-11T00:10:00+00:00", Decimal("10")),
+            ("2026-08-11T11:40:00+00:00", Decimal("10")),
+            ("2026-08-11T11:45:00+00:00", Decimal("10")),
+            ("2026-08-11T12:00:00+00:00", Decimal("10")),
+        ],
+    }
+    series, meta = aggregate_mv_series_time_aware(
+        tl, closes, coverage_threshold=Decimal("0.5"), preseed_first_marks=True
+    )
+    assert meta["quantity_basis"] == "holdings_as_of_each_timestamp"
+    by_ts = {p[0]: p[1] for p in series}
+    # Before buy: only BASE = 1000
+    assert by_ts["2026-08-10T23:55:00+00:00"] == Decimal("1000.00")
+    assert by_ts["2026-08-11T00:00:00+00:00"] == Decimal("1000.00")
+    assert by_ts["2026-08-11T00:10:00+00:00"] == Decimal("1000.00")
+    assert by_ts["2026-08-11T11:40:00+00:00"] == Decimal("1000.00")
+    # After buy: BASE + DOGE = 1000 + 1000
+    assert by_ts["2026-08-11T11:45:00+00:00"] == Decimal("2000.00")
+    assert by_ts["2026-08-11T12:00:00+00:00"] == Decimal("2000.00")
+
+
 def test_aggregate_time_aware_ignores_future_buys():
     """2021 MV must not include names only bought in 2023."""
     events = [

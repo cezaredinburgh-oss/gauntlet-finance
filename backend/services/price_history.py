@@ -884,6 +884,9 @@ def aggregate_mv_series_time_aware(
     last: dict[str, Decimal] = dict(first_px) if preseed_first_marks else {}
     result: list[SeriesPoint] = []
 
+    # Intraday series use event_datetime so same-day buys do not appear at UTC midnight
+    use_ts = any("T" in str(ts) for ts in ordered)
+
     for ts in ordered:
         for t, m in price_maps.items():
             if ts in m:
@@ -891,12 +894,24 @@ def aggregate_mv_series_time_aware(
         if not last:
             continue
 
-        as_of = _ts_to_date(ts)
-        owned: dict[str, Decimal] = {}
-        for t in price_maps:
-            q = timeline.qty_as_of(t, as_of)
-            if q > 0:
-                owned[t] = q
+        if use_ts:
+            as_of_dt = _parse_ts(ts)
+            if as_of_dt.tzinfo is None:
+                as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
+            else:
+                as_of_dt = as_of_dt.astimezone(timezone.utc)
+            owned: dict[str, Decimal] = {}
+            for t in price_maps:
+                q = timeline.qty_as_of_ts(t, as_of_dt)
+                if q > 0:
+                    owned[t] = q
+        else:
+            as_of = _ts_to_date(ts)
+            owned = {}
+            for t in price_maps:
+                q = timeline.qty_as_of(t, as_of)
+                if q > 0:
+                    owned[t] = q
         if not owned:
             continue
 
@@ -935,7 +950,9 @@ def aggregate_mv_series_time_aware(
         "coverage_threshold": float(threshold),
         "short_history_tickers": short,
         "series_start": series_start,
-        "quantity_basis": "holdings_as_of_each_date",
+        "quantity_basis": (
+            "holdings_as_of_each_timestamp" if use_ts else "holdings_as_of_each_date"
+        ),
     }
     return result, meta
 
@@ -1456,9 +1473,11 @@ class PriceHistoryService:
                 # Grid path already full-book each bar; preseed still helps safety
                 preseed_first_marks=portfolio_1d,
             )
-            quantity_basis = "holdings_as_of_each_date"
+            quantity_basis = str(
+                agg_meta.get("quantity_basis") or "holdings_as_of_each_date"
+            )
             note = (
-                "Holdings as of each day × historical prices (intraday 5m) · buy/sell markers."
+                "Holdings as of each bar × historical prices (intraday 5m) · buy/sell markers."
                 if point_kind == "intraday"
                 else (
                     "Holdings as of each day × historical closes "
@@ -1483,7 +1502,7 @@ class PriceHistoryService:
         # Portfolio: headline window Δ = Stocks tab Δ + Crypto tab Δ (additive)
         if (
             ac_filter is None
-            and quantity_basis == "holdings_as_of_each_date"
+            and quantity_basis.startswith("holdings_as_of")
             and closes_raw
         ):
             try:
@@ -1510,7 +1529,7 @@ class PriceHistoryService:
                 logger.warning("portfolio window components failed: %s", exc)
                 window_components = None
 
-        if quantity_basis == "holdings_as_of_each_date":
+        if quantity_basis.startswith("holdings_as_of"):
             day = self._resolve_day_change(
                 qty_map if qty_map else {t: Decimal("0") for t in tickers},
                 ac_map,
