@@ -260,8 +260,15 @@ def build_ticker_digests(
 
             if first_acq is None or lot.acquisition_date < first_acq:
                 first_acq = lot.acquisition_date
-            if last_acq is None or lot.acquisition_date > last_acq:
-                last_acq = lot.acquisition_date
+            # "Last" = last cash-style open (exclude staking-reward dust lots so
+            # a rewards export does not look like you bought the whole bag again).
+            notes_l = (lot.notes or "").lower()
+            is_staking_lot = (
+                "staking reward" in notes_l or "staking_reward" in notes_l
+            )
+            if not is_staking_lot:
+                if last_acq is None or lot.acquisition_date > last_acq:
+                    last_acq = lot.acquisition_date
 
             if free_on > as_of:
                 if next_unlock is None or free_on < next_unlock:
@@ -269,6 +276,14 @@ def build_ticker_digests(
                     next_unlock_qty = qty
                 elif free_on == next_unlock:
                     next_unlock_qty += qty
+
+        # Fallback: if only staking lots remain, last_acq = newest open lot
+        if last_acq is None and t_lots:
+            for lot in t_lots:
+                if lot.quantity_remaining <= 0:
+                    continue
+                if last_acq is None or lot.acquisition_date > last_acq:
+                    last_acq = lot.acquisition_date
 
         mv: Decimal | None = None
         if price_val is not None:

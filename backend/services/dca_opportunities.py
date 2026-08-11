@@ -98,19 +98,41 @@ def _price_as_of_date(as_of: datetime | date) -> date:
     return as_of
 
 
+def _is_staking_reward_lot(
+    lot: InvestmentLot,
+    *,
+    staking_open_event_ids: set,
+) -> bool:
+    """True for lots opened by StakingReward (must not reset DCA 'days since buy')."""
+    if lot.open_event_id is not None and lot.open_event_id in staking_open_event_ids:
+        return True
+    notes = (lot.notes or "").lower()
+    if "staking reward" in notes or "staking_reward" in notes:
+        return True
+    return False
+
+
 def last_buy_dates(
     lots: Sequence[InvestmentLot],
     events: Sequence[InvestmentEvent],
 ) -> dict[str, date]:
-    """Latest buy date per ticker: max(Buy event dates, open-lot acquisition dates)."""
-    lot_last: dict[str, date] = {}
-    for lot in lots:
-        if lot.archived or lot.status != LotStatus.OPEN or lot.quantity_remaining <= 0:
-            continue
-        t = lot.ticker.upper()
-        prev = lot_last.get(t)
-        if prev is None or lot.acquisition_date > prev:
-            lot_last[t] = lot.acquisition_date
+    """
+    Latest **cash purchase** date per ticker for DCA cooldown / days-since-buy.
+
+    Uses:
+      1. ``InvestmentEventType.BUY`` event dates (preferred), and
+      2. open-lot ``acquisition_date`` only for lots that are **not** staking rewards.
+
+    StakingReward opens a new tax lot (correct for Czech 3y inventory) but is
+    not a discretionary add — counting it was zeroing "Xd since buy" for every
+    staked coin after a rewards export (BTC unaffected if it has no rewards).
+    """
+    staking_open_ids = {
+        e.id
+        for e in events
+        if not e.archived and e.event_type == InvestmentEventType.STAKING_REWARD
+    }
+
     event_last: dict[str, date] = {}
     for e in events:
         if e.archived or e.event_type != InvestmentEventType.BUY or not e.ticker:
@@ -119,6 +141,18 @@ def last_buy_dates(
         prev = event_last.get(t)
         if prev is None or e.event_date > prev:
             event_last[t] = e.event_date
+
+    lot_last: dict[str, date] = {}
+    for lot in lots:
+        if lot.archived or lot.status != LotStatus.OPEN or lot.quantity_remaining <= 0:
+            continue
+        if _is_staking_reward_lot(lot, staking_open_event_ids=staking_open_ids):
+            continue
+        t = lot.ticker.upper()
+        prev = lot_last.get(t)
+        if prev is None or lot.acquisition_date > prev:
+            lot_last[t] = lot.acquisition_date
+
     merged: dict[str, date] = {}
     for t in set(lot_last) | set(event_last):
         dates = [d for d in (lot_last.get(t), event_last.get(t)) if d is not None]

@@ -426,3 +426,89 @@ def test_build_position_rows_prefers_buy_event_date():
     assert len(rows) == 1
     # max(lot 100d ago, event 10d ago) = 10 days ago
     assert rows[0].days_since_buy == 10
+
+
+def test_days_since_buy_ignores_staking_reward_lots():
+    """Staking rewards open tax lots but must not reset DCA days-since-buy."""
+    from backend.services.dca_opportunities import last_buy_dates
+
+    buy_id = uuid4()
+    stake_id = uuid4()
+    old_buy = AS_OF - timedelta(days=90)
+    reward_day = AS_OF - timedelta(days=1)
+
+    lots = [
+        _lot("SOL", qty="10", cost_usd="1000", acq=old_buy, asset_class=AssetClass.CRYPTO),
+        # Staking reward lot (recent) — should be ignored for last_buy
+        InvestmentLot(
+            id=uuid4(),
+            account_id=ACCT,
+            ticker="SOL",
+            asset_class=AssetClass.CRYPTO,
+            source="Revolut",
+            acquisition_date=reward_day,
+            quantity_opened=Decimal("0.01"),
+            quantity_remaining=Decimal("0.01"),
+            cost_basis_native=Decimal("0"),
+            cost_basis_czk=Decimal("0"),
+            cost_basis_usd=Decimal("0"),
+            native_currency="USD",
+            open_event_id=stake_id,
+            status=LotStatus.OPEN,
+            notes="staking reward FMV basis",
+            created_at=TS,
+            updated_at=TS,
+        ),
+        # BTC has no staking — old acquisition stands
+        _lot("BTC", qty="0.1", cost_usd="5000", acq=old_buy, asset_class=AssetClass.CRYPTO),
+    ]
+    # Fix open_event_id on first SOL lot to buy
+    lots[0] = lots[0].model_copy(update={"open_event_id": buy_id})
+
+    events = [
+        InvestmentEvent(
+            id=buy_id,
+            account_id=ACCT,
+            event_type=InvestmentEventType.BUY,
+            event_date=old_buy,
+            ticker="SOL",
+            asset_class=AssetClass.CRYPTO,
+            side=TradeSide.BUY,
+            quantity=Decimal("10"),
+            price_native=Decimal("100"),
+            native_currency="USD",
+            value_native=Decimal("1000"),
+            value_usd=Decimal("1000"),
+            source="Revolut",
+            created_at=TS,
+            updated_at=TS,
+        ),
+        InvestmentEvent(
+            id=stake_id,
+            account_id=ACCT,
+            event_type=InvestmentEventType.STAKING_REWARD,
+            event_date=reward_day,
+            ticker="SOL",
+            asset_class=AssetClass.CRYPTO,
+            side=TradeSide.BUY,
+            quantity=Decimal("0.01"),
+            native_currency="USD",
+            value_native=None,
+            value_usd=None,
+            source="Revolut",
+            created_at=TS,
+            updated_at=TS,
+        ),
+    ]
+    dates = last_buy_dates(lots, events)
+    assert dates["SOL"] == old_buy
+    assert dates["BTC"] == old_buy
+
+    prices = {
+        "SOL": _price("SOL", "120"),
+        "BTC": _price("BTC", "60000"),
+    }
+    rows = build_position_dca_rows(lots, events, prices, as_of=AS_OF)
+    by_t = {r.ticker: r for r in rows}
+    assert by_t["SOL"].days_since_buy == 90
+    assert by_t["BTC"].days_since_buy == 90

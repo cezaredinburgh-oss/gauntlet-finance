@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — DCA days-since-buy ignores staking rewards
+
+- Bug: open staking-reward lots counted as last buy → zeroed "Xd since buy" for staked coins.
+- Fix: `last_buy_dates` uses Buy events + non-staking lots only (BTC unchanged if no rewards).
+
 ## 2026-08-11 — 1D holdings by event timestamp
 
 - Bug: 1D MV used date-only qty → same-day buys appeared at UTC midnight (~2am CEST).
