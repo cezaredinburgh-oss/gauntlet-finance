@@ -766,20 +766,46 @@ def collect_trade_markers(
             if (ev_ac or "").lower() != want_ac.lower():
                 continue
 
+        # Window filter + snap.
+        # Yahoo series often ends *before* the latest statement trade (stale 5m
+        # bar, or daily chart with no "today" close yet). Trades after the last
+        # bar but still on the last bar's calendar day — or on the next day when
+        # the series is one day behind — snap to the last bar so they stay visible.
         if intraday:
             ets = _event_ts(e)
             assert win_start is not None and win_end is not None
-            if ets < win_start or ets > win_end:
+            if ets < win_start:
                 continue
-            snapped_date, series_val = _snap_series_point(series_points, ets)
-            marker_date = snapped_date or ets.isoformat()
+            if ets > win_end:
+                last_day = win_end.date()
+                eday = ets.date()
+                # Same day as last bar, or next calendar day (series lag).
+                if eday != last_day and eday != last_day + timedelta(days=1):
+                    continue
+                snapped_date = series_points[-1]["date"]
+                try:
+                    series_val = Decimal(str(series_points[-1]["value"]))
+                except Exception:  # noqa: BLE001
+                    series_val = None
+                marker_date = snapped_date
+            else:
+                snapped_date, series_val = _snap_series_point(series_points, ets)
+                marker_date = snapped_date or ets.isoformat()
         else:
             ed = e.event_date
             assert window_start_d is not None and window_end_d is not None
-            if ed < window_start_d or ed > window_end_d:
+            if ed < window_start_d:
                 continue
-            marker_date = ed.isoformat()
-            series_val = _series_value_on_or_before(series_points, ed)
+            if ed > window_end_d:
+                # Daily series often has no bar for "today" yet.
+                if ed > window_end_d + timedelta(days=1):
+                    continue
+                # Snap onto last series day so the FE day-key still attaches.
+                marker_date = series_points[-1]["date"][:10]
+                series_val = _series_value_on_or_before(series_points, window_end_d)
+            else:
+                marker_date = ed.isoformat()
+                series_val = _series_value_on_or_before(series_points, ed)
 
         side = "buy" if e.event_type == InvestmentEventType.BUY else "sell"
         value_usd = e.value_usd

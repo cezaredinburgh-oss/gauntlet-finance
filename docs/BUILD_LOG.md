@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-11 — Trade markers after last Yahoo bar
+
+- Bug: buys after last 5m bar (or today with no daily close) were dropped from the chart.
+- Fix: snap those trades onto the last series bar (same day or +1 day lag).
+
 ## 2026-08-11 — Trade markers: both sides + multi counts
 
 - Buy = green △ up, sell = red ▽ down; when both on same bar, vertical split.

@@ -626,6 +626,71 @@ def test_collect_trade_markers_intraday_window_and_snap():
     assert all("T" in m["date"] for m in marks)
 
 
+def test_collect_trade_markers_after_last_bar_still_show():
+    """Statement buys after Yahoo's last bar (or today with no daily close) still mark."""
+    from backend.services.price_history import collect_trade_markers
+
+    # 1D: last bar 11:40, buys at 11:45 (Revolut crypto update case)
+    series_1d = [
+        {"date": "2026-08-10T12:00:00+00:00", "value": "900.00"},
+        {"date": "2026-08-11T11:40:00+00:00", "value": "1000.00"},
+    ]
+    buys = [
+        _event(
+            ticker="DOGE",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 11),
+            event_datetime=datetime(2026, 8, 11, 11, 45, 0, tzinfo=timezone.utc),
+            qty="7000",
+            asset_class=AssetClass.CRYPTO,
+        ),
+        _event(
+            ticker="XRP",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 11),
+            event_datetime=datetime(2026, 8, 11, 11, 45, 35, tzinfo=timezone.utc),
+            qty="490",
+            asset_class=AssetClass.CRYPTO,
+        ),
+        _event(
+            ticker="ETH",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 11),
+            event_datetime=datetime(2026, 8, 11, 11, 46, 16, tzinfo=timezone.utc),
+            qty="0.25",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    marks = collect_trade_markers(buys, series_1d, asset_class=AssetClass.CRYPTO)
+    assert len(marks) == 3
+    assert {m["ticker"] for m in marks} == {"DOGE", "XRP", "ETH"}
+    # All snap to last bar so FE exact-match attaches once
+    assert all(m["date"] == "2026-08-11T11:40:00+00:00" for m in marks)
+    assert all(m["side"] == "buy" for m in marks)
+
+    # Daily: series ends yesterday, buys today
+    series_d = [
+        {"date": "2026-08-09", "value": "800.00"},
+        {"date": "2026-08-10", "value": "900.00"},
+    ]
+    marks_d = collect_trade_markers(buys, series_d, asset_class=AssetClass.CRYPTO)
+    assert len(marks_d) == 3
+    assert all(m["date"] == "2026-08-10" for m in marks_d)
+
+    # Too far after last bar — excluded
+    far = [
+        _event(
+            ticker="DOGE",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 20),
+            event_datetime=datetime(2026, 8, 20, 12, 0, 0, tzinfo=timezone.utc),
+            qty="1",
+            asset_class=AssetClass.CRYPTO,
+        )
+    ]
+    assert collect_trade_markers(far, series_1d) == []
+
+
 def test_portfolio_1d_aligned_grid_full_book_and_additive():
     """Shared 5m grid: full book from first bar; Δ ≈ stock session + crypto 24h."""
     from backend.services.price_history import (
