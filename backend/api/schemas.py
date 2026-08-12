@@ -107,6 +107,20 @@ class AuthMeResponse(BaseModel):
     role: str | None = None
     tenant_ready: bool = False
     spreadsheet_bound: bool = False
+    is_demo: bool = False
+    demo_login_enabled: bool = False
+
+
+class PasswordLoginRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=320)
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+class PasswordLoginResponse(BaseModel):
+    status: str = "ok"
+    email: str
+    is_demo: bool = False
+    role: str | None = None
 
 
 class ErrorResponse(BaseModel):

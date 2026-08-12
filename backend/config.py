@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     # When multi_tenant and no real Sheets: assign memory spreadsheet ids (tests / local)
     multi_tenant_memory_sheets: bool = False  # env MULTI_TENANT_MEMORY_SHEETS
 
+    # Demo password login (landing page). Off by default — enable explicitly for demos.
+    demo_login_enabled: bool = False  # env DEMO_LOGIN_ENABLED
+    demo_email: str = "demo@gauntlet.local"  # env DEMO_EMAIL
+    demo_password: str = ""  # env DEMO_PASSWORD — e.g. "demo"; never commit real secrets
+
     @field_validator("spreadsheet_id", mode="before")
     @classmethod
     def strip_spreadsheet_id(cls, v: object) -> object:

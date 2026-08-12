@@ -123,13 +123,19 @@ def _hydrate_tenant_user(settings: Settings, user: SessionUser) -> SessionUser |
         return None
     if record.disabled_at:
         return None
+    is_demo = user.is_demo
     user.user_id = record.id
-    user.role = record.role
+    # Demo principal must never become platform_admin via env promote
+    if is_demo:
+        user.role = "user"
+    else:
+        user.role = record.role
     user.spreadsheet_id = record.spreadsheet_id
     user.email = record.email
+    user.is_demo = is_demo
     if record.name:
         user.name = record.name
-    if record.picture:
+    if record.picture and not is_demo:
         user.picture = record.picture
     return user
 

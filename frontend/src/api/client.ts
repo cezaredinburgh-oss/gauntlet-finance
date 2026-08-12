@@ -35,6 +35,7 @@ import type {
   StatementFileRow,
   MvSeries,
   DrawMetrics,
+  PublicAuthConfig,
 } from "./types";
 
 /**
@@ -196,8 +197,38 @@ export const api = {
 
   logout: () => request<{ status: string }>("/auth/logout", { method: "POST" }),
 
+  publicAuthConfig: () => request<PublicAuthConfig>("/auth/public-config"),
+
+  passwordLogin: (email: string, password: string) =>
+    request<{ status: string; email: string; is_demo: boolean; role?: string | null }>(
+      "/auth/password",
+      {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      },
+    ),
+
   /** Full URL for browser redirect to Google OAuth */
   loginUrl: () => `${API_BASE}/auth/login`,
+
+  listInvites: (pendingOnly = false) =>
+    request<{ items: Array<Record<string, unknown>> }>(
+      `/admin/invites${qs({ pending_only: pendingOnly || undefined })}`,
+    ),
+
+  createInvite: (email: string) =>
+    request<Record<string, unknown>>("/admin/invites", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+
+  deleteInvite: (id: string) =>
+    request<{ status: string; id: string }>(`/admin/invites/${id}`, {
+      method: "DELETE",
+    }),
+
+  listTenantUsers: () =>
+    request<{ items: Array<Record<string, unknown>> }>("/admin/invites/users"),
 
   tenantStatus: () =>
     request<{

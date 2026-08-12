@@ -40,6 +40,7 @@ class SessionUser:
     user_id: str | None = None
     role: str = "user"
     spreadsheet_id: str | None = None
+    is_demo: bool = False
 
 
 def _serializer(settings: Settings) -> URLSafeTimedSerializer:
@@ -57,6 +58,7 @@ def create_session_token(settings: Settings, user: SessionUser) -> str:
         "user_id": user.user_id,
         "role": user.role,
         "spreadsheet_id": user.spreadsheet_id,
+        "is_demo": user.is_demo,
     }
     return _serializer(settings).dumps(payload)
 
@@ -82,6 +84,7 @@ def load_session_token(
         user_id=data.get("user_id"),
         role=data.get("role") or "user",
         spreadsheet_id=data.get("spreadsheet_id"),
+        is_demo=bool(data.get("is_demo")),
     )
 
 

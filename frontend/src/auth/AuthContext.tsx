@@ -16,6 +16,7 @@ type AuthState = {
   error: string | null;
   refresh: () => Promise<void>;
   login: () => void;
+  loginWithPassword: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   isDevMode: boolean;
 };
@@ -48,7 +49,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  // Central 401 recovery: any API call that gets 401 clears session → login UI
   useEffect(() => {
     const onUnauthorized = () => {
       setUser(null);
@@ -60,8 +60,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(() => {
-    // Backend sets httpOnly session cookie after Google OAuth
     window.location.href = api.loginUrl();
+  }, []);
+
+  const loginWithPassword = useCallback(async (email: string, password: string) => {
+    await api.passwordLogin(email, password);
+    const me = await api.me();
+    setUser(me);
   }, []);
 
   const logout = useCallback(async () => {
@@ -80,10 +85,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       error,
       refresh,
       login,
+      loginWithPassword,
       logout,
       isDevMode: user?.auth_mode === "dev" || user?.auth_mode === "disabled",
     }),
-    [user, loading, error, refresh, login, logout],
+    [user, loading, error, refresh, login, loginWithPassword, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

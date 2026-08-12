@@ -9,7 +9,6 @@ import {
 } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { Layout } from "./components/Layout";
-import { LoginPage } from "./components/LoginPage";
 import { PageLoader } from "./components/Spinner";
 import { DashboardPage } from "./pages/DashboardPage";
 import { SpendingPage } from "./pages/SpendingPage";
@@ -23,6 +22,7 @@ import { UploadPage } from "./pages/UploadPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ChartPopoutPage } from "./pages/ChartPopoutPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
+import { LandingPage } from "./pages/LandingPage";
 
 const SESSION_BOOT_KEY = "gauntlet.session_boot";
 
@@ -55,8 +55,16 @@ function PreferDashboardOnLaunch() {
 
 function Protected({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
   if (loading) return <PageLoader label="Checking session…" />;
-  if (!user) return <LoginPage />;
+  if (!user) {
+    const next = `${location.pathname}${location.search}`;
+    const q =
+      next && next !== "/"
+        ? `?next=${encodeURIComponent(next)}`
+        : "";
+    return <Navigate to={`/login${q}`} replace />;
+  }
   return <>{children}</>;
 }
 
@@ -85,6 +93,7 @@ export default function App() {
       <BrowserRouter>
         <PreferDashboardOnLaunch />
         <Routes>
+          <Route path="login" element={<LandingPage />} />
           {/* Chart-only pop-out window (no app chrome) */}
           <Route
             path="investments/chart"

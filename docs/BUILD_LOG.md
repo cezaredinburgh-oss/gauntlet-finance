@@ -4,6 +4,16 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Landing page + demo password login + admin invites
+
+- Public SPA `/login` landing (USPs + Google + optional demo password form).
+- `POST /api/auth/password` with `DEMO_LOGIN_ENABLED` / `DEMO_EMAIL` / `DEMO_PASSWORD` (env; default off).
+- Demo principal isolated multi-tenant memory ledger; never `platform_admin`.
+- `GET /api/auth/public-config` for landing flags (no secrets).
+- Protected routes redirect to `/login`; demo banner in Layout.
+- Settings: Admin · Invites UI for `platform_admin` in multi-tenant mode.
+- Tests: `test_demo_password_login.py`.
+
 ## 2026-08-12 — Multi-tenant remediation (review waves W1–W3)
 
 - Production: refuse weak/default `SECRET_KEY`; force `effective_debug=false`; MT prod requires oauth.

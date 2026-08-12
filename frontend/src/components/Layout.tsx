@@ -24,6 +24,7 @@ import {
   type SetStateAction,
 } from "react";
 import { useAuth } from "../auth/AuthContext";
+import { DemoBanner } from "./DemoBanner";
 import { api } from "../api/client";
 import type { AlertItem } from "../api/types";
 import {
@@ -429,7 +430,9 @@ export function Layout() {
   }, [location.pathname]);
 
   return (
-    <div className="min-h-screen bg-surface text-ink lg:flex">
+    <div className="min-h-screen bg-surface text-ink">
+      <DemoBanner />
+      <div className="lg:flex">
       {/* Desktop sidebar — sticky so it stays visible while main scrolls */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-500/20 bg-surface-raised/95 backdrop-blur-md lg:sticky lg:top-0 lg:flex lg:h-screen lg:max-h-screen">
         <div className="safe-top border-b border-slate-500/20 px-4 py-5">
@@ -548,6 +551,7 @@ export function Layout() {
           ))}
         </div>
       </nav>
+      </div>
     </div>
   );
 }

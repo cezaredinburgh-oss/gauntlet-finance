@@ -8,6 +8,16 @@ export type AuthMe = {
   role?: string | null;
   tenant_ready?: boolean;
   spreadsheet_bound?: boolean;
+  is_demo?: boolean;
+  demo_login_enabled?: boolean;
+};
+
+export type PublicAuthConfig = {
+  auth_mode: string;
+  multi_tenant: boolean;
+  demo_login_enabled: boolean;
+  demo_email: string | null;
+  google_login_available: boolean;
 };
 
 export type Health = {

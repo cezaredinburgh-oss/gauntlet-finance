@@ -1,4 +1,4 @@
-"""Google OAuth login routes."""
+"""Google OAuth + demo password login routes."""
 
 from __future__ import annotations
 
@@ -16,7 +16,12 @@ from backend.api.auth import (
     session_from_token_response,
 )
 from backend.api.deps import SettingsDep, UserDep
-from backend.api.schemas import AuthMeResponse
+from backend.api.schemas import (
+    AuthMeResponse,
+    PasswordLoginRequest,
+    PasswordLoginResponse,
+)
+from backend.services.demo_auth import DemoAuthError, authenticate_demo_password
 from backend.tenancy.store import get_control_store, normalize_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -72,7 +77,11 @@ async def callback(
         store = get_control_store(settings)
         if not store.is_email_allowed(email):
             # Not invited — do not create a session that can access data
-            dest = f"{origin}/?auth_error=not_invited&email={quote(email)}" if origin else "/"
+            dest = (
+                f"{origin}/login?auth_error=not_invited&email={quote(email)}"
+                if origin
+                else "/login?auth_error=not_invited"
+            )
             resp = RedirectResponse(url=dest, status_code=302)
             resp.delete_cookie("gf_oauth_state")
             return resp
@@ -119,12 +128,57 @@ async def callback(
     return resp
 
 
+@router.post("/password", response_model=PasswordLoginResponse)
+async def password_login(
+    body: PasswordLoginRequest,
+    request: Request,
+    settings: SettingsDep,
+) -> JSONResponse:
+    """
+    Demo (or configured) password login.
+
+    Issues the same httpOnly session cookie as OAuth. Demo principal is never admin.
+    """
+    client_ip = ""
+    if request.client:
+        client_ip = request.client.host or ""
+    try:
+        session_user = authenticate_demo_password(
+            settings,
+            email=body.email,
+            password=body.password,
+            client_ip=client_ip,
+        )
+    except DemoAuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    token = create_session_token(settings, session_user)
+    payload = PasswordLoginResponse(
+        status="ok",
+        email=session_user.email,
+        is_demo=session_user.is_demo,
+        role=session_user.role,
+    )
+    resp = JSONResponse(payload.model_dump())
+    resp.set_cookie(
+        settings.session_cookie_name,
+        token,
+        httponly=True,
+        max_age=settings.session_max_age_seconds,
+        samesite="lax",
+        secure=settings.app_env == "production",
+    )
+    return resp
+
+
 @router.get("/me", response_model=AuthMeResponse)
 async def me(
     settings: SettingsDep,
     user: UserDep,
 ) -> AuthMeResponse:
     ready = bool(user.spreadsheet_id) if settings.multi_tenant else settings.spreadsheet_configured
+    if user.is_demo and settings.multi_tenant:
+        ready = bool(user.spreadsheet_id)
     return AuthMeResponse(
         email=user.email,
         name=user.name,
@@ -132,10 +186,31 @@ async def me(
         auth_mode=settings.auth_mode,
         multi_tenant=settings.multi_tenant,
         user_id=user.user_id,
-        role=user.role if settings.multi_tenant else None,
-        tenant_ready=ready,
+        role=user.role if (settings.multi_tenant or user.is_demo) else None,
+        tenant_ready=ready if not user.is_demo else bool(user.spreadsheet_id or not settings.multi_tenant),
         spreadsheet_bound=bool(user.spreadsheet_id) if settings.multi_tenant else settings.spreadsheet_configured,
+        is_demo=user.is_demo,
+        demo_login_enabled=settings.demo_login_enabled,
     )
+
+
+@router.get("/public-config")
+async def public_auth_config(settings: SettingsDep) -> dict:
+    """Unauthenticated flags for the landing page (no secrets)."""
+    return {
+        "auth_mode": settings.auth_mode,
+        "multi_tenant": settings.multi_tenant,
+        "demo_login_enabled": settings.demo_login_enabled,
+        "demo_email": (
+            (settings.demo_email or "demo@gauntlet.local").strip().lower()
+            if settings.demo_login_enabled
+            else None
+        ),
+        "google_login_available": (
+            settings.auth_mode == "oauth"
+            and bool(settings.google_client_id and settings.google_client_secret)
+        ),
+    }
 
 
 @router.post("/logout")
