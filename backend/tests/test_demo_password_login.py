@@ -231,6 +231,30 @@ def test_public_production_no_open_ledger_demo_ok(monkeypatch: pytest.MonkeyPatc
         assert "DEMO_PASSWORD" not in str(cfg)
 
 
+def test_public_config_hides_owner_login_when_multi_tenant(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Owner password exists in env but must not be advertised under MULTI_TENANT."""
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("AUTH_MODE", "oauth")
+    monkeypatch.setenv("SECRET_KEY", "mt-owner-hide-secret-ok")
+    monkeypatch.setenv("MULTI_TENANT", "true")
+    monkeypatch.setenv("MULTI_TENANT_MEMORY_SHEETS", "true")
+    monkeypatch.setenv("CONTROL_DB_PATH", str(tmp_path / "mt-owner.db"))
+    monkeypatch.setenv("SPREADSHEET_ID", "legacy-sheet")
+    monkeypatch.setenv("REPO_BACKEND", "memory")
+    monkeypatch.setenv("OWNER_EMAIL", "owner@example.com")
+    monkeypatch.setenv("OWNER_PASSWORD", "owner-secret-pass")
+    monkeypatch.setenv("DEMO_LOGIN_ENABLED", "false")
+    get_settings.cache_clear()
+    reset_control_store_for_tests()
+    with _client() as client:
+        cfg = client.get("/api/auth/public-config").json()
+        assert cfg["multi_tenant"] is True
+        assert cfg["owner_login_enabled"] is False
+        assert "owner_email" not in cfg
+
+
 def test_owner_password_login_not_demo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("AUTH_MODE", "dev")

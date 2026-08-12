@@ -56,10 +56,93 @@ REPO_BACKEND=memory
 
 ## Migration of an existing single-user sheet
 
-1. Enable multi-tenant + control DB.  
-2. Set your email in `PLATFORM_ADMIN_EMAILS`.  
-3. Log in with OAuth.  
-4. Platform admin: `POST /api/tenant/bind` with `{ "spreadsheet_id": "<id>", "user_id": "<your user id>" }`.
+Use this when you currently run **single-tenant** (owner password + env `SPREADSHEET_ID`)
+and want your real ledger on a **personal multi-tenant account** while keeping admin for
+invites / testing.
+
+### Preconditions
+
+1. Google **OAuth Web** client with redirect  
+   `https://<your-host>/api/auth/callback`  
+   (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OAUTH_REDIRECT_URI`).
+2. Durable control DB: Railway **volume** + `CONTROL_DB_PATH=/data/gauntlet_control.db`
+   (or any path on that volume). Without a volume, redeploys wipe users/bindings.
+3. Service account still **Editor** on the existing production spreadsheet.
+4. Snapshot: note current `SPREADSHEET_ID` and a couple of dashboard totals for smoke checks.
+5. Decide testing path: **Demo password** (isolated memory) — do not bind the production
+   sheet to a second “test” principal; one sheet → one user.
+
+### Cutover steps
+
+1. Set production env (names only):
+
+   ```env
+   MULTI_TENANT=true
+   AUTH_MODE=oauth
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   OAUTH_REDIRECT_URI=https://<your-host>/api/auth/callback
+   PLATFORM_ADMIN_EMAILS=you@example.com
+   CONTROL_DB_PATH=/data/gauntlet_control.db
+   SECRET_KEY=<long random ≥16>
+   CORS_ORIGINS=https://<your-host>
+   APP_ENV=production
+   # Keep SA JSON + (temporarily) SPREADSHEET_ID for migrate-env-sheet
+   # Owner password login is disabled under multi-tenant — prefer Google Sign-In
+   ```
+
+2. Deploy; confirm process starts (`/health`). Production multi-tenant **requires** oauth.
+
+3. Open the site → **Sign in with Google** as the platform admin email  
+   (`PLATFORM_ADMIN_EMAILS` auto-stubs that user — no invite required).
+
+4. **Do not** click **Provision ledger** if you want historical data  
+   (that creates a **new empty** sheet).
+
+5. Bind the legacy sheet (pick one):
+
+   | Method | When |
+   |--------|------|
+   | **Settings → Admin · Legacy sheet → “Bind env SPREADSHEET_ID to me”** | Env still has the production id (recommended cutover). |
+   | `POST /api/admin/migrate-env-sheet` | Same as above, API-only. |
+   | Settings paste URL / `POST /api/tenant/bind` | Explicit id or bind for another user. |
+
+   ```http
+   POST /api/admin/migrate-env-sheet
+   Cookie: gf_session=…
+
+   # or
+   POST /api/tenant/bind
+   { "spreadsheet_id": "<legacy id or Sheets URL>", "user_id": "<optional; default self>" }
+   ```
+
+6. Verify:
+
+   - `GET /api/auth/me` → `tenant_ready: true`, `role: platform_admin`
+   - Dashboard / holdings match pre-cutover totals
+   - Demo password (if enabled) still uses isolated memory, not the production sheet
+   - Landing does **not** offer owner password under multi-tenant
+
+7. Optional cleanup: blank `OWNER_*` so nobody confuses paths; leave or clear
+   `SPREADSHEET_ID` (ignored for user data after bind; only used by migrate-env and health).
+
+### Testing after cutover (same Google account)
+
+| Path | Ledger |
+|------|--------|
+| Your Google login | Real personal finances (bound sheet) + admin invites UI |
+| Demo password | Isolated memory only — safe for UI/API experiments |
+| Local `MULTI_TENANT_MEMORY_SHEETS` | Local multi-tenant without Google Sheets |
+
+You cannot attach a second “admin sandbox” Google sheet to the **same** user while the
+production sheet is bound (one `spreadsheet_id` per user).
+
+### Rollback
+
+1. Redeploy with `MULTI_TENANT=false` and prior single-tenant auth vars  
+   (`AUTH_MODE=dev`, owner password, `SPREADSHEET_ID`, `ALLOW_OPEN_AUTH=false` as before).
+2. Google sheet data is unchanged (bind only rewrites the control DB pointer).
+3. Control DB volume can remain; single-tenant ignores it.
 
 ## Safety invariants
 

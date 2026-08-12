@@ -4,6 +4,15 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Admin → personal tenant migration tooling
+
+- Goal: real finances on multi-tenant personal principal (bound sheet); keep platform admin + demo for testing.
+- `public-config`: `owner_login_enabled` is **false** when `MULTI_TENANT=true` (owner password remains ST-only).
+- `POST /api/admin/migrate-env-sheet` — platform admin one-shot bind of env `SPREADSHEET_ID` to self (safe cutover; refuses if already bound differently / conflict).
+- Settings **Admin · Legacy sheet**: bind env id to me, or paste URL/id (+ optional target user). Prefer over Provision for legacy data.
+- Docs: cutover/rollback in `MULTI_TENANT.md` + deploy notes in `DEPLOY.md`.
+- Tests: public-config MT hide owner; migrate-env-sheet bind/idempotent/403/400.
+
 ## 2026-08-12 — Auth review remediations (post-lockdown)
 
 - Safe email equality (no `compare_digest` length 500s); password still constant-time.

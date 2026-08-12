@@ -389,6 +389,75 @@ def test_bind_conflict_and_admin_only(mt_env):
         assert r3.status_code == 409, r3.text
 
 
+def test_migrate_env_sheet_binds_to_admin(
+    mt_env, monkeypatch: pytest.MonkeyPatch
+):
+    """One-shot cutover: env SPREADSHEET_ID → platform admin when unbound."""
+    monkeypatch.setenv("SPREADSHEET_ID", "legacy-production-sheet-id")
+    get_settings.cache_clear()
+    store = get_control_store()
+    admin = store.upsert_user_from_oauth(
+        email="admin@example.com",
+        google_sub="sub-admin-mig",
+        name="Admin",
+        picture=None,
+        role="platform_admin",
+    )
+    # Ensure unbound
+    assert not (admin.spreadsheet_id or "").strip()
+
+    with _client() as client:
+        client.cookies.set(
+            "gf_session",
+            _session_for(admin.id, admin.email, role="platform_admin"),
+        )
+        # Non-admin cannot migrate
+        a, _, _, sheet_a, _ = _seed_users()
+        client.cookies.set("gf_session", _session_for(a.id, a.email, sheet=sheet_a))
+        forbidden = client.post("/api/admin/migrate-env-sheet")
+        assert forbidden.status_code == 403, forbidden.text
+
+        client.cookies.set(
+            "gf_session",
+            _session_for(admin.id, admin.email, role="platform_admin"),
+        )
+        r = client.post("/api/admin/migrate-env-sheet")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["status"] == "bound"
+        assert body["spreadsheet_id"] == "legacy-production-sheet-id"
+        assert body["source"] == "env_SPREADSHEET_ID"
+
+        # Idempotent
+        r2 = client.post("/api/admin/migrate-env-sheet")
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["status"] == "already_bound"
+
+        me = client.get("/api/auth/me")
+        assert me.status_code == 200
+        assert me.json()["tenant_ready"] is True
+        assert me.json()["spreadsheet_bound"] is True
+
+
+def test_migrate_env_sheet_refuses_without_env(mt_env):
+    store = get_control_store()
+    admin = store.upsert_user_from_oauth(
+        email="admin@example.com",
+        google_sub="sub-admin-empty",
+        name="Admin",
+        picture=None,
+        role="platform_admin",
+    )
+    with _client() as client:
+        client.cookies.set(
+            "gf_session",
+            _session_for(admin.id, admin.email, role="platform_admin"),
+        )
+        r = client.post("/api/admin/migrate-env-sheet")
+        assert r.status_code == 400, r.text
+        assert "SPREADSHEET_ID" in r.json()["detail"]
+
+
 def test_oauth_callback_rejects_uninvited(mt_env, monkeypatch: pytest.MonkeyPatch):
     async def fake_exchange(settings, code):
         return {"access_token": "tok", "expires_in": 3600}

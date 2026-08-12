@@ -10,6 +10,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.api.deps import (
+    PlatformAdminDep,
     RepoDep,
     SettingsDep,
     UserDep,
@@ -47,6 +48,102 @@ class CleanupRequest(BaseModel):
         ...,
         description=f'Must be exactly "{CONFIRM_TOKEN}" to proceed',
     )
+
+
+@router.post("/migrate-env-sheet")
+async def migrate_env_sheet(
+    settings: SettingsDep,
+    admin: PlatformAdminDep,
+) -> dict[str, Any]:
+    """
+    One-shot: bind env SPREADSHEET_ID to the authenticated platform admin.
+
+    Used when cutting over single-tenant → multi-tenant so the legacy ledger
+    attaches without accidentally calling POST /tenant/provision (new empty sheet).
+
+    Safe rules:
+    - MULTI_TENANT required (PlatformAdminDep already 404s otherwise)
+    - Env spreadsheet_id must be non-empty
+    - Admin must not already have a *different* binding
+    - Sheet must not be bound to another user (409)
+    """
+    from backend.tenancy.store import control_user_to_dict, get_control_store
+
+    sheet_id = (settings.spreadsheet_id or "").strip()
+    if not sheet_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No SPREADSHEET_ID in environment. "
+                "Set it or use POST /api/tenant/bind with an explicit spreadsheet_id."
+            ),
+        )
+    if "/d/" in sheet_id:
+        try:
+            sheet_id = sheet_id.split("/d/")[1].split("/")[0]
+        except IndexError:
+            pass
+
+    if not admin.user_id:
+        raise HTTPException(status_code=403, detail="Account not registered.")
+
+    store = get_control_store(settings)
+    record = store.get_user_by_id(admin.user_id)
+    if record is None:
+        raise HTTPException(status_code=403, detail="Account not registered.")
+    if record.disabled_at:
+        raise HTTPException(status_code=403, detail="Account disabled.")
+
+    existing = (record.spreadsheet_id or "").strip()
+    if existing:
+        if existing == sheet_id:
+            return {
+                "status": "already_bound",
+                "spreadsheet_id": existing,
+                "user": control_user_to_dict(record),
+            }
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Your account already has a different spreadsheet bound. "
+                "Use POST /api/tenant/bind to reassign intentionally."
+            ),
+        )
+
+    try:
+        updated = store.claim_spreadsheet_id(
+            admin.user_id, sheet_id, only_if_empty=True
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if msg == "already_provisioned":
+            refreshed = store.get_user_by_id(admin.user_id)
+            assert refreshed is not None
+            if (refreshed.spreadsheet_id or "").strip() == sheet_id:
+                return {
+                    "status": "already_bound",
+                    "spreadsheet_id": refreshed.spreadsheet_id,
+                    "user": control_user_to_dict(refreshed),
+                }
+            raise HTTPException(
+                status_code=400,
+                detail="Your account already has a spreadsheet bound.",
+            ) from exc
+        if msg == "spreadsheet_already_bound":
+            raise HTTPException(
+                status_code=409,
+                detail="That spreadsheet is already bound to another account.",
+            ) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
+
+    clear_repo_cache(spreadsheet_id=sheet_id)
+    return {
+        "status": "bound",
+        "spreadsheet_id": sheet_id,
+        "user": control_user_to_dict(updated),
+        "bound_by": admin.email,
+        "source": "env_SPREADSHEET_ID",
+    }
 
 
 class JobStartBody(BaseModel):

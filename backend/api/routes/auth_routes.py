@@ -201,9 +201,12 @@ async def public_auth_config(settings: SettingsDep) -> dict:
             if settings.demo_login_enabled
             else None
         ),
+        # Owner password is single-tenant only (blocked under MULTI_TENANT).
         # Do not expose owner_email publicly (reduces targeted guessing).
         "owner_login_enabled": bool(
-            (settings.owner_email or "").strip() and (settings.owner_password or "").strip()
+            not settings.multi_tenant
+            and (settings.owner_email or "").strip()
+            and (settings.owner_password or "").strip()
         ),
         "google_login_available": (
             settings.auth_mode == "oauth"

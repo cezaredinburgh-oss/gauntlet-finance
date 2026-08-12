@@ -71,6 +71,25 @@ Or use wizard step **Deploy → Generate env vars**.
 
 **Auth note:** Production refuses open API access when `AUTH_MODE` is `dev` or `disabled` unless `ALLOW_OPEN_AUTH=true`. Without that flag unauthenticated domain routes return **401** (login required). Prefer owner/demo password or `AUTH_MODE=oauth` on public domains — never leave `ALLOW_OPEN_AUTH=true` on a shared URL.
 
+### Multi-tenant production (personal account + invites)
+
+When `MULTI_TENANT=true` on a public host:
+
+| Variable | Notes |
+|----------|--------|
+| `MULTI_TENANT` | `true` |
+| `AUTH_MODE` | **Must be `oauth`** in production or the process refuses to start |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth Web client |
+| `OAUTH_REDIRECT_URI` | `https://<public-host>/api/auth/callback` |
+| `PLATFORM_ADMIN_EMAILS` | Your Google email(s), comma-separated |
+| `CONTROL_DB_PATH` | e.g. `/data/gauntlet_control.db` **on a Railway volume** |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Still required for live Sheets |
+| `SPREADSHEET_ID` | Keep temporarily to use **Bind env SPREADSHEET_ID** migration; not used for user data after bind |
+| `OWNER_*` | Owner password login is **disabled** under multi-tenant |
+| Demo vars | Optional; demo stays on isolated memory |
+
+Full cutover runbook (bind existing ledger, do not provision empty): see **`docs/MULTI_TENANT.md`** → *Migration of an existing single-user sheet*.
+
 ## 4. Render (alternative)
 
 Use `render.yaml` or create a **Web Service** with Dockerfile from this repo. Same env vars as Railway.

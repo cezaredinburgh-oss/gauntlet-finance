@@ -255,6 +255,33 @@ export const api = {
       user?: Record<string, unknown>;
     }>("/tenant/provision", { method: "POST" }),
 
+  /** Platform admin: attach an existing spreadsheet to a user (legacy migration). */
+  tenantBind: (spreadsheetId: string, userId?: string) =>
+    request<{
+      status: string;
+      spreadsheet_id?: string;
+      user?: Record<string, unknown>;
+      bound_by?: string;
+    }>("/tenant/bind", {
+      method: "POST",
+      body: JSON.stringify({
+        spreadsheet_id: spreadsheetId,
+        ...(userId ? { user_id: userId } : {}),
+      }),
+    }),
+
+  /**
+   * Platform admin one-shot: bind env SPREADSHEET_ID to the current admin
+   * (single-tenant → multi-tenant cutover). Prefer over provision for legacy data.
+   */
+  migrateEnvSheet: () =>
+    request<{
+      status: string;
+      spreadsheet_id?: string;
+      user?: Record<string, unknown>;
+      source?: string;
+    }>("/admin/migrate-env-sheet", { method: "POST" }),
+
   sheetsStatus: () => request<SheetsStatus>("/sheets/status"),
 
   cleanupPreview: () => request<CleanupPreview>("/admin/cleanup/preview"),
