@@ -18,6 +18,7 @@ export type PublicAuthConfig = {
   demo_login_enabled: boolean;
   demo_email: string | null;
   google_login_available: boolean;
+  open_auth?: boolean;
 };
 
 export type Health = {

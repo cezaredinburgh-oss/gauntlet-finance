@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   FileUp,
   LayoutDashboard,
@@ -52,6 +52,7 @@ type PublicConfig = {
   demo_login_enabled: boolean;
   demo_email: string | null;
   google_login_available: boolean;
+  open_auth?: boolean;
 };
 
 function readAuthError(params: URLSearchParams): {
@@ -65,7 +66,7 @@ function readAuthError(params: URLSearchParams): {
 }
 
 export function LandingPage() {
-  const { user, loading, login, loginWithPassword, refresh } = useAuth();
+  const { user, loading, login, loginWithPassword, logout, refresh } = useAuth();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const initialErr = useMemo(() => readAuthError(params), [params]);
@@ -138,7 +139,7 @@ export function LandingPage() {
     [email, password, loginWithPassword, navigate],
   );
 
-  if (loading) {
+  if (loading && !publicCfg) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface">
         <Spinner className="h-8 w-8" />
@@ -146,13 +147,15 @@ export function LandingPage() {
     );
   }
 
-  if (user) {
-    return <Navigate to="/" replace />;
-  }
-
   const demoOn = publicCfg?.demo_login_enabled === true;
-  const googleOn = publicCfg?.google_login_available !== false;
+  const googleOn = publicCfg?.google_login_available === true;
   const notInvited = authError === "not_invited";
+  const isDevAuth =
+    publicCfg?.auth_mode === "dev" ||
+    publicCfg?.auth_mode === "disabled" ||
+    user?.auth_mode === "dev" ||
+    user?.auth_mode === "disabled";
+  const signedIn = Boolean(user);
 
   return (
     <div className="min-h-screen bg-surface text-ink">
@@ -193,13 +196,54 @@ export function LandingPage() {
 
         <section className="card space-y-5 p-6 sm:p-8">
           <div>
-            <h2 className="text-xl font-semibold tracking-tight">Sign in</h2>
+            <h2 className="text-xl font-semibold tracking-tight">
+              {signedIn ? "You're signed in" : "Sign in"}
+            </h2>
             <p className="mt-1 text-sm text-ink-muted">
-              {publicCfg?.multi_tenant
-                ? "Invite-only for Google accounts. Or try the shared demo when enabled."
-                : "Sign in with Google, or use the demo account when enabled on this host."}
+              {signedIn
+                ? "This is the public landing page. Open the app, or sign out to use demo / Google login."
+                : publicCfg?.multi_tenant
+                  ? "Invite-only for Google accounts. Or try the shared demo when enabled."
+                  : "Sign in with Google, or use the demo account when enabled on this host."}
             </p>
           </div>
+
+          {signedIn && (
+            <div className="space-y-3 rounded-xl border border-brand/30 bg-brand/10 px-4 py-3 text-sm">
+              <div>
+                <div className="font-medium text-ink">{user?.name || "Signed in"}</div>
+                <div className="text-ink-muted">{user?.email}</div>
+                {user?.is_demo && (
+                  <div className="mt-1 text-xs text-amber-200">Demo session</div>
+                )}
+                {isDevAuth && !user?.is_demo && (
+                  <div className="mt-1 text-xs text-amber-200">
+                    Local <code className="text-ink-muted">AUTH_MODE=dev</code> auto-signs you
+                    in (no login screen by default). That is why the app opened immediately.
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Link to="/" className="btn-primary">
+                  Open app
+                </Link>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void logout()}
+                >
+                  Sign out
+                </button>
+              </div>
+              {isDevAuth && (
+                <p className="text-xs text-ink-faint">
+                  To exercise real login (demo password / Google), set{" "}
+                  <code className="text-ink-muted">AUTH_MODE=oauth</code> (and demo env vars)
+                  then restart the API. Dev mode always has a session.
+                </p>
+              )}
+            </div>
+          )}
 
           {notInvited && (
             <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-3 text-sm text-amber-100">
@@ -233,7 +277,7 @@ export function LandingPage() {
             </div>
           )}
 
-          {demoOn && (
+          {!signedIn && demoOn && (
             <form className="space-y-3" onSubmit={(e) => void onDemoSubmit(e)}>
               <div className="text-xs font-semibold uppercase tracking-wide text-brand">
                 Demo account
@@ -279,7 +323,7 @@ export function LandingPage() {
             </form>
           )}
 
-          {demoOn && googleOn && (
+          {!signedIn && demoOn && googleOn && (
             <div className="flex items-center gap-3 text-xs text-ink-faint">
               <div className="h-px flex-1 bg-white/10" />
               or
@@ -287,7 +331,7 @@ export function LandingPage() {
             </div>
           )}
 
-          {googleOn && (
+          {!signedIn && googleOn && (
             <div className="space-y-2">
               <button
                 type="button"
@@ -304,28 +348,36 @@ export function LandingPage() {
             </div>
           )}
 
-          {!demoOn && !googleOn && (
+          {!signedIn && !demoOn && !googleOn && (
             <p className="text-sm text-ink-muted">
-              No login methods are enabled on this host. Set{" "}
-              <code className="text-ink">DEMO_LOGIN_ENABLED</code> or{" "}
-              <code className="text-ink">AUTH_MODE=oauth</code>.
+              {isDevAuth ? (
+                <>
+                  This host uses <code className="text-ink">AUTH_MODE=dev</code>, so the API
+                  auto-authenticates without a login form. Use{" "}
+                  <Link to="/" className="text-brand hover:underline">
+                    Open app
+                  </Link>{" "}
+                  above after refresh, or enable demo/oauth (see below).
+                </>
+              ) : (
+                <>
+                  No login methods are enabled. Set{" "}
+                  <code className="text-ink">DEMO_LOGIN_ENABLED=true</code> or{" "}
+                  <code className="text-ink">AUTH_MODE=oauth</code>.
+                </>
+              )}
             </p>
           )}
 
-          <button
-            type="button"
-            className="btn-ghost w-full text-xs"
-            onClick={() => void refresh()}
-          >
-            Check existing session
-          </button>
-
-          <p className="text-center text-xs text-ink-faint">
-            Already set up?{" "}
-            <Link to="/" className="text-brand hover:underline">
-              Open app
-            </Link>
-          </p>
+          {!signedIn && (
+            <button
+              type="button"
+              className="btn-ghost w-full text-xs"
+              onClick={() => void refresh()}
+            >
+              Check existing session
+            </button>
+          )}
         </section>
       </div>
     </div>

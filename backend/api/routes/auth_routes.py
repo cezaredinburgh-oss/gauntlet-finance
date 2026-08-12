@@ -197,10 +197,13 @@ async def me(
 @router.get("/public-config")
 async def public_auth_config(settings: SettingsDep) -> dict:
     """Unauthenticated flags for the landing page (no secrets)."""
+    # In AUTH_MODE=dev the API always returns a session — demo/Google login UIs are secondary.
     return {
         "auth_mode": settings.auth_mode,
         "multi_tenant": settings.multi_tenant,
-        "demo_login_enabled": settings.demo_login_enabled,
+        "demo_login_enabled": bool(
+            settings.demo_login_enabled and (settings.demo_password or "").strip()
+        ),
         "demo_email": (
             (settings.demo_email or "demo@gauntlet.local").strip().lower()
             if settings.demo_login_enabled
@@ -210,6 +213,7 @@ async def public_auth_config(settings: SettingsDep) -> dict:
             settings.auth_mode == "oauth"
             and bool(settings.google_client_id and settings.google_client_secret)
         ),
+        "open_auth": settings.auth_mode in {"dev", "disabled"},
     }
 
 
