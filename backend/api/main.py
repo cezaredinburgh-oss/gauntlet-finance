@@ -155,12 +155,21 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Tour may refresh market quotes (memory-only) so dashboard MV works.
+    _TOUR_WRITE_ALLOW_PREFIXES = (
+        "/api/auth/",
+        "/api/prices/refresh",
+    )
+
     @app.middleware("http")
     async def block_tour_demo_writes(request: Request, call_next):
-        """Safety net: tour demo cannot mutate domain APIs (allow /api/auth/*)."""
+        """Safety net: tour cannot mutate ledger; price refresh is allowed."""
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             path = request.url.path or ""
-            if path.startswith("/api/") and not path.startswith("/api/auth/"):
+            if path.startswith("/api/") and not any(
+                path.startswith(p) or path == p.rstrip("/")
+                for p in _TOUR_WRITE_ALLOW_PREFIXES
+            ):
                 from backend.api.auth import load_session_token
                 from backend.api.session_cookies import is_guest_request
                 from backend.config import get_settings as _gs

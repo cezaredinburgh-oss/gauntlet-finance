@@ -256,7 +256,7 @@ function NavItems({
 }
 
 export function Layout() {
-  const { user, logout, isDevMode, isReadOnly } = useAuth();
+  const { user, logout, isDevMode } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -392,8 +392,8 @@ export function Layout() {
       path === "/" ||
       path === "/dashboard" ||
       path.startsWith("/investments");
-    // Tour demo is read-only — skip soft price writes that hit the demo ledger.
-    if (!wealth || isReadOnly) return;
+    // Tour is ledger-read-only but price refresh is allowed (memory quotes for MV).
+    if (!wealth) return;
 
     let busy = false;
     const tick = async () => {
@@ -428,7 +428,7 @@ export function Layout() {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [location.pathname, isReadOnly]);
+  }, [location.pathname]);
 
   return (
     <div className="min-h-screen bg-surface text-ink">

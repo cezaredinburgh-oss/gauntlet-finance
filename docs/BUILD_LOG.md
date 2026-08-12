@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Tour showcase seed + market value fix
+
+- Tour had open lots but **empty Prices** → `portfolio_snapshot` set `total_market_value` null; soft refresh skipped for `isReadOnly` and middleware blocked `POST /prices/refresh`.
+- Seed illustrative `Prices` for AAPL/MSFT/ETH/VTI/NVDA/GOOGL/BTC; allow tour price refresh (memory-only); Layout soft refresh runs again for tour.
+- Richer tour: ~150 txs, 7 lots, uncategorized rows, fitness/subs, multi-bank spend, seed version `v5-showcase-prices-mv`.
+
 ## 2026-08-12 — Tour empty after redeploy (seed-on-read)
 
 - Root cause: tour ledger is process-local memory; session cookie survives Railway restart while `demo:tour-shared` is empty; seed only ran on `POST /demo/tour`.

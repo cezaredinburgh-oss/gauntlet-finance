@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -214,6 +215,10 @@ def test_tour_seeded_and_read_only(dual_demo_env):
         )
         assert up.status_code == 403, up.text
 
+        # Price refresh is allowed (memory-only) so MV can update live.
+        pr = client.post("/api/prices/refresh")
+        assert pr.status_code in (200, 502, 503), pr.text
+
         # Categories delete blocked if any category exists
         cats = client.get("/api/categories")
         if cats.status_code == 200:
@@ -232,6 +237,14 @@ def test_tour_seeded_and_read_only(dual_demo_env):
 
         # Still never touches real sheet id via demo path
         assert client.get("/api/auth/me").json()["is_demo"] is True
+
+        # Dashboard portfolio MV present via seeded Prices
+        dash = client.get("/api/dashboard-summary")
+        assert dash.status_code == 200, dash.text
+        port = dash.json().get("portfolio") or {}
+        tmv = port.get("total_market_value") or port.get("total_market_value_usd")
+        assert tmv is not None
+        assert Decimal(str(tmv)) > 0
 
 
 def test_demo_disabled_returns_403(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -306,4 +319,12 @@ def test_demos_have_no_personal_residue(dual_demo_env):
             if isinstance(r, InvestmentLot)
         }
         assert "DEMO" not in lot_tickers and "SAMPLE" not in lot_tickers
-        assert {"AAPL", "MSFT", "ETH", "VTI"}.issubset(lot_tickers)
+        assert {"AAPL", "MSFT", "ETH", "VTI", "NVDA", "GOOGL", "BTC"}.issubset(
+            lot_tickers
+        )
+        from backend.services.portfolio_snapshot import portfolio_snapshot
+
+        snap = portfolio_snapshot(repo)
+        assert snap.get("total_market_value_usd") is not None
+        mv = Decimal(str(snap["total_market_value_usd"]))
+        assert mv > 0, f"tour portfolio MV should be priced, got {mv}"
