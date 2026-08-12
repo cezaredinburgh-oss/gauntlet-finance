@@ -87,8 +87,8 @@ def ensure_tour_seeded() -> None:
     """
     Load / upgrade synthetic seed into the shared tour memory ledger.
 
-    Always re-enters seed_public_tour so sparse (pre-enrichment) tours upgrade
-    after deploy without requiring a full process wipe of the memory dict.
+    Safe to call on every tour API request: after process restart the cookie
+    survives but memory is empty — seed_public_tour re-fills this process.
     """
     global _TOUR_SEEDED
     with _TOUR_LOCK:

@@ -56,6 +56,8 @@ from backend.schema.models import (
     MatchField,
     MatchType,
     ParserKey,
+    Setting,
+    SettingValueType,
     StatementFile,
     StatementFileStatus,
     TradeSide,
@@ -77,6 +79,10 @@ from backend.sheets.repository import SheetsRepository
 
 UTC = timezone.utc
 _TS = datetime(2026, 8, 5, 12, 0, 0, tzinfo=UTC)
+
+# Bump when tour synthetic content changes so seed-on-read forces a full reload.
+TOUR_SEED_VERSION = "v4-real-banks-tickers"
+_TOUR_SEED_VERSION_KEY = "demo_tour_seed_version"
 
 def public_demo_categories() -> list[Category]:
     """Generic product tree without owner lifestyle branches."""
@@ -1019,53 +1025,85 @@ def seed_public_minimal(repo: SheetsRepository) -> None:
         repo.upsert_rows("Settings", SEED_SETTINGS)
 
 
+def _tour_seed_version(repo: SheetsRepository) -> str | None:
+    for row in repo.list_rows("Settings"):
+        if isinstance(row, Setting) and row.key == _TOUR_SEED_VERSION_KEY:
+            return (row.value or "").strip() or None
+    return None
+
+
+def _set_tour_seed_version(repo: SheetsRepository) -> None:
+    now = datetime.now(tz=UTC)
+    existing = [
+        r
+        for r in repo.list_rows("Settings")
+        if isinstance(r, Setting) and r.key == _TOUR_SEED_VERSION_KEY
+    ]
+    if existing:
+        updated = existing[0].model_copy(
+            update={"value": TOUR_SEED_VERSION, "updated_at": now}
+        )
+        repo.upsert_rows("Settings", [updated])
+        return
+    repo.upsert_rows(
+        "Settings",
+        [
+            Setting(
+                id=UUID("26000001-0000-4000-8000-000000000001"),
+                key=_TOUR_SEED_VERSION_KEY,
+                value=TOUR_SEED_VERSION,
+                value_type=SettingValueType.STRING,
+                description="Public tour synthetic seed revision",
+                created_at=now,
+                updated_at=now,
+            )
+        ],
+    )
+
+
 def seed_public_tour(repo: SheetsRepository) -> None:
     """Full synthetic sample portfolio for Explore sample portfolio."""
     seed_public_minimal(repo)
 
-    # Upgrade sparse seeds (e.g. older 5-row tour) after deploys.
     existing_tx = repo.list_rows("Transactions")
-    if len(existing_tx) < _TOUR_TX_MIN:
+    existing_lots = repo.list_rows("InvestmentLots")
+    lot_tickers = {
+        str(getattr(r, "ticker", "") or "").upper() for r in existing_lots
+    }
+    version = _tour_seed_version(repo)
+    stale_version = version != TOUR_SEED_VERSION
+    sparse = len(existing_tx) < _TOUR_TX_MIN
+    bad_lots = bool(lot_tickers & _FAKE_TICKERS) or (
+        lot_tickers and not {"AAPL", "MSFT", "ETH", "VTI"}.issubset(lot_tickers)
+    )
+    need_full = stale_version or sparse or bad_lots or not existing_tx
+
+    if need_full:
         repo.replace_all_rows("Transactions", list(DEMO_TOUR_TRANSACTIONS))
+        try:
+            repo.replace_all_rows("StatementFiles", list(DEMO_STATEMENT_FILES))
+        except Exception:  # noqa: BLE001
+            if not repo.list_rows("StatementFiles"):
+                try:
+                    repo.upsert_rows("StatementFiles", DEMO_STATEMENT_FILES)
+                except Exception:  # noqa: BLE001
+                    pass
+        if DEMO_TOUR_LOTS:
+            try:
+                repo.replace_all_rows("InvestmentLots", list(DEMO_TOUR_LOTS))
+            except Exception:  # noqa: BLE001
+                pass
+        if DEMO_TOUR_EVENTS:
+            try:
+                repo.replace_all_rows("InvestmentEvents", list(DEMO_TOUR_EVENTS))
+            except Exception:  # noqa: BLE001
+                pass
+        _set_tour_seed_version(repo)
+        return
+
     if not repo.list_rows("StatementFiles"):
         try:
             repo.upsert_rows("StatementFiles", DEMO_STATEMENT_FILES)
-        except Exception:  # noqa: BLE001
-            pass
-    existing_lots = repo.list_rows("InvestmentLots")
-    lot_tickers = {
-        str(getattr(r, "ticker", "") or "").upper()
-        for r in existing_lots
-    }
-    need_lots = (
-        DEMO_TOUR_LOTS
-        and (
-            len(existing_lots) < 3
-            or bool(lot_tickers & _FAKE_TICKERS)
-            or not {"AAPL", "MSFT", "ETH", "VTI"}.issubset(lot_tickers)
-        )
-    )
-    if need_lots:
-        try:
-            repo.replace_all_rows("InvestmentLots", list(DEMO_TOUR_LOTS))
-        except Exception:  # noqa: BLE001
-            pass
-    existing_evts = repo.list_rows("InvestmentEvents")
-    evt_tickers = {
-        str(getattr(r, "ticker", "") or "").upper()
-        for r in existing_evts
-    }
-    need_evts = (
-        DEMO_TOUR_EVENTS
-        and (
-            len(existing_evts) < 3
-            or bool(evt_tickers & _FAKE_TICKERS)
-            or not {"AAPL", "MSFT", "ETH", "VTI"}.issubset(evt_tickers)
-        )
-    )
-    if need_evts:
-        try:
-            repo.replace_all_rows("InvestmentEvents", list(DEMO_TOUR_EVENTS))
         except Exception:  # noqa: BLE001
             pass
 

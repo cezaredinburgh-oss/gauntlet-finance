@@ -195,6 +195,18 @@ def test_tour_seeded_and_read_only(dual_demo_env):
         assert "Raiffeisen" in institutions or any("Raiffeisen" in x for x in institutions)
         assert any("Revolut" in x for x in institutions)
 
+        # Simulate process restart / redeploy: wipe in-memory tour ledger, keep cookie.
+        from backend.api.deps import drop_memory_repo_key
+        from backend.services.demo_sessions import TOUR_SHEET_ID, demo_memory_key
+
+        drop_memory_repo_key(demo_memory_key(TOUR_SHEET_ID))
+        txs_after = client.get("/api/transactions")
+        assert txs_after.status_code == 200, txs_after.text
+        items_after = txs_after.json().get("items") or []
+        assert len(items_after) >= 40, (
+            f"tour should re-seed on read after memory wipe, got {len(items_after)}"
+        )
+
         # Mutations blocked
         up = client.post(
             "/api/upload",

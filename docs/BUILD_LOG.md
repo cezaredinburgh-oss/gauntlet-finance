@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Tour empty after redeploy (seed-on-read)
+
+- Root cause: tour ledger is process-local memory; session cookie survives Railway restart while `demo:tour-shared` is empty; seed only ran on `POST /demo/tour`.
+- Fix: `get_repository` calls `ensure_tour_seeded()` for `demo_kind=tour` (idempotent re-fill).
+- Seed version key `demo_tour_seed_version` forces full reload when content bumps.
+- Test: wipe memory without logout → next GET still ≥40 txs.
+
 ## 2026-08-12 — Richer sample portfolio tour seed
 
 - Tour ledger: ~100+ synthetic transactions (salary, rent, groceries, dining, transport, subs, USD spend).

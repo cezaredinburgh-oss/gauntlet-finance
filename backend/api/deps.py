@@ -240,6 +240,13 @@ def get_repository(
 
     # Demo sessions never touch the production Google Sheet (isolated memory ledger).
     if user is not None and user.is_demo:
+        # Tour data is process-local: after redeploy / multi-worker, memory is empty
+        # while the session cookie still says "tour". Re-seed on every repo resolve
+        # (idempotent when already full).
+        if user.demo_kind == "tour":
+            from backend.services.demo_sessions import ensure_tour_seeded
+
+            ensure_tour_seeded()
         set_tenant_id(user.user_id or "demo")
         key = (user.spreadsheet_id or user.user_id or "demo-public").strip()
         return get_memory_repo_for_tenant(f"demo:{key}")
