@@ -156,12 +156,24 @@ export function migrateLegacyOnboardingIfNeeded(
 /**
  * Soft Home popup: incomplete + not dismissed + sheet not linked.
  * Never forces a hard gate on the rest of the app.
+ *
+ * Multi-tenant: use tenant_ready from /auth/me (not global SPREADSHEET_ID).
+ * Single-tenant: use health.spreadsheet_configured.
  */
 export function shouldShowSetupPrompt(opts: {
   spreadsheetConfigured: boolean | null | undefined;
+  multiTenant?: boolean | null;
+  tenantReady?: boolean | null;
   preview?: boolean;
 }): boolean {
   if (opts.preview) return false;
+  if (opts.multiTenant) {
+    if (opts.tenantReady == null) return false;
+    // Do not legacy-migrate from global sheet flag under multi-tenant
+    const state = loadOnboardingState();
+    if (state.completed || state.dismissed) return false;
+    return opts.tenantReady === false;
+  }
   if (opts.spreadsheetConfigured == null) return false;
   const state = migrateLegacyOnboardingIfNeeded(opts.spreadsheetConfigured);
   if (state.completed || state.dismissed) return false;

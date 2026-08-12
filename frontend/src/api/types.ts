@@ -15,6 +15,7 @@ export type Health = {
   app: string;
   auth_mode: string;
   spreadsheet_configured: boolean;
+  multi_tenant?: boolean;
 };
 
 export type SheetsStatus = {

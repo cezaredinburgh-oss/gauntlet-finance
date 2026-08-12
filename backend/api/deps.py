@@ -318,9 +318,42 @@ def get_repository(
 RepoDep = Annotated[SheetsRepository, Depends(get_repository)]
 
 
-def clear_repo_cache() -> None:
+def clear_repo_cache(*, spreadsheet_id: str | None = None) -> None:
+    """
+    Drop process repo singletons.
+
+    When spreadsheet_id is set, only that multi-tenant entry is removed.
+    """
+    if spreadsheet_id:
+        sid = spreadsheet_id.strip()
+        _REPO_CACHE.pop(f"mt:{sid}", None)
+        return
     _REPO_CACHE.clear()
 
 
 def clear_tenant_memory_repos() -> None:
     _TENANT_MEMORY_REPOS.clear()
+
+
+def open_tenant_repository(settings: Settings, spreadsheet_id: str):
+    """Open a tenant ledger for cron/background (no request session)."""
+    sid = (spreadsheet_id or "").strip()
+    if not sid:
+        raise ValueError("spreadsheet_id required")
+    if _use_memory_repo(settings):
+        return get_memory_repo_for_tenant(sid)
+    from backend.sheets.google_sheets import (
+        GoogleSheetsRepository,
+        credentials_from_service_account,
+    )
+
+    cache_key = f"mt:{sid}"
+    if cache_key in _REPO_CACHE:
+        return _REPO_CACHE[cache_key]
+    creds = credentials_from_service_account(
+        json_path=settings.google_application_credentials,
+        json_inline=settings.google_service_account_json or None,
+    )
+    repo = GoogleSheetsRepository(spreadsheet_id=sid, credentials=creds)
+    _REPO_CACHE[cache_key] = repo
+    return repo

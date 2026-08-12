@@ -4,6 +4,16 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Multi-tenant remediation (review waves W1–W3)
+
+- Production: refuse weak/default `SECRET_KEY`; force `effective_debug=false`; MT prod requires oauth.
+- Unique spreadsheet bind + claim API; **bind is platform-admin only**.
+- Cron `jobs/tick`: multi-tenant fan-out (no user session); constant-time cron secret.
+- Jobs/list/get tenant-scoped; worker threads set tenant context for cache.
+- Health `multi_tenant`; sheets/status returns tenant sheet id.
+- SPA: not_invited UX, provision button, hide wizard when MT, setup prompt uses `tenant_ready`.
+- Stronger isolation tests (callback, bind 409, cron fan-out, cleanup API, AuthMe fields).
+
 ## 2026-08-12 — Multi-tenant foundation (W1–W5)
 
 - Control plane SQLite: users + invites (`backend/tenancy/`).

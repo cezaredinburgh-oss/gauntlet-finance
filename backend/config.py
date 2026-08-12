@@ -12,6 +12,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Project root = parent of backend/
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# Known-insecure defaults — refuse these in production (especially multi-tenant).
+INSECURE_SECRET_DEFAULTS = frozenset(
+    {
+        "",
+        "dev-change-me-use-long-random-string",
+        "change-me",
+        "secret",
+        "test-secret",
+    }
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -124,6 +135,42 @@ class Settings(BaseSettings):
         if self.app_env in {"development", "test"}:
             return True
         return False
+
+    @property
+    def secret_key_is_insecure(self) -> bool:
+        key = (self.secret_key or "").strip()
+        if key in INSECURE_SECRET_DEFAULTS:
+            return True
+        if len(key) < 16:
+            return True
+        return False
+
+    @property
+    def effective_debug(self) -> bool:
+        """Never enable debug exception bodies in production."""
+        if self.is_production:
+            return False
+        return self.debug
+
+
+def validate_settings_for_boot(settings: Settings | None = None) -> None:
+    """
+    Hard-fail unsafe production configuration.
+
+    Raises RuntimeError so process exit is clear on misconfigured public hosts.
+    """
+    settings = settings or get_settings()
+    if not settings.is_production:
+        return
+    if settings.secret_key_is_insecure:
+        raise RuntimeError(
+            "Refusing to start: SECRET_KEY is missing, too short (<16), or a known "
+            "insecure default. Set a long random SECRET_KEY in production."
+        )
+    if settings.multi_tenant and settings.auth_mode in {"dev", "disabled"}:
+        raise RuntimeError(
+            "Refusing to start: MULTI_TENANT=true requires AUTH_MODE=oauth in production."
+        )
 
 
 @lru_cache

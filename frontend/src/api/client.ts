@@ -199,6 +199,27 @@ export const api = {
   /** Full URL for browser redirect to Google OAuth */
   loginUrl: () => `${API_BASE}/auth/login`,
 
+  tenantStatus: () =>
+    request<{
+      multi_tenant: boolean;
+      message?: string;
+      user?: {
+        id: string;
+        email: string;
+        role: string;
+        spreadsheet_id: string | null;
+        tenant_ready: boolean;
+      };
+    }>("/tenant/status"),
+
+  tenantProvision: () =>
+    request<{
+      status: string;
+      spreadsheet_id?: string;
+      backend?: string;
+      user?: Record<string, unknown>;
+    }>("/tenant/provision", { method: "POST" }),
+
   sheetsStatus: () => request<SheetsStatus>("/sheets/status"),
 
   cleanupPreview: () => request<CleanupPreview>("/admin/cleanup/preview"),

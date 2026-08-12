@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS invites (
 
 CREATE INDEX IF NOT EXISTS idx_invites_email ON invites(email);
 CREATE INDEX IF NOT EXISTS idx_users_spreadsheet ON users(spreadsheet_id);
+-- One tenant per sheet (NULLs allowed multiple times in SQLite UNIQUE)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_spreadsheet_unique
+    ON users(spreadsheet_id)
+    WHERE spreadsheet_id IS NOT NULL AND spreadsheet_id != '';
 """
 
 # Separate locks: never hold singleton lock while taking db lock (deadlock).
@@ -192,14 +196,78 @@ class ControlStore:
         return user
 
     def set_spreadsheet_id(self, user_id: str, spreadsheet_id: str) -> TenantUser:
+        """Bind sheet; raises ValueError('spreadsheet_already_bound') on conflict."""
+        return self.claim_spreadsheet_id(user_id, spreadsheet_id, only_if_empty=False)
+
+    def claim_spreadsheet_id(
+        self,
+        user_id: str,
+        spreadsheet_id: str,
+        *,
+        only_if_empty: bool = False,
+    ) -> TenantUser:
+        """
+        Atomically bind a spreadsheet to a user under the unique index.
+
+        only_if_empty: for provision — fails if user already has a binding
+        (caller should re-read and treat as already_provisioned).
+        """
+        sid = (spreadsheet_id or "").strip()
+        if not sid:
+            raise ValueError("spreadsheet_id required")
         now = _utc_now_iso()
         with _db_lock:
-            self._conn.execute(
+            cur = self._conn.execute(
                 """
-                UPDATE users SET spreadsheet_id = ?, updated_at = ? WHERE id = ?
+                SELECT id FROM users
+                WHERE spreadsheet_id = ? AND id != ?
                 """,
-                (spreadsheet_id.strip(), now, user_id),
+                (sid, user_id),
             )
+            if cur.fetchone() is not None:
+                raise ValueError("spreadsheet_already_bound")
+            if only_if_empty:
+                cur = self._conn.execute(
+                    """
+                    UPDATE users
+                    SET spreadsheet_id = ?, updated_at = ?
+                    WHERE id = ?
+                      AND (spreadsheet_id IS NULL OR spreadsheet_id = '')
+                    """,
+                    (sid, now, user_id),
+                )
+                if cur.rowcount == 0:
+                    raise ValueError("already_provisioned")
+            else:
+                try:
+                    self._conn.execute(
+                        """
+                        UPDATE users SET spreadsheet_id = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (sid, now, user_id),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise ValueError("spreadsheet_already_bound") from exc
+        user = self.get_user_by_id(user_id)
+        if user is None:
+            raise KeyError(f"user not found: {user_id}")
+        # Re-verify uniqueness after write (race safety)
+        with _db_lock:
+            cur = self._conn.execute(
+                """
+                SELECT id FROM users
+                WHERE spreadsheet_id = ? AND id != ?
+                """,
+                (sid, user_id),
+            )
+            if cur.fetchone() is not None:
+                # Roll back our claim
+                self._conn.execute(
+                    "UPDATE users SET spreadsheet_id = NULL, updated_at = ? WHERE id = ?",
+                    (now, user_id),
+                )
+                raise ValueError("spreadsheet_already_bound")
         user = self.get_user_by_id(user_id)
         if user is None:
             raise KeyError(f"user not found: {user_id}")

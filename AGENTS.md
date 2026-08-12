@@ -9,7 +9,7 @@ This file is binding for humans and coding agents. Prefer simple, readable code 
 | Layer | Stack | Notes |
 |-------|--------|--------|
 | Backend | Python 3.12+, FastAPI, Pydantic v2, uvicorn | Package root: `backend/` |
-| Storage | Google Sheets (service account) | Primary ledger. `InMemorySheetsRepository` **only** for tests / `REPO_BACKEND=memory` |
+| Storage | Google Sheets (service account) | Primary ledger. `InMemorySheetsRepository` **only** for tests / `REPO_BACKEND=memory`. Optional **multi-tenant** mode (`MULTI_TENANT=true`): invite-only OAuth + control-plane SQLite mapping each user → own spreadsheet — see `docs/MULTI_TENANT.md`. Default remains single-tenant. |
 | Frontend | React 18, TypeScript (strict), Vite, Tailwind, react-router-dom, recharts | Package root: `frontend/` |
 | Money / time | `decimal.Decimal`, `backend/common/money.py`, `backend/common/timeutil.py` | Never invent FX; never use float for money |
 | Prices / FX | yfinance + CNB FX | Allowed market data; not a portfolio import source |

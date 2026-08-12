@@ -295,21 +295,22 @@ export function SettingsPage() {
               >
                 Preview new-user path
               </Link>
-              <a
-                className="btn-secondary inline-flex text-sm"
-                href={setupWizardUrl()}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Sheets wizard only
-                <ExternalLink className="h-4 w-4" />
-              </a>
+              {!(health?.multi_tenant) && (
+                <a
+                  className="btn-secondary inline-flex text-sm"
+                  href={setupWizardUrl()}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Sheets wizard only
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              )}
             </div>
             <p className="text-xs text-ink-faint">
-              Full path: welcome, Sheets, statements, rules.{" "}
-              <strong className="font-medium text-ink-muted">Preview</strong> walks the UI
-              without changing your live connection or ledger. Sheets-only opens the API-hosted
-              Cloud/key/sheet wizard.
+              {health?.multi_tenant
+                ? "Multi-tenant: use setup → Provision ledger (the global /setup wizard is disabled). Preview walks the UI without writes."
+                : "Full path: welcome, Sheets, statements, rules. Preview walks the UI without changing your live connection or ledger."}
             </p>
           </>
         ) : (

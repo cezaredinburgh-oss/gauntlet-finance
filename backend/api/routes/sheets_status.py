@@ -22,30 +22,43 @@ router = APIRouter(tags=["sheets"])
 async def sheets_status(
     repo: RepoDep,
     settings: SettingsDep,
-    _user: UserDep,
+    user: UserDep,
 ) -> dict[str, Any]:
     """
     Verify repository backend and list tabs.
 
     Use after setup to confirm the real Google Sheet is connected.
+    Multi-tenant: reports the bound tenant spreadsheet id, not env SPREADSHEET_ID.
     """
+    bound_id = getattr(repo, "spreadsheet_id", None) or (
+        user.spreadsheet_id if settings.multi_tenant else settings.spreadsheet_id
+    )
+
     if isinstance(repo, InMemorySheetsRepository):
-        return {
-            "backend": "memory",
-            "spreadsheet_id": None,
-            "message": (
+        msg = (
+            "Multi-tenant memory ledger for this account."
+            if settings.multi_tenant
+            else (
                 "In-memory store active (no SPREADSHEET_ID). "
                 "Set SPREADSHEET_ID + service account to use Google Sheets."
-            ),
+            )
+        )
+        return {
+            "backend": "memory",
+            "spreadsheet_id": bound_id if settings.multi_tenant else None,
+            "multi_tenant": settings.multi_tenant,
+            "message": msg,
             "required_tabs": list(SHEET_HEADERS.keys()),
             "tabs": list(SHEET_HEADERS.keys()),
             "missing_tabs": [],
+            "ok": True,
         }
 
     if not isinstance(repo, GoogleSheetsRepository):
         return {
             "backend": type(repo).__name__,
-            "spreadsheet_id": settings.spreadsheet_id or None,
+            "spreadsheet_id": bound_id or settings.spreadsheet_id or None,
+            "multi_tenant": settings.multi_tenant,
             "tabs": [],
             "message": "Unknown repository type",
         }
@@ -67,7 +80,8 @@ async def sheets_status(
 
     return {
         "backend": "google_sheets",
-        "spreadsheet_id": settings.spreadsheet_id,
+        "spreadsheet_id": bound_id or settings.spreadsheet_id,
+        "multi_tenant": settings.multi_tenant,
         "service_account_email": sa_email,
         "tabs": tabs,
         "required_tabs": list(SHEET_HEADERS.keys()),

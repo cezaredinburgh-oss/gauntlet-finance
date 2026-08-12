@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
 import { api, setupWizardUrl } from "../api/client";
 import type { AlertItem, DashboardSummary, Health, PortfolioSnapshot } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import { SetupPromptModal } from "../components/SetupPromptModal";
 import {
@@ -33,6 +34,7 @@ import type { TickerDigest } from "../api/types";
  */
 export function DashboardPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [cashTf, setCashTf] = useState<TimeframeValue>(() => loadStoredSpendingTimeframe());
   const [dash, setDash] = useState<DashboardSummary | null>(null);
   const [snap, setSnap] = useState<PortfolioSnapshot | null>(null);
@@ -109,14 +111,26 @@ export function DashboardPage() {
   }, [load]);
 
   useEffect(() => {
+    const multiTenant = Boolean(user?.multi_tenant ?? health?.multi_tenant);
+    if (multiTenant) {
+      setSetupPromptOpen(
+        shouldShowSetupPrompt({
+          spreadsheetConfigured: null,
+          multiTenant: true,
+          tenantReady: user?.tenant_ready ?? null,
+        }),
+      );
+      return;
+    }
     if (health == null) return;
     migrateLegacyOnboardingIfNeeded(health.spreadsheet_configured);
     setSetupPromptOpen(
       shouldShowSetupPrompt({
         spreadsheetConfigured: health.spreadsheet_configured,
+        multiTenant: false,
       }),
     );
-  }, [health]);
+  }, [health, user?.multi_tenant, user?.tenant_ready]);
 
   function shiftCashMonth(delta: number) {
     const next = shiftCalendarMonth(cashTf, delta);
@@ -134,19 +148,23 @@ export function DashboardPage() {
     [alerts, digests],
   );
 
-  const needsSheet =
-    health != null && health.spreadsheet_configured === false;
+  const multiTenant = Boolean(user?.multi_tenant ?? health?.multi_tenant);
+  const needsSheet = multiTenant
+    ? user != null && user.tenant_ready === false
+    : health != null && health.spreadsheet_configured === false;
 
   if (loading && !dash) return <PageLoader label="Loading executive snapshot…" />;
   if (error && !dash) {
     return (
       <div className="space-y-4">
-        {needsSheet && <SetupSheetsBanner />}
+        {needsSheet && <SetupSheetsBanner multiTenant={multiTenant} />}
         <EmptyState
           title="Couldn’t load dashboard"
           description={
             needsSheet
-              ? "Google Sheets is not linked yet. Complete setup, then retry."
+              ? multiTenant
+                ? "Your tenant ledger is not provisioned yet. Complete setup, then retry."
+                : "Google Sheets is not linked yet. Complete setup, then retry."
               : error
           }
           action={
@@ -184,7 +202,7 @@ export function DashboardPage() {
           navigate(onboardingPath());
         }}
       />
-      {needsSheet && <SetupSheetsBanner />}
+      {needsSheet && <SetupSheetsBanner multiTenant={multiTenant} />}
       {snap ? (
         <ExecutiveHero
           snap={snap}
@@ -210,30 +228,36 @@ export function DashboardPage() {
   );
 }
 
-function SetupSheetsBanner() {
+function SetupSheetsBanner({ multiTenant = false }: { multiTenant?: boolean }) {
   return (
     <div className="rounded-2xl border border-brand/35 bg-brand/10 px-4 py-4 sm:px-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="text-sm font-semibold text-brand">Finish setup</div>
           <p className="mt-1 max-w-xl text-xs text-ink-muted sm:text-sm">
-            New here? Guided path: welcome, connect your private Google Sheet, upload bank
-            statements, and set spending rules — about 10–15 minutes.
+            {multiTenant
+              ? "Your account needs a private ledger sheet. Open setup to provision it, then upload statements and set spending rules."
+              : "New here? Guided path: welcome, connect your private Google Sheet, upload bank statements, and set spending rules — about 10–15 minutes."}
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          <Link className="btn-primary inline-flex" to={onboardingPath()}>
-            Start setup
-          </Link>
-          <a
-            className="btn-secondary inline-flex text-sm"
-            href={setupWizardUrl()}
-            target="_blank"
-            rel="noreferrer"
+          <Link
+            className="btn-primary inline-flex"
+            to={onboardingPath({ step: multiTenant ? "sheets" : "welcome" })}
           >
-            Sheets only
-            <ExternalLink className="h-4 w-4" />
-          </a>
+            {multiTenant ? "Provision ledger" : "Start setup"}
+          </Link>
+          {!multiTenant && (
+            <a
+              className="btn-secondary inline-flex text-sm"
+              href={setupWizardUrl()}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Sheets only
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          )}
         </div>
       </div>
     </div>

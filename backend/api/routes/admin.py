@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from backend.api.deps import RepoDep, SettingsDep, UserDep, clear_repo_cache
+from backend.api.deps import (
+    RepoDep,
+    SettingsDep,
+    UserDep,
+    clear_repo_cache,
+    open_tenant_repository,
+)
 from backend.services.cleanup import (
     CONFIRM_TOKEN,
     list_scopes,
@@ -28,6 +35,8 @@ from backend.services.maintenance import (
     warm_cache,
 )
 from backend.services.response_cache import cache_invalidate
+from backend.tenancy.context import reset_tenant_id, set_tenant_id
+from backend.tenancy.store import get_control_store
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -79,7 +88,8 @@ async def cleanup_run(
             repo.invalidate_cache()  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001
             pass
-    clear_repo_cache()
+    sheet_id = getattr(repo, "spreadsheet_id", None)
+    clear_repo_cache(spreadsheet_id=str(sheet_id) if sheet_id else None)
     cache_invalidate()
 
     return result_to_dict(result)
@@ -142,25 +152,27 @@ async def fetch_cnb_endpoint(
 
 @router.get("/jobs")
 async def jobs_list(
-    _user: UserDep,
+    user: UserDep,
+    settings: SettingsDep,
     limit: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
+    tenant = user.user_id if settings.multi_tenant else None
     return {
-        "items": list_jobs(limit=limit),
+        "items": list_jobs(limit=limit, tenant_id=tenant),
         "kinds": sorted(KIND_RUNNERS.keys()),
     }
 
 
 @router.post("/jobs/tick")
 async def jobs_tick(
-    repo: RepoDep,
     settings: SettingsDep,
     x_cron_secret: str | None = Header(default=None, alias="X-Cron-Secret"),
 ) -> dict[str, Any]:
     """
     Cron entrypoint: run fx-full when CRON_SECRET matches.
 
-    Railway cron: POST /api/admin/jobs/tick with header X-Cron-Secret.
+    Multi-tenant: fans out to every user with a bound spreadsheet (no user session).
+    Single-tenant: runs against env SPREADSHEET_ID / memory backend.
     """
     expected = (settings.cron_secret or "").strip()
     if not expected:
@@ -168,10 +180,68 @@ async def jobs_tick(
             status_code=503,
             detail="CRON_SECRET not configured",
         )
-    if not x_cron_secret or x_cron_secret != expected:
+    provided = (x_cron_secret or "").strip()
+    if not provided or not secrets.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="invalid cron secret")
 
-    out = start_known_job("fx-full", repo, params={})
+    if settings.multi_tenant:
+        store = get_control_store(settings)
+        started: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        for u in store.list_users():
+            if not u.spreadsheet_id or u.disabled_at:
+                continue
+            token = set_tenant_id(u.id)
+            try:
+                repo = open_tenant_repository(settings, u.spreadsheet_id)
+                out = start_known_job(
+                    "fx-full", repo, params={}, tenant_id=u.id
+                )
+            except Exception as exc:  # noqa: BLE001
+                skipped.append(
+                    {
+                        "user_id": u.id,
+                        "email": u.email,
+                        "error": str(exc),
+                    }
+                )
+                continue
+            finally:
+                reset_tenant_id(token)
+            if out.get("status") == "rejected":
+                skipped.append({**out, "user_id": u.id, "email": u.email})
+            else:
+                started.append({**out, "user_id": u.id, "email": u.email})
+        return {
+            "tick": "multi_tenant",
+            "started": len(started),
+            "skipped": len(skipped),
+            "items_started": started[:50],
+            "items_skipped": skipped[:50],
+        }
+
+    # Single-tenant: open env/memory repo without a user session
+    from backend.api import deps as deps_mod
+    from backend.sheets.google_sheets import build_repository_from_settings
+    from backend.sheets.repository import InMemorySheetsRepository
+
+    if deps_mod._use_memory_repo(settings):
+        if deps_mod._DEV_MEMORY_REPO is None:
+            deps_mod._DEV_MEMORY_REPO = InMemorySheetsRepository()
+        repo = deps_mod._DEV_MEMORY_REPO
+    else:
+        if not settings.spreadsheet_id:
+            raise HTTPException(
+                status_code=503, detail="SPREADSHEET_ID is not configured"
+            )
+        try:
+            repo = build_repository_from_settings(settings, user_credentials=None)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=503, detail=f"Google Sheets unavailable: {exc}"
+            ) from exc
+
+    out = start_known_job("fx-full", repo, params={}, tenant_id=None)
     if out.get("status") == "rejected":
         return {**out, "tick": "skipped"}
     return {**out, "tick": "started"}
@@ -181,7 +251,8 @@ async def jobs_tick(
 async def jobs_start(
     kind: str,
     repo: RepoDep,
-    _user: UserDep,
+    user: UserDep,
+    settings: SettingsDep,
     body: JobStartBody | None = None,
 ) -> dict[str, Any]:
     """Start a known background job by kind (e.g. fx-full, fx-fetch-cnb)."""
@@ -200,7 +271,8 @@ async def jobs_start(
             params["limit"] = body.limit
         if body.max_passes is not None:
             params["max_passes"] = body.max_passes
-    out = start_known_job(kind, repo, params=params)
+    tenant = user.user_id if settings.multi_tenant else None
+    out = start_known_job(kind, repo, params=params, tenant_id=tenant)
     if out.get("status") == "rejected":
         status = 400 if "unknown" in str(out.get("error", "")).lower() else 409
         raise HTTPException(status_code=status, detail=out.get("error") or "rejected")
@@ -208,8 +280,13 @@ async def jobs_start(
 
 
 @router.get("/jobs/{job_id}")
-async def jobs_get(job_id: str, _user: UserDep) -> dict[str, Any]:
-    job = get_job(job_id)
+async def jobs_get(
+    job_id: str,
+    user: UserDep,
+    settings: SettingsDep,
+) -> dict[str, Any]:
+    tenant = user.user_id if settings.multi_tenant else None
+    job = get_job(job_id, tenant_id=tenant)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
     return job

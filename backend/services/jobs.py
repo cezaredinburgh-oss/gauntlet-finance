@@ -1,7 +1,7 @@
-"""In-process background job registry (single-user ops).
+"""In-process background job registry.
 
-Not multi-worker durable queues — suitable for Railway single replica.
-Single-flight per job kind to avoid double FX/Sheets writes.
+Single-flight per (tenant, kind) to avoid double FX/Sheets writes.
+Tenant context is set inside worker threads so response cache stays scoped.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from typing import Any, Callable
 from backend.schema.models import Transaction
 from backend.services.maintenance import backfill_amount_usd, fetch_cnb_range
 from backend.sheets.repository import SheetsRepository
+from backend.tenancy.context import reset_tenant_id, set_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -37,20 +38,31 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def list_jobs(*, limit: int = 20) -> list[dict[str, Any]]:
+def list_jobs(
+    *,
+    limit: int = 20,
+    tenant_id: str | None = None,
+) -> list[dict[str, Any]]:
     with _JOBS_LOCK:
-        items = sorted(
-            _JOBS.values(),
-            key=lambda j: j.get("started_at") or "",
-            reverse=True,
-        )
+        items = list(_JOBS.values())
+    if tenant_id is not None:
+        items = [j for j in items if j.get("tenant_id") == tenant_id]
+    items = sorted(
+        items,
+        key=lambda j: j.get("started_at") or "",
+        reverse=True,
+    )
     return items[: max(1, min(limit, 100))]
 
 
-def get_job(job_id: str) -> dict[str, Any] | None:
+def get_job(job_id: str, *, tenant_id: str | None = None) -> dict[str, Any] | None:
     with _JOBS_LOCK:
         job = _JOBS.get(job_id)
-        return dict(job) if job else None
+        if not job:
+            return None
+        if tenant_id is not None and job.get("tenant_id") != tenant_id:
+            return None
+        return dict(job)
 
 
 def _set_job(job_id: str, **fields: Any) -> None:
@@ -67,21 +79,25 @@ def start_job(
     *,
     params: dict[str, Any] | None = None,
     runner: JobFn,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
-    """Start a background job; returns job stub. Fails if same kind already running."""
+    """Start a background job; returns job stub. Fails if same kind already running for tenant."""
     params = params or {}
-    lock = _kind_lock(kind)
+    lock_key = f"{tenant_id}:{kind}" if tenant_id else kind
+    lock = _kind_lock(lock_key)
     if not lock.acquire(blocking=False):
         return {
             "status": "rejected",
             "error": f"job kind '{kind}' already running",
             "kind": kind,
+            "tenant_id": tenant_id,
         }
 
     job_id = str(uuid.uuid4())
     stub = {
         "id": job_id,
         "kind": kind,
+        "tenant_id": tenant_id,
         "status": "running",
         "started_at": _now_iso(),
         "finished_at": None,
@@ -93,6 +109,7 @@ def start_job(
         _JOBS[job_id] = stub
 
     def _run() -> None:
+        token = set_tenant_id(tenant_id) if tenant_id else None
         try:
             result = runner(repo, params)
             _set_job(
@@ -110,10 +127,17 @@ def start_job(
                 finished_at=_now_iso(),
             )
         finally:
+            if token is not None:
+                reset_tenant_id(token)
             lock.release()
 
-    threading.Thread(target=_run, daemon=True, name=f"job-{kind}").start()
-    return {"job_id": job_id, "status": "running", "kind": kind}
+    threading.Thread(target=_run, daemon=True, name=f"job-{lock_key}").start()
+    return {
+        "job_id": job_id,
+        "status": "running",
+        "kind": kind,
+        "tenant_id": tenant_id,
+    }
 
 
 def _ledger_date_span(repo: SheetsRepository) -> tuple[date, date]:
@@ -228,7 +252,11 @@ KIND_RUNNERS: dict[str, JobFn] = {
 
 
 def start_known_job(
-    kind: str, repo: SheetsRepository, *, params: dict[str, Any] | None = None
+    kind: str,
+    repo: SheetsRepository,
+    *,
+    params: dict[str, Any] | None = None,
+    tenant_id: str | None = None,
 ) -> dict[str, Any]:
     runner = KIND_RUNNERS.get(kind)
     if runner is None:
@@ -237,4 +265,6 @@ def start_known_job(
             "error": f"unknown job kind '{kind}'",
             "known": sorted(KIND_RUNNERS),
         }
-    return start_job(kind, repo, params=params or {}, runner=runner)
+    return start_job(
+        kind, repo, params=params or {}, runner=runner, tenant_id=tenant_id
+    )

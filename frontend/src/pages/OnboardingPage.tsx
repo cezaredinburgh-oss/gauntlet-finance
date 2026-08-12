@@ -22,6 +22,7 @@ import type {
   SheetsStatus,
   UploadResult,
 } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
 import { Spinner } from "../components/Spinner";
 import { cn } from "../lib/cn";
 import {
@@ -83,15 +84,19 @@ const USPS = [
 
 export function OnboardingPage() {
   const navigate = useNavigate();
+  const { user, refresh: refreshAuth } = useAuth();
   const [params, setParams] = useSearchParams();
   const preview = params.get("preview") === "1" || params.get("preview") === "true";
   const stepParam = params.get("step");
   const step: OnboardingStepId = isStepId(stepParam) ? stepParam : "welcome";
+  const multiTenant = Boolean(user?.multi_tenant);
 
   const [health, setHealth] = useState<Health | null>(null);
   const [sheets, setSheets] = useState<SheetsStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusBusy, setStatusBusy] = useState(false);
+  const [provisionMsg, setProvisionMsg] = useState<string | null>(null);
+  const [provisionBusy, setProvisionBusy] = useState(false);
 
   const setStep = useCallback(
     (next: OnboardingStepId) => {
@@ -115,19 +120,48 @@ export function OnboardingPage() {
       ]);
       setHealth(h);
       setSheets(s);
+      await refreshAuth();
     } catch (e) {
       setStatusError(e instanceof Error ? e.message : "Could not load status");
     } finally {
       setStatusBusy(false);
     }
-  }, []);
+  }, [refreshAuth]);
 
   useEffect(() => {
     void refreshStatus();
   }, [refreshStatus]);
 
-  const sheetConfigured = health?.spreadsheet_configured === true;
-  const sheetsOk = sheets?.ok === true;
+  const sheetConfigured = multiTenant
+    ? Boolean(user?.tenant_ready || user?.spreadsheet_bound || sheets?.spreadsheet_id)
+    : health?.spreadsheet_configured === true;
+  const sheetsOk = multiTenant
+    ? sheetConfigured || sheets?.ok === true || sheets?.backend === "memory"
+    : sheets?.ok === true;
+
+  async function runProvision() {
+    if (preview) {
+      setProvisionMsg("Preview: provision blocked — your live ledger was not changed.");
+      return;
+    }
+    setProvisionBusy(true);
+    setProvisionMsg(null);
+    setStatusError(null);
+    try {
+      const r = await api.tenantProvision();
+      setProvisionMsg(
+        r.status === "already_provisioned"
+          ? `Already provisioned (${r.spreadsheet_id ?? "sheet bound"}).`
+          : `Provisioned (${r.backend ?? "ok"}): ${r.spreadsheet_id ?? ""}`,
+      );
+      await refreshAuth();
+      await refreshStatus();
+    } catch (e) {
+      setStatusError(e instanceof Error ? e.message : "Provision failed");
+    } finally {
+      setProvisionBusy(false);
+    }
+  }
   const stepIdx = ONBOARDING_STEPS.findIndex((s) => s.id === step);
 
   function goNext() {
@@ -204,10 +238,14 @@ export function OnboardingPage() {
       {step === "sheets" && (
         <SheetsStep
           preview={preview}
+          multiTenant={multiTenant}
           health={health}
           sheets={sheets}
           statusError={statusError}
           statusBusy={statusBusy}
+          provisionBusy={provisionBusy}
+          provisionMsg={provisionMsg}
+          onProvision={() => void runProvision()}
           onRefresh={() => void refreshStatus()}
           onBack={goBack}
           onContinue={goNext}
@@ -296,10 +334,14 @@ function WelcomeStep({
 
 function SheetsStep({
   preview,
+  multiTenant,
   health,
   sheets,
   statusError,
   statusBusy,
+  provisionBusy,
+  provisionMsg,
+  onProvision,
   onRefresh,
   onBack,
   onContinue,
@@ -307,10 +349,14 @@ function SheetsStep({
   sheetsOk,
 }: {
   preview: boolean;
+  multiTenant: boolean;
   health: Health | null;
   sheets: SheetsStatus | null;
   statusError: string | null;
   statusBusy: boolean;
+  provisionBusy: boolean;
+  provisionMsg: string | null;
+  onProvision: () => void;
   onRefresh: () => void;
   onBack: () => void;
   onContinue: () => void;
@@ -320,9 +366,17 @@ function SheetsStep({
   const checks = useMemo(
     () => [
       {
-        label: "Spreadsheet ID configured",
+        label: multiTenant ? "Tenant ledger bound" : "Spreadsheet ID configured",
         ok: sheetConfigured,
-        detail: sheetConfigured ? "Linked in app config" : "Not set yet",
+        detail: sheetConfigured
+          ? multiTenant
+            ? sheets?.spreadsheet_id
+              ? `Bound: ${sheets.spreadsheet_id}`
+              : "Bound for this account"
+            : "Linked in app config"
+          : multiTenant
+            ? "Not provisioned yet"
+            : "Not set yet",
       },
       {
         label: "Sheets connection",
@@ -331,11 +385,14 @@ function SheetsStep({
       },
       {
         label: "Backend",
-        ok: sheets?.backend === "google" || sheets?.backend === "memory",
+        ok:
+          sheets?.backend === "google" ||
+          sheets?.backend === "google_sheets" ||
+          sheets?.backend === "memory",
         detail: sheets?.backend ? String(sheets.backend) : health?.auth_mode || "—",
       },
     ],
-    [sheetConfigured, sheetsOk, sheets, health],
+    [sheetConfigured, sheetsOk, sheets, health, multiTenant],
   );
 
   return (
@@ -343,20 +400,30 @@ function SheetsStep({
       <section className="card space-y-3 p-5">
         <div className="flex items-center gap-2 text-brand">
           <Cloud className="h-5 w-5" />
-          <h2 className="text-lg font-semibold text-ink">Connect Google Sheets</h2>
+          <h2 className="text-lg font-semibold text-ink">
+            {multiTenant ? "Your private ledger" : "Connect Google Sheets"}
+          </h2>
         </div>
         <p className="text-sm text-ink-muted">
-          Gauntlet stores your ledger in <strong className="text-ink">your</strong> spreadsheet
-          via a service account. The full illustrated wizard (Cloud project → key → sheet →
-          share → ledger tabs) lives on the API at{" "}
-          <code className="text-xs text-brand">/setup</code>.
+          {multiTenant ? (
+            <>
+              Multi-tenant mode creates a private spreadsheet (or memory ledger) for{" "}
+              <strong className="text-ink">your account only</strong>. Use{" "}
+              <strong className="text-ink">Provision ledger</strong> — the global{" "}
+              <code className="text-xs text-brand">/setup</code> wizard is disabled here.
+            </>
+          ) : (
+            <>
+              Gauntlet stores your ledger in <strong className="text-ink">your</strong>{" "}
+              spreadsheet via a service account. The full illustrated wizard lives on the API
+              at <code className="text-xs text-brand">/setup</code>.
+            </>
+          )}
         </p>
         {preview && (
           <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
-            Preview: you may open the Sheets wizard to look around. Do{" "}
-            <strong>not</strong> click Save key, Create spreadsheet, Save link, or Prepare
-            ledger — those would change your connection. Prefer using{" "}
-            <strong>Test connection</strong> and Back only.
+            Preview: provision and mutating wizard actions are blocked so your live connection
+            stays intact.
           </p>
         )}
       </section>
@@ -400,18 +467,32 @@ function SheetsStep({
         )}
       </section>
 
+      {provisionMsg && <p className="text-sm text-ok">{provisionMsg}</p>}
+
       <div className="flex flex-wrap gap-2">
-        <a
-          className="btn-primary inline-flex"
-          href={setupWizardUrl()}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {preview ? "Open Sheets wizard (browse carefully)" : "Open Sheets wizard"}
-          <ExternalLink className="h-4 w-4" />
-        </a>
+        {multiTenant ? (
+          <button
+            type="button"
+            className="btn-primary inline-flex"
+            disabled={provisionBusy || statusBusy}
+            onClick={onProvision}
+          >
+            {provisionBusy ? <Spinner /> : null}
+            Provision ledger
+          </button>
+        ) : (
+          <a
+            className="btn-primary inline-flex"
+            href={setupWizardUrl()}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {preview ? "Open Sheets wizard (browse carefully)" : "Open Sheets wizard"}
+            <ExternalLink className="h-4 w-4" />
+          </a>
+        )}
         <button type="button" className="btn-secondary" onClick={onRefresh}>
-          I’ve finished — recheck
+          {multiTenant ? "Recheck status" : "I’ve finished — recheck"}
         </button>
       </div>
 

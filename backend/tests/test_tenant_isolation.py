@@ -310,16 +310,29 @@ def test_multi_tenant_production_blocks_open_auth(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("AUTH_MODE", "dev")
     monkeypatch.setenv("ALLOW_OPEN_AUTH", "true")  # must still block
     monkeypatch.setenv("CONTROL_DB_PATH", str(tmp_path / "c.db"))
-    monkeypatch.setenv("SECRET_KEY", "prod-mt-secret")
+    monkeypatch.setenv("SECRET_KEY", "prod-mt-secret-key-ok")
     monkeypatch.setenv("SPREADSHEET_ID", "")
     get_settings.cache_clear()
     reset_control_store_for_tests()
     settings = get_settings()
     assert settings.open_auth_permitted is False
-    app = create_app()
-    with TestClient(app) as client:
-        r = client.get("/api/auth/me")
-        assert r.status_code == 503, r.text
+    # Production + multi_tenant + open auth mode refuses to start
+    from backend.config import validate_settings_for_boot
+
+    with pytest.raises(RuntimeError, match="MULTI_TENANT"):
+        validate_settings_for_boot(settings)
+
+
+def test_production_rejects_insecure_secret(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MULTI_TENANT", "false")
+    monkeypatch.setenv("AUTH_MODE", "oauth")
+    monkeypatch.setenv("SECRET_KEY", "dev-change-me-use-long-random-string")
+    get_settings.cache_clear()
+    from backend.config import validate_settings_for_boot
+
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        validate_settings_for_boot(get_settings())
 
 
 def test_upload_paths_tenant_scoped(mt_env, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -330,7 +343,7 @@ def test_upload_paths_tenant_scoped(mt_env, tmp_path: Path, monkeypatch: pytest.
     tok = set_tenant_id(a.id)
     try:
         p_a = upload_store.store_upload("aaa", b"alice-bytes")
-        assert a.id.replace("-", "")[:8] in str(p_a) or a.id in str(p_a) or True
+        assert a.id in str(p_a)
         assert p_a.read_bytes() == b"alice-bytes"
     finally:
         reset_tenant_id(tok)
@@ -340,6 +353,141 @@ def test_upload_paths_tenant_scoped(mt_env, tmp_path: Path, monkeypatch: pytest.
         assert upload_store.load_upload("aaa") is None  # different tenant dir
         p_b = upload_store.store_upload("aaa", b"bob-bytes")
         assert p_b.read_bytes() == b"bob-bytes"
-        assert p_b != p_a or p_b.parent != p_a.parent
+        assert p_b.parent != p_a.parent
     finally:
         reset_tenant_id(tok)
+
+
+def test_bind_conflict_and_admin_only(mt_env):
+    a, b, admin, sheet_a, _sheet_b = _seed_users()
+    with _client() as client:
+        # Non-admin cannot bind
+        client.cookies.set("gf_session", _session_for(a.id, a.email, sheet=sheet_a))
+        r = client.post(
+            "/api/tenant/bind",
+            json={"spreadsheet_id": "shared-sheet-xyz"},
+        )
+        assert r.status_code == 403, r.text
+
+        # Admin binds for Bob
+        client.cookies.set(
+            "gf_session",
+            _session_for(admin.id, admin.email, role="platform_admin"),
+        )
+        r2 = client.post(
+            "/api/tenant/bind",
+            json={"spreadsheet_id": "shared-sheet-xyz", "user_id": b.id},
+        )
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["spreadsheet_id"] == "shared-sheet-xyz"
+
+        # Second user cannot take same sheet
+        r3 = client.post(
+            "/api/tenant/bind",
+            json={"spreadsheet_id": "shared-sheet-xyz", "user_id": a.id},
+        )
+        assert r3.status_code == 409, r3.text
+
+
+def test_oauth_callback_rejects_uninvited(mt_env, monkeypatch: pytest.MonkeyPatch):
+    async def fake_exchange(settings, code):
+        return {"access_token": "tok", "expires_in": 3600}
+
+    async def fake_userinfo(access_token):
+        return {
+            "email": "stranger@example.com",
+            "name": "Stranger",
+            "sub": "sub-stranger",
+        }
+
+    monkeypatch.setattr(
+        "backend.api.routes.auth_routes.exchange_code", fake_exchange
+    )
+    monkeypatch.setattr(
+        "backend.api.routes.auth_routes.fetch_userinfo", fake_userinfo
+    )
+
+    with _client() as client:
+        client.cookies.set("gf_oauth_state", "state-test")
+        r = client.get(
+            "/api/auth/callback",
+            params={"code": "x", "state": "state-test"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 302, r.text
+        loc = r.headers.get("location") or ""
+        assert "not_invited" in loc
+        assert "gf_session" not in r.cookies
+        me = client.get("/api/auth/me")
+        assert me.status_code in (401, 403)
+
+
+def test_auth_me_tenant_fields(mt_env):
+    a, _b, _admin, sheet_a, _ = _seed_users()
+    with _client() as client:
+        client.cookies.set("gf_session", _session_for(a.id, a.email, sheet=sheet_a))
+        r = client.get("/api/auth/me")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["multi_tenant"] is True
+        assert body["user_id"] == a.id
+        assert body["tenant_ready"] is True
+        assert body["spreadsheet_bound"] is True
+
+
+def test_health_reports_multi_tenant(mt_env):
+    with _client() as client:
+        r = client.get("/api/health")
+        assert r.status_code == 200
+        assert r.json().get("multi_tenant") is True
+
+
+def test_cron_tick_multi_tenant_fanout(mt_env, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("CRON_SECRET", "cron-mt-secret")
+    get_settings.cache_clear()
+    a, b, _admin, sheet_a, sheet_b = _seed_users()
+    # ensure memory repos exist
+    get_memory_repo_for_tenant(sheet_a)
+    get_memory_repo_for_tenant(sheet_b)
+    with _client() as client:
+        r = client.post(
+            "/api/admin/jobs/tick",
+            headers={"X-Cron-Secret": "cron-mt-secret"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("tick") == "multi_tenant"
+        assert body.get("started", 0) >= 2
+
+
+def test_cleanup_isolates_via_api(mt_env):
+    a, b, _admin, sheet_a, sheet_b = _seed_users()
+    repo_a = get_memory_repo_for_tenant(sheet_a)
+    repo_b = get_memory_repo_for_tenant(sheet_b)
+    repo_a.upsert_rows("Transactions", [_tx("ALICE_WIPE")])
+    repo_b.upsert_rows("Transactions", [_tx("BOB_KEEP")])
+
+    with _client() as client:
+        client.cookies.set("gf_session", _session_for(a.id, a.email, sheet=sheet_a))
+        scopes = client.get("/api/admin/cleanup/scopes")
+        assert scopes.status_code == 200
+        confirm = scopes.json()["confirm_token"]
+        scope_ids = [s["id"] for s in scopes.json()["scopes"]]
+        # Prefer transactions if present
+        pick = next((s for s in scope_ids if "trans" in s.lower()), scope_ids[0])
+        r = client.post(
+            "/api/admin/cleanup",
+            json={"scopes": [pick], "confirm": confirm},
+        )
+        assert r.status_code == 200, r.text
+
+        ra = client.get("/api/transactions")
+        assert ra.status_code == 200
+        merchants_a = {t.get("merchant") for t in ra.json().get("items", [])}
+        assert "ALICE_WIPE" not in merchants_a
+
+        client.cookies.set("gf_session", _session_for(b.id, b.email, sheet=sheet_b))
+        rb = client.get("/api/transactions")
+        assert rb.status_code == 200
+        merchants_b = {t.get("merchant") for t in rb.json().get("items", [])}
+        assert "BOB_KEEP" in merchants_b

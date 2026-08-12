@@ -50,7 +50,10 @@ def _health_payload() -> HealthResponse:
         status="ok",
         app=s.app_name,
         auth_mode=s.auth_mode,
+        # Single-tenant: env SPREADSHEET_ID. Multi-tenant: not a per-user signal
+        # (use /api/auth/me tenant_ready). True if any platform sheet id is set.
         spreadsheet_configured=s.spreadsheet_configured,
+        multi_tenant=s.multi_tenant,
     )
 
 
@@ -76,8 +79,11 @@ def _safe_dist_file(dist_root: Path, path: str) -> Path | None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    from backend.config import validate_settings_for_boot
+
+    validate_settings_for_boot(settings)
     logging.basicConfig(
-        level=logging.DEBUG if settings.debug else logging.INFO,
+        level=logging.DEBUG if settings.effective_debug else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     if settings.require_sheets and not settings.spreadsheet_configured:
@@ -144,7 +150,9 @@ def create_app() -> FastAPI:
         logger.exception("Unhandled error on %s", request.url.path)
         return JSONResponse(
             status_code=500,
-            content={"detail": str(exc) if settings.debug else "Internal server error"},
+            content={
+                "detail": str(exc) if settings.effective_debug else "Internal server error"
+            },
         )
 
     # Railway / process health (root) + consistent /api health for the SPA

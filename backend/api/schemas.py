@@ -14,6 +14,7 @@ class HealthResponse(BaseModel):
     app: str
     auth_mode: str
     spreadsheet_configured: bool
+    multi_tenant: bool = False
 
 
 class UploadResponse(BaseModel):
