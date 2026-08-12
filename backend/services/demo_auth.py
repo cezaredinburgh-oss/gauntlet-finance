@@ -139,8 +139,7 @@ def authenticate_demo_password(
     if settings.multi_tenant:
         return ensure_demo_tenant(settings)
 
-    # Single-tenant: demo session without control-plane (memory ledger via empty sheet path
-    # is process-wide — flag is_demo for UI; ops should use MULTI_TENANT for isolation).
+    # Single-tenant: isolated demo memory ledger (get_repository routes is_demo → memory).
     return SessionUser(
         email=expected_email,
         name="Demo User",
@@ -148,8 +147,8 @@ def authenticate_demo_password(
         access_token="",
         refresh_token=None,
         token_expiry=None,
-        user_id=None,
+        user_id="demo-local",
         role="user",
-        spreadsheet_id=None,
+        spreadsheet_id="demo-public",
         is_demo=True,
     )

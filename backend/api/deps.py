@@ -235,6 +235,12 @@ def get_repository(
     """
     global _DEV_MEMORY_REPO
 
+    # Demo sessions never touch the production Google Sheet (isolated memory ledger).
+    if user is not None and user.is_demo:
+        set_tenant_id(user.user_id or "demo")
+        key = (user.spreadsheet_id or user.user_id or "demo-public").strip()
+        return get_memory_repo_for_tenant(f"demo:{key}")
+
     if settings.multi_tenant:
         if user is None or not user.user_id:
             raise HTTPException(
