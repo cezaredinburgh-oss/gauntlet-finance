@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Richer sample portfolio tour seed
+
+- Tour ledger: ~100+ synthetic transactions (salary, rent, groceries, dining, transport, subs, USD spend).
+- Banks: Demo Bank (Raiffeisen), Demo Wallet CZK/USD (Revolut), Demo Broker (eToro), crypto pot legs.
+- Investments: 4 open lots (DEMO, SAMPLE partial sell, ETH, VTI) + 5 events; 3 statement-file rows for Upload history.
+- Sparse tour auto-upgrades (`replace_all_rows` when &lt; 40 txs). Still no personal residue.
+
 ## 2026-08-12 — Public demo data hygiene (no personal residue)
 
 - Sandbox / tour no longer call owner `ensure_default_categories` (which seeded **`CEZARY BIERNAT`** self-education rule).

@@ -185,8 +185,15 @@ def test_tour_seeded_and_read_only(dual_demo_env):
 
         txs = client.get("/api/transactions")
         assert txs.status_code == 200
-        # Seeded demo should have some transaction content
-        assert len(txs.text) > 50
+        body = txs.json()
+        items = body.get("items") if isinstance(body, dict) else body
+        assert isinstance(items, list)
+        assert len(items) >= 40, f"expected rich tour seed, got {len(items)}"
+        institutions = {
+            (i.get("source_institution") or "") for i in items if isinstance(i, dict)
+        }
+        assert "Raiffeisen" in institutions or any("Raiffeisen" in x for x in institutions)
+        assert any("Revolut" in x for x in institutions)
 
         # Mutations blocked
         up = client.post(

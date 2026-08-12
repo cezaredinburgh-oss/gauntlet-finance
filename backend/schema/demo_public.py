@@ -12,11 +12,33 @@ from decimal import Decimal
 from uuid import UUID
 
 from backend.schema.default_categories import (
+    CAT_BANK_FEES,
+    CAT_BROKER,
+    CAT_CASH_WITHDRAWAL,
+    CAT_CLOTHING,
+    CAT_COFFEE,
     CAT_CRYPTO_FUND,
-    CAT_INTERNAL,
+    CAT_ELECTRONICS,
+    CAT_EXTERNAL_XFER,
+    CAT_FUEL_CAR,
+    CAT_GOING_OUT,
+    CAT_GROCERIES,
     CAT_INSURANCE,
+    CAT_INTERNAL,
+    CAT_INTERNET,
+    CAT_OTHER_INCOME,
+    CAT_PHARMACY,
+    CAT_PUBLIC_TRANSIT,
+    CAT_RENT,
+    CAT_RESTAURANTS,
+    CAT_SALARY,
+    CAT_SHOP_GENERAL,
+    CAT_SOFTWARE,
     CAT_SPOTIFY,
+    CAT_STREAMING,
+    CAT_TAXI,
     CAT_TRANSFERS,
+    CAT_UTILITIES,
     DEFAULT_CATEGORIES,
     OWNER_LIFESTYLE_CATEGORY_IDS,
 )
@@ -33,6 +55,9 @@ from backend.schema.models import (
     LotStatus,
     MatchField,
     MatchType,
+    ParserKey,
+    StatementFile,
+    StatementFileStatus,
     TradeSide,
     Transaction,
 )
@@ -198,122 +223,521 @@ DEMO_TOUR_RULES: list[CategoryRule] = [
 ]
 
 
-DEMO_TOUR_TRANSACTIONS: list[Transaction] = [
-    Transaction(
-        id=UUID("22000001-0000-4000-8000-000000000001"),
-        account_id=ACC_RB,
-        booking_date=date(2026, 7, 28),
-        value_date=date(2026, 7, 28),
-        amount=Decimal("-185"),
-        currency="CZK",
-        amount_czk=Decimal("-185"),
-        amount_usd=Decimal("-8.01"),
+# Illustrative FX for demo amounts (not live market data).
+_USD_CZK = Decimal("23.10")
+_TOUR_TX_MIN = 40  # upgrade sparse tour seeds below this count
+
+
+def _tx_id(n: int) -> UUID:
+    return UUID(f"22000001-0000-4000-8000-{n:012d}")
+
+
+def _evt_id(n: int) -> UUID:
+    return UUID(f"24000001-0000-4000-8000-{n:012d}")
+
+
+def _lot_id(n: int) -> UUID:
+    return UUID(f"23000001-0000-4000-8000-{n:012d}")
+
+
+def _file_id(n: int) -> UUID:
+    return UUID(f"25000001-0000-4000-8000-{n:012d}")
+
+
+def _hash(n: int) -> str:
+    return f"{n:064x}"
+
+
+def _money(amount: Decimal, currency: str) -> tuple[Decimal, Decimal]:
+    """Return (amount_czk, amount_usd) for a signed amount."""
+    if currency == "CZK":
+        return amount, (amount / _USD_CZK).quantize(Decimal("0.01"))
+    return (amount * _USD_CZK).quantize(Decimal("0.01")), amount
+
+
+def _tx(
+    n: int,
+    *,
+    account_id: UUID,
+    day: date,
+    amount: str,
+    currency: str,
+    institution: Institution,
+    merchant: str | None = None,
+    description: str = "",
+    original_description: str | None = None,
+    category_id: UUID | None = None,
+    is_internal: bool = False,
+    transfer_group_id: UUID | None = None,
+    counterparty_name: str | None = None,
+    source_file_id: UUID | None = None,
+    original_file_hash: str | None = None,
+) -> Transaction:
+    amt = Decimal(amount)
+    czk, usd = _money(amt, currency)
+    desc = description or (merchant or "Demo transaction")
+    return Transaction(
+        id=_tx_id(n),
+        account_id=account_id,
+        booking_date=day,
+        value_date=day,
+        amount=amt,
+        currency=currency,
+        amount_czk=czk,
+        amount_usd=usd,
         fee_amount=Decimal("0"),
-        fee_currency="CZK",
-        merchant="Spotify",
-        description="Card payment Spotify",
-        original_description="Spotify · Demo City",
-        source_institution=Institution.RAIFFEISEN.value,
-        external_id="demo-tx-0001",
-        category_id=CAT_SPOTIFY,
-        is_internal_transfer=False,
+        fee_currency=currency,
+        merchant=merchant,
+        description=desc,
+        original_description=original_description or desc,
+        source_institution=institution.value,
+        external_id=f"demo-tx-{n:04d}",
+        counterparty_name=counterparty_name,
+        category_id=category_id,
+        is_internal_transfer=is_internal,
+        transfer_group_id=transfer_group_id,
+        source_file_id=source_file_id,
+        original_file_hash=original_file_hash,
         created_at=_TS,
         updated_at=_TS,
-    ),
-    Transaction(
-        id=UUID("22000001-0000-4000-8000-000000000002"),
-        account_id=ACC_RB,
-        booking_date=date(2026, 7, 20),
-        value_date=date(2026, 7, 20),
-        amount=Decimal("-1887"),
-        currency="CZK",
-        amount_czk=Decimal("-1887"),
-        amount_usd=Decimal("-81.69"),
-        fee_amount=Decimal("0"),
-        fee_currency="CZK",
-        merchant="Allianz",
-        description="Standing order Insurance premium",
-        original_description="Insurance premium Allianz",
-        source_institution=Institution.RAIFFEISEN.value,
-        external_id="demo-tx-0002",
-        category_id=CAT_INSURANCE,
-        is_internal_transfer=False,
-        created_at=_TS,
-        updated_at=_TS,
-    ),
-    Transaction(
-        id=UUID("22000001-0000-4000-8000-000000000003"),
-        account_id=ACC_RB,
-        booking_date=date(2026, 7, 20),
-        value_date=date(2026, 7, 20),
-        amount=Decimal("10000"),
-        currency="CZK",
-        amount_czk=Decimal("10000"),
-        amount_usd=Decimal("432.90"),
-        fee_amount=Decimal("0"),
-        fee_currency="CZK",
-        description="Incoming payment from wallet",
-        original_description="Sent from Revolut",
-        source_institution=Institution.RAIFFEISEN.value,
-        external_id="demo-tx-0003",
-        counterparty_name="Demo Wallet",
-        category_id=CAT_INTERNAL,
-        is_internal_transfer=True,
-        transfer_group_id=XFER_GROUP_REV_RB,
-        created_at=_TS,
-        updated_at=_TS,
-    ),
-    Transaction(
-        id=UUID("22000001-0000-4000-8000-000000000004"),
+    )
+
+
+def _build_tour_transactions() -> list[Transaction]:
+    """Rich multi-bank synthetic spend/income for Home, Spending, Transactions."""
+    f_rb, f_rev, f_stk = _file_id(1), _file_id(2), _file_id(3)
+    h_rb, h_rev, h_stk = _hash(1), _hash(2), _hash(3)
+    rows: list[Transaction] = []
+    n = 1
+
+    def add(**kwargs: object) -> None:
+        nonlocal n
+        rows.append(_tx(n, **kwargs))  # type: ignore[arg-type]
+        n += 1
+
+    # --- Monthly salary + rent (Demo Bank / Raiffeisen) Mar–Aug 2026 ---
+    for month in range(3, 9):
+        add(
+            account_id=ACC_RB,
+            day=date(2026, month, 1),
+            amount="85000",
+            currency="CZK",
+            institution=Institution.RAIFFEISEN,
+            merchant="Demo Employer a.s.",
+            description="Salary payment",
+            category_id=CAT_SALARY,
+            source_file_id=f_rb,
+            original_file_hash=h_rb,
+        )
+        add(
+            account_id=ACC_RB,
+            day=date(2026, month, 2),
+            amount="-24500",
+            currency="CZK",
+            institution=Institution.RAIFFEISEN,
+            merchant="Demo Housing s.r.o.",
+            description="Standing order Rent",
+            category_id=CAT_RENT,
+            source_file_id=f_rb,
+            original_file_hash=h_rb,
+        )
+        add(
+            account_id=ACC_RB,
+            day=date(2026, month, 5),
+            amount="-1890",
+            currency="CZK",
+            institution=Institution.RAIFFEISEN,
+            merchant="Demo Energy",
+            description="Utilities",
+            category_id=CAT_UTILITIES,
+            source_file_id=f_rb,
+            original_file_hash=h_rb,
+        )
+        add(
+            account_id=ACC_RB,
+            day=date(2026, month, 6),
+            amount="-699",
+            currency="CZK",
+            institution=Institution.RAIFFEISEN,
+            merchant="Demo Mobile",
+            description="Internet / phone",
+            category_id=CAT_INTERNET,
+            source_file_id=f_rb,
+            original_file_hash=h_rb,
+        )
+        add(
+            account_id=ACC_RB,
+            day=date(2026, month, 8),
+            amount="-1887",
+            currency="CZK",
+            institution=Institution.RAIFFEISEN,
+            merchant="Allianz",
+            description="Insurance premium",
+            category_id=CAT_INSURANCE,
+            source_file_id=f_rb,
+            original_file_hash=h_rb,
+        )
+
+    # --- Groceries & everyday (mix banks) ---
+    grocery = [
+        (3, 4, "-1250", "Demo Market", ACC_RB, Institution.RAIFFEISEN),
+        (3, 11, "-980", "Demo Fresh", ACC_REV_CZK, Institution.REVOLUT),
+        (3, 18, "-1420", "Demo Market", ACC_RB, Institution.RAIFFEISEN),
+        (3, 25, "-760", "Demo Corner Shop", ACC_REV_CZK, Institution.REVOLUT),
+        (4, 3, "-1100", "Demo Market", ACC_RB, Institution.RAIFFEISEN),
+        (4, 10, "-890", "Demo Fresh", ACC_REV_CZK, Institution.REVOLUT),
+        (4, 17, "-1340", "Demo Market", ACC_RB, Institution.RAIFFEISEN),
+        (4, 24, "-720", "Demo Corner Shop", ACC_REV_CZK, Institution.REVOLUT),
+        (5, 2, "-1180", "Demo Market", ACC_RB, Institution.RAIFFEISEN),
+        (5, 9, "-950", "Demo Fresh", ACC_REV_CZK, Institution.REVOLUT),
+        (5, 16, "-1290", "Demo Market", ACC_RB, Institution.RAIFFEISEN),
+        (5, 23, "-810", "Demo Corner Shop", ACC_REV_CZK, Institution.REVOLUT),
+        (6, 6, "-1400", "Demo Market", ACC_RB, Institution.RAIFFEISEN),
+        (6, 13, "-870", "Demo Fresh", ACC_REV_CZK, Institution.REVOLUT),
+        (6, 20, "-1210", "Demo Market", ACC_RB, Institution.RAIFFEISEN),
+        (6, 27, "-990", "Demo Corner Shop", ACC_REV_CZK, Institution.REVOLUT),
+        (7, 4, "-1350", "Demo Market", ACC_RB, Institution.RAIFFEISEN),
+        (7, 11, "-920", "Demo Fresh", ACC_REV_CZK, Institution.REVOLUT),
+        (7, 18, "-1480", "Demo Market", ACC_RB, Institution.RAIFFEISEN),
+        (7, 25, "-780", "Demo Corner Shop", ACC_REV_CZK, Institution.REVOLUT),
+        (8, 1, "-1300", "Demo Market", ACC_RB, Institution.RAIFFEISEN),
+        (8, 8, "-860", "Demo Fresh", ACC_REV_CZK, Institution.REVOLUT),
+    ]
+    for mo, day, amt, merch, acc, inst in grocery:
+        add(
+            account_id=acc,
+            day=date(2026, mo, day),
+            amount=amt,
+            currency="CZK",
+            institution=inst,
+            merchant=merch,
+            description=f"Card payment {merch}",
+            category_id=CAT_GROCERIES,
+            source_file_id=f_rb if inst == Institution.RAIFFEISEN else f_rev,
+            original_file_hash=h_rb if inst == Institution.RAIFFEISEN else h_rev,
+        )
+
+    # --- Coffee / restaurants / going out ---
+    lifestyle = [
+        (3, 7, "-95", "Demo Cafe", CAT_COFFEE, ACC_REV_CZK),
+        (3, 14, "-420", "Demo Bistro", CAT_RESTAURANTS, ACC_REV_CZK),
+        (3, 21, "-680", "Demo Cinema", CAT_GOING_OUT, ACC_RB),
+        (4, 5, "-110", "Demo Cafe", CAT_COFFEE, ACC_REV_CZK),
+        (4, 12, "-890", "Demo Kitchen", CAT_RESTAURANTS, ACC_REV_CZK),
+        (4, 19, "-350", "Demo Bar", CAT_GOING_OUT, ACC_REV_CZK),
+        (5, 3, "-85", "Demo Cafe", CAT_COFFEE, ACC_REV_CZK),
+        (5, 10, "-560", "Demo Bistro", CAT_RESTAURANTS, ACC_RB),
+        (5, 24, "-1200", "Demo Night Out", CAT_GOING_OUT, ACC_REV_CZK),
+        (6, 8, "-100", "Demo Cafe", CAT_COFFEE, ACC_REV_CZK),
+        (6, 15, "-740", "Demo Kitchen", CAT_RESTAURANTS, ACC_REV_CZK),
+        (6, 22, "-450", "Demo Cinema", CAT_GOING_OUT, ACC_RB),
+        (7, 5, "-90", "Demo Cafe", CAT_COFFEE, ACC_REV_CZK),
+        (7, 12, "-610", "Demo Bistro", CAT_RESTAURANTS, ACC_REV_CZK),
+        (7, 26, "-980", "Demo Night Out", CAT_GOING_OUT, ACC_REV_CZK),
+        (8, 2, "-105", "Demo Cafe", CAT_COFFEE, ACC_REV_CZK),
+        (8, 9, "-530", "Demo Kitchen", CAT_RESTAURANTS, ACC_RB),
+    ]
+    for mo, day, amt, merch, cat, acc in lifestyle:
+        add(
+            account_id=acc,
+            day=date(2026, mo, day),
+            amount=amt,
+            currency="CZK",
+            institution=Institution.REVOLUT if acc == ACC_REV_CZK else Institution.RAIFFEISEN,
+            merchant=merch,
+            description=f"Card payment {merch}",
+            category_id=cat,
+            source_file_id=f_rev if acc == ACC_REV_CZK else f_rb,
+            original_file_hash=h_rev if acc == ACC_REV_CZK else h_rb,
+        )
+
+    # --- Subscriptions ---
+    for month in range(3, 9):
+        add(
+            account_id=ACC_RB,
+            day=date(2026, month, 12),
+            amount="-185",
+            currency="CZK",
+            institution=Institution.RAIFFEISEN,
+            merchant="Spotify",
+            description="Card payment Spotify",
+            original_description="Spotify · Demo City",
+            category_id=CAT_SPOTIFY,
+            source_file_id=f_rb,
+            original_file_hash=h_rb,
+        )
+        add(
+            account_id=ACC_REV_USD,
+            day=date(2026, month, 14),
+            amount="-15.99",
+            currency="USD",
+            institution=Institution.REVOLUT,
+            merchant="Netflix",
+            description="Netflix subscription",
+            category_id=CAT_STREAMING,
+            source_file_id=f_rev,
+            original_file_hash=h_rev,
+        )
+        add(
+            account_id=ACC_REV_USD,
+            day=date(2026, month, 15),
+            amount="-10.00",
+            currency="USD",
+            institution=Institution.REVOLUT,
+            merchant="GitHub",
+            description="Software subscription",
+            category_id=CAT_SOFTWARE,
+            source_file_id=f_rev,
+            original_file_hash=h_rev,
+        )
+
+    # --- Transport ---
+    transport = [
+        (3, 9, "-450", "Demo Fuel", CAT_FUEL_CAR, ACC_RB, Institution.RAIFFEISEN),
+        (3, 16, "-32", "Demo Transit", CAT_PUBLIC_TRANSIT, ACC_REV_CZK, Institution.REVOLUT),
+        (4, 8, "-520", "Demo Fuel", CAT_FUEL_CAR, ACC_RB, Institution.RAIFFEISEN),
+        (4, 22, "-180", "Demo Ride", CAT_TAXI, ACC_REV_CZK, Institution.REVOLUT),
+        (5, 7, "-480", "Demo Fuel", CAT_FUEL_CAR, ACC_RB, Institution.RAIFFEISEN),
+        (5, 18, "-28", "Demo Transit", CAT_PUBLIC_TRANSIT, ACC_REV_CZK, Institution.REVOLUT),
+        (6, 11, "-510", "Demo Fuel", CAT_FUEL_CAR, ACC_RB, Institution.RAIFFEISEN),
+        (6, 28, "-220", "Demo Ride", CAT_TAXI, ACC_REV_CZK, Institution.REVOLUT),
+        (7, 9, "-495", "Demo Fuel", CAT_FUEL_CAR, ACC_RB, Institution.RAIFFEISEN),
+        (7, 20, "-35", "Demo Transit", CAT_PUBLIC_TRANSIT, ACC_REV_CZK, Institution.REVOLUT),
+        (8, 6, "-530", "Demo Fuel", CAT_FUEL_CAR, ACC_RB, Institution.RAIFFEISEN),
+    ]
+    for mo, day, amt, merch, cat, acc, inst in transport:
+        add(
+            account_id=acc,
+            day=date(2026, mo, day),
+            amount=amt,
+            currency="CZK",
+            institution=inst,
+            merchant=merch,
+            description=f"Card payment {merch}",
+            category_id=cat,
+            source_file_id=f_rb if inst == Institution.RAIFFEISEN else f_rev,
+            original_file_hash=h_rb if inst == Institution.RAIFFEISEN else h_rev,
+        )
+
+    # --- Shopping / health / cash ---
+    extras = [
+        (3, 28, "-2490", "Demo Electronics", CAT_ELECTRONICS, ACC_REV_CZK, Institution.REVOLUT),
+        (4, 15, "-1290", "Demo Apparel", CAT_CLOTHING, ACC_RB, Institution.RAIFFEISEN),
+        (5, 12, "-890", "Demo Pharmacy", CAT_PHARMACY, ACC_REV_CZK, Institution.REVOLUT),
+        (6, 3, "-3200", "Demo Store", CAT_SHOP_GENERAL, ACC_RB, Institution.RAIFFEISEN),
+        (7, 15, "-4500", "ATM Demo Bank", CAT_CASH_WITHDRAWAL, ACC_RB, Institution.RAIFFEISEN),
+        (8, 4, "-1590", "Demo Apparel", CAT_CLOTHING, ACC_REV_CZK, Institution.REVOLUT),
+        (4, 28, "-80", "Bank fee", CAT_BANK_FEES, ACC_RB, Institution.RAIFFEISEN),
+        (7, 1, "-80", "Bank fee", CAT_BANK_FEES, ACC_RB, Institution.RAIFFEISEN),
+        (5, 30, "2500", "Freelance Demo Client", CAT_OTHER_INCOME, ACC_REV_CZK, Institution.REVOLUT),
+    ]
+    for mo, day, amt, merch, cat, acc, inst in extras:
+        add(
+            account_id=acc,
+            day=date(2026, mo, day),
+            amount=amt,
+            currency="CZK",
+            institution=inst,
+            merchant=merch,
+            description=merch,
+            category_id=cat,
+            source_file_id=f_rb if inst == Institution.RAIFFEISEN else f_rev,
+            original_file_hash=h_rb if inst == Institution.RAIFFEISEN else h_rev,
+        )
+
+    # --- USD shopping ---
+    add(
+        account_id=ACC_REV_USD,
+        day=date(2026, 5, 20),
+        amount="-49.99",
+        currency="USD",
+        institution=Institution.REVOLUT,
+        merchant="Demo Cloud Shop",
+        description="Online purchase",
+        category_id=CAT_SHOP_GENERAL,
+        source_file_id=f_rev,
+        original_file_hash=h_rev,
+    )
+    add(
+        account_id=ACC_REV_USD,
+        day=date(2026, 7, 8),
+        amount="-29.00",
+        currency="USD",
+        institution=Institution.REVOLUT,
+        merchant="Demo Books",
+        description="Online purchase",
+        category_id=CAT_SHOP_GENERAL,
+        source_file_id=f_rev,
+        original_file_hash=h_rev,
+    )
+
+    # --- Internal transfer pair (wallet ↔ bank) — must not hit income/expense ---
+    add(
         account_id=ACC_REV_CZK,
-        booking_date=date(2026, 7, 20),
-        value_date=date(2026, 7, 20),
-        amount=Decimal("-10000"),
+        day=date(2026, 7, 20),
+        amount="-10000",
         currency="CZK",
-        amount_czk=Decimal("-10000"),
-        amount_usd=Decimal("-432.90"),
-        fee_amount=Decimal("0"),
-        fee_currency="CZK",
+        institution=Institution.REVOLUT,
         description="Transfer to own bank",
         original_description="Transfer to own bank account",
-        source_institution=Institution.REVOLUT.value,
-        external_id="demo-tx-0004",
         category_id=CAT_INTERNAL,
-        is_internal_transfer=True,
+        is_internal=True,
         transfer_group_id=XFER_GROUP_REV_RB,
+        source_file_id=f_rev,
+        original_file_hash=h_rev,
+    )
+    add(
+        account_id=ACC_RB,
+        day=date(2026, 7, 20),
+        amount="10000",
+        currency="CZK",
+        institution=Institution.RAIFFEISEN,
+        description="Incoming payment from wallet",
+        original_description="Sent from Revolut",
+        category_id=CAT_INTERNAL,
+        is_internal=True,
+        transfer_group_id=XFER_GROUP_REV_RB,
+        counterparty_name="Demo Wallet",
+        source_file_id=f_rb,
+        original_file_hash=h_rb,
+    )
+
+    # --- Crypto pot funding (Digital Assets Europe) — internal + crypto funding ---
+    da_group = UUID("aa300001-0000-4000-8000-000000000001")
+    add(
+        account_id=ACC_REV_CZK,
+        day=date(2026, 6, 10),
+        amount="-5000",
+        currency="CZK",
+        institution=Institution.REVOLUT,
+        description="Revolut Digital Assets Europe Ltd",
+        original_description="Transfer to Revolut Digital Assets Europe Ltd",
+        category_id=CAT_CRYPTO_FUND,
+        is_internal=True,
+        transfer_group_id=da_group,
+        source_file_id=f_rev,
+        original_file_hash=h_rev,
+    )
+    add(
+        account_id=ACC_REV_CRYPTO,
+        day=date(2026, 6, 10),
+        amount="216.45",
+        currency="USD",
+        institution=Institution.REVOLUT,
+        description="Crypto pot top-up",
+        original_description="From Revolut Digital Assets Europe Ltd",
+        category_id=CAT_CRYPTO_FUND,
+        is_internal=True,
+        transfer_group_id=da_group,
+        source_file_id=f_rev,
+        original_file_hash=h_rev,
+    )
+
+    # --- Broker funding ---
+    add(
+        account_id=ACC_REV_USD,
+        day=date(2026, 4, 2),
+        amount="-500.00",
+        currency="USD",
+        institution=Institution.REVOLUT,
+        description="Transfer to Demo Broker",
+        category_id=CAT_BROKER,
+        source_file_id=f_stk,
+        original_file_hash=h_stk,
+    )
+    add(
+        account_id=ACC_ETORO,
+        day=date(2026, 4, 2),
+        amount="500.00",
+        currency="USD",
+        institution=Institution.ETORO,
+        description="Deposit",
+        category_id=CAT_BROKER,
+        is_internal=True,
+        source_file_id=f_stk,
+        original_file_hash=h_stk,
+    )
+
+    # External transfer (not internal)
+    add(
+        account_id=ACC_REV_CZK,
+        day=date(2026, 5, 27),
+        amount="-1500",
+        currency="CZK",
+        institution=Institution.REVOLUT,
+        description="Transfer to friend",
+        original_description="Transfer to Demo Friend",
+        category_id=CAT_EXTERNAL_XFER,
+        merchant="Demo Friend",
+        source_file_id=f_rev,
+        original_file_hash=h_rev,
+    )
+
+    return rows
+
+
+DEMO_TOUR_TRANSACTIONS: list[Transaction] = _build_tour_transactions()
+
+FILE_RB = _file_id(1)
+FILE_REV = _file_id(2)
+FILE_STK = _file_id(3)
+
+DEMO_STATEMENT_FILES: list[StatementFile] = [
+    StatementFile(
+        id=FILE_RB,
+        original_filename="demo_bank_checking_2026.csv",
+        uploaded_at=_TS,
+        content_sha256=_hash(1),
+        institution=Institution.RAIFFEISEN.value,
+        row_count=80,
+        parser_key=ParserKey.RAIFFEISEN_CZ.value,
+        status=StatementFileStatus.IMPORTED,
+        notes="demo synthetic import",
         created_at=_TS,
         updated_at=_TS,
     ),
-    Transaction(
-        id=UUID("22000001-0000-4000-8000-000000000005"),
-        account_id=ACC_REV_CZK,
-        booking_date=date(2026, 6, 15),
-        value_date=date(2026, 6, 15),
-        amount=Decimal("-890"),
-        currency="CZK",
-        amount_czk=Decimal("-890"),
-        amount_usd=Decimal("-38.50"),
-        fee_amount=Decimal("0"),
-        fee_currency="CZK",
-        merchant="Demo Cafe",
-        description="Card Payment Demo Cafe",
-        original_description="Demo Cafe · Sample Street",
-        source_institution=Institution.REVOLUT.value,
-        external_id="demo-tx-0005",
+    StatementFile(
+        id=FILE_REV,
+        original_filename="demo_wallet_expenses_2026.csv",
+        uploaded_at=_TS,
+        content_sha256=_hash(2),
+        institution=Institution.REVOLUT.value,
+        row_count=90,
+        parser_key=ParserKey.REVOLUT_EXPENSES.value,
+        status=StatementFileStatus.IMPORTED,
+        notes="demo synthetic import",
+        created_at=_TS,
+        updated_at=_TS,
+    ),
+    StatementFile(
+        id=FILE_STK,
+        original_filename="demo_broker_activity_2026.csv",
+        uploaded_at=_TS,
+        content_sha256=_hash(3),
+        institution=Institution.ETORO.value,
+        row_count=12,
+        parser_key=ParserKey.ETORO_ACTIVITY.value,
+        status=StatementFileStatus.IMPORTED,
+        notes="demo synthetic import",
         created_at=_TS,
         updated_at=_TS,
     ),
 ]
 
 
-LOT_DEMO_STOCK = UUID("23000001-0000-4000-8000-000000000001")
-LOT_DEMO_ETF = UUID("23000001-0000-4000-8000-000000000002")
-EVT_BUY_DEMO = UUID("24000001-0000-4000-8000-000000000001")
-EVT_BUY_SAMPLE = UUID("24000001-0000-4000-8000-000000000002")
+LOT_DEMO = _lot_id(1)
+LOT_SAMPLE = _lot_id(2)
+LOT_ETH = _lot_id(3)
+LOT_INDEX = _lot_id(4)
+EVT_BUY_DEMO = _evt_id(1)
+EVT_BUY_SAMPLE = _evt_id(2)
+EVT_BUY_ETH = _evt_id(3)
+EVT_BUY_INDEX = _evt_id(4)
+EVT_SELL_PARTIAL = _evt_id(5)
 
 DEMO_TOUR_LOTS: list[InvestmentLot] = [
     InvestmentLot(
-        id=LOT_DEMO_STOCK,
+        id=LOT_DEMO,
         account_id=ACC_REV_STOCKS,
         ticker="DEMO",
         asset_class=AssetClass.STOCK,
@@ -322,7 +746,7 @@ DEMO_TOUR_LOTS: list[InvestmentLot] = [
         quantity_opened=Decimal("10"),
         quantity_remaining=Decimal("10"),
         cost_basis_native=Decimal("1000.00"),
-        cost_basis_czk=Decimal("23000.00"),
+        cost_basis_czk=Decimal("23100.00"),
         cost_basis_usd=Decimal("1000.00"),
         native_currency="USD",
         open_event_id=EVT_BUY_DEMO,
@@ -332,21 +756,59 @@ DEMO_TOUR_LOTS: list[InvestmentLot] = [
         updated_at=_TS,
     ),
     InvestmentLot(
-        id=LOT_DEMO_ETF,
+        id=LOT_SAMPLE,
         account_id=ACC_ETORO,
         ticker="SAMPLE",
         asset_class=AssetClass.STOCK,
         source=Institution.ETORO.value,
         acquisition_date=date(2025, 3, 1),
-        quantity_opened=Decimal("5"),
-        quantity_remaining=Decimal("5"),
-        cost_basis_native=Decimal("500.00"),
-        cost_basis_czk=Decimal("11500.00"),
-        cost_basis_usd=Decimal("500.00"),
+        quantity_opened=Decimal("20"),
+        quantity_remaining=Decimal("15"),
+        cost_basis_native=Decimal("1500.00"),
+        cost_basis_czk=Decimal("34650.00"),
+        cost_basis_usd=Decimal("1500.00"),
         native_currency="USD",
         open_event_id=EVT_BUY_SAMPLE,
         status=LotStatus.OPEN,
-        notes="demo synthetic lot",
+        notes="demo synthetic — partial sell applied",
+        created_at=_TS,
+        updated_at=_TS,
+    ),
+    InvestmentLot(
+        id=LOT_ETH,
+        account_id=ACC_REV_CRYPTO,
+        ticker="ETH",
+        asset_class=AssetClass.CRYPTO,
+        source=Institution.REVOLUT.value,
+        acquisition_date=date(2025, 6, 10),
+        quantity_opened=Decimal("0.50"),
+        quantity_remaining=Decimal("0.50"),
+        cost_basis_native=Decimal("1200.00"),
+        cost_basis_czk=Decimal("27720.00"),
+        cost_basis_usd=Decimal("1200.00"),
+        native_currency="USD",
+        open_event_id=EVT_BUY_ETH,
+        status=LotStatus.OPEN,
+        notes="demo synthetic crypto lot",
+        created_at=_TS,
+        updated_at=_TS,
+    ),
+    InvestmentLot(
+        id=LOT_INDEX,
+        account_id=ACC_ETORO,
+        ticker="VTI",
+        asset_class=AssetClass.ETF,
+        source=Institution.ETORO.value,
+        acquisition_date=date(2026, 4, 2),
+        quantity_opened=Decimal("4"),
+        quantity_remaining=Decimal("4"),
+        cost_basis_native=Decimal("800.00"),
+        cost_basis_czk=Decimal("18480.00"),
+        cost_basis_usd=Decimal("800.00"),
+        native_currency="USD",
+        open_event_id=EVT_BUY_INDEX,
+        status=LotStatus.OPEN,
+        notes="demo synthetic ETF lot",
         created_at=_TS,
         updated_at=_TS,
     ),
@@ -366,11 +828,11 @@ DEMO_TOUR_EVENTS: list[InvestmentEvent] = [
         native_currency="USD",
         value_native=Decimal("1000.00"),
         value_usd=Decimal("1000.00"),
-        value_czk=Decimal("23000.00"),
-        lot_id=LOT_DEMO_STOCK,
+        value_czk=Decimal("23100.00"),
+        lot_id=LOT_DEMO,
         source=Institution.REVOLUT.value,
         external_id="demo-evt-0001",
-        description="Demo buy DEMO",
+        description="Buy DEMO",
         created_at=_TS,
         updated_at=_TS,
     ),
@@ -382,16 +844,83 @@ DEMO_TOUR_EVENTS: list[InvestmentEvent] = [
         ticker="SAMPLE",
         asset_class=AssetClass.STOCK,
         side=TradeSide.BUY,
-        quantity=Decimal("5"),
+        quantity=Decimal("20"),
         price_native=Decimal("100.00"),
         native_currency="USD",
-        value_native=Decimal("500.00"),
-        value_usd=Decimal("500.00"),
-        value_czk=Decimal("11500.00"),
-        lot_id=LOT_DEMO_ETF,
+        value_native=Decimal("2000.00"),
+        value_usd=Decimal("2000.00"),
+        value_czk=Decimal("46200.00"),
+        lot_id=LOT_SAMPLE,
         source=Institution.ETORO.value,
         external_id="demo-evt-0002",
-        description="Demo buy SAMPLE",
+        description="Buy SAMPLE",
+        created_at=_TS,
+        updated_at=_TS,
+    ),
+    InvestmentEvent(
+        id=EVT_SELL_PARTIAL,
+        account_id=ACC_ETORO,
+        event_type=InvestmentEventType.SELL,
+        event_date=date(2025, 11, 10),
+        ticker="SAMPLE",
+        asset_class=AssetClass.STOCK,
+        side=TradeSide.SELL,
+        quantity=Decimal("5"),
+        price_native=Decimal("120.00"),
+        native_currency="USD",
+        value_native=Decimal("600.00"),
+        value_usd=Decimal("600.00"),
+        value_czk=Decimal("13860.00"),
+        lot_id=LOT_SAMPLE,
+        source=Institution.ETORO.value,
+        external_id="demo-evt-0005",
+        description="Partial sell SAMPLE",
+        realized_gain_usd=Decimal("100.00"),
+        realized_gain_czk=Decimal("2310.00"),
+        holding_period_days=254,
+        qualifies_3y_exemption=False,
+        created_at=_TS,
+        updated_at=_TS,
+    ),
+    InvestmentEvent(
+        id=EVT_BUY_ETH,
+        account_id=ACC_REV_CRYPTO,
+        event_type=InvestmentEventType.BUY,
+        event_date=date(2025, 6, 10),
+        ticker="ETH",
+        asset_class=AssetClass.CRYPTO,
+        side=TradeSide.BUY,
+        quantity=Decimal("0.50"),
+        price_native=Decimal("2400.00"),
+        native_currency="USD",
+        value_native=Decimal("1200.00"),
+        value_usd=Decimal("1200.00"),
+        value_czk=Decimal("27720.00"),
+        lot_id=LOT_ETH,
+        source=Institution.REVOLUT.value,
+        external_id="demo-evt-0003",
+        description="Buy ETH",
+        created_at=_TS,
+        updated_at=_TS,
+    ),
+    InvestmentEvent(
+        id=EVT_BUY_INDEX,
+        account_id=ACC_ETORO,
+        event_type=InvestmentEventType.BUY,
+        event_date=date(2026, 4, 2),
+        ticker="VTI",
+        asset_class=AssetClass.ETF,
+        side=TradeSide.BUY,
+        quantity=Decimal("4"),
+        price_native=Decimal("200.00"),
+        native_currency="USD",
+        value_native=Decimal("800.00"),
+        value_usd=Decimal("800.00"),
+        value_czk=Decimal("18480.00"),
+        lot_id=LOT_INDEX,
+        source=Institution.ETORO.value,
+        external_id="demo-evt-0004",
+        description="Buy VTI",
         created_at=_TS,
         updated_at=_TS,
     ),
@@ -480,16 +1009,24 @@ def seed_public_minimal(repo: SheetsRepository) -> None:
 def seed_public_tour(repo: SheetsRepository) -> None:
     """Full synthetic sample portfolio for Explore sample portfolio."""
     seed_public_minimal(repo)
-    if not repo.list_rows("Transactions"):
-        repo.upsert_rows("Transactions", DEMO_TOUR_TRANSACTIONS)
-    if DEMO_TOUR_LOTS and not repo.list_rows("InvestmentLots"):
+
+    # Upgrade sparse seeds (e.g. older 5-row tour) after deploys.
+    existing_tx = repo.list_rows("Transactions")
+    if len(existing_tx) < _TOUR_TX_MIN:
+        repo.replace_all_rows("Transactions", list(DEMO_TOUR_TRANSACTIONS))
+    if not repo.list_rows("StatementFiles"):
         try:
-            repo.upsert_rows("InvestmentLots", DEMO_TOUR_LOTS)
+            repo.upsert_rows("StatementFiles", DEMO_STATEMENT_FILES)
         except Exception:  # noqa: BLE001
             pass
-    if DEMO_TOUR_EVENTS and not repo.list_rows("InvestmentEvents"):
+    if DEMO_TOUR_LOTS and len(repo.list_rows("InvestmentLots")) < 3:
         try:
-            repo.upsert_rows("InvestmentEvents", DEMO_TOUR_EVENTS)
+            repo.replace_all_rows("InvestmentLots", list(DEMO_TOUR_LOTS))
+        except Exception:  # noqa: BLE001
+            pass
+    if DEMO_TOUR_EVENTS and len(repo.list_rows("InvestmentEvents")) < 3:
+        try:
+            repo.replace_all_rows("InvestmentEvents", list(DEMO_TOUR_EVENTS))
         except Exception:  # noqa: BLE001
             pass
 

@@ -84,11 +84,14 @@ def _count_active_sandboxes() -> int:
 
 
 def ensure_tour_seeded() -> None:
-    """Load synthetic seed into the shared tour memory ledger once per process."""
+    """
+    Load / upgrade synthetic seed into the shared tour memory ledger.
+
+    Always re-enters seed_public_tour so sparse (pre-enrichment) tours upgrade
+    after deploy without requiring a full process wipe of the memory dict.
+    """
     global _TOUR_SEEDED
     with _TOUR_LOCK:
-        if _TOUR_SEEDED:
-            return
         from backend.api.deps import get_memory_repo_for_tenant
         from backend.schema.demo_public import seed_public_tour
 
