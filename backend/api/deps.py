@@ -84,23 +84,25 @@ def get_session_user(
         return None
 
     if settings.auth_mode in {"dev", "disabled"}:
-        _reject_unpermitted_open_auth(settings)
-        # Prefer real session cookie (demo / explicit login) over open-auth synthetic.
+        # Prefer real session cookie (demo / owner password / explicit login).
         if token:
             user = load_session_token(settings, token)
             if user is not None:
-                if settings.multi_tenant:
+                if settings.multi_tenant and not user.is_demo:
                     return _hydrate_tenant_user(settings, user)
                 return user
-        # Open-auth fallback (local single-user convenience)
-        return SessionUser(
-            email="dev@localhost" if settings.auth_mode == "dev" else "anonymous@localhost",
-            name="Dev User" if settings.auth_mode == "dev" else "Anonymous",
-            picture=None,
-            access_token="",
-            refresh_token=None,
-            token_expiry=None,
-        )
+        # Open-auth synthetic ONLY when explicitly allowed (never on public production
+        # unless ALLOW_OPEN_AUTH=true — do not auto-expose the real ledger).
+        if settings.open_auth_permitted:
+            return SessionUser(
+                email="dev@localhost" if settings.auth_mode == "dev" else "anonymous@localhost",
+                name="Dev User" if settings.auth_mode == "dev" else "Anonymous",
+                picture=None,
+                access_token="",
+                refresh_token=None,
+                token_expiry=None,
+            )
+        return None
 
     if not token:
         return None
@@ -146,10 +148,8 @@ def require_user(
     user: Annotated[SessionUser | None, Depends(get_session_user)],
     settings: SettingsDep,
 ) -> SessionUser:
-    _reject_unpermitted_open_auth(settings)
-    # Note: open-auth synthetic user is produced in get_session_user unless
-    # gf_guest cookie is set (explicit logout). Do not re-create anonymous here
-    # when user is None — that would break sign-out → demo login.
+    # Open-auth synthetic is created in get_session_user only when open_auth_permitted.
+    # No session → 401 (login required), not silent full ledger access.
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

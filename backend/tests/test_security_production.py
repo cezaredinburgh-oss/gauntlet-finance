@@ -50,12 +50,12 @@ def test_production_dev_auth_blocked_without_allow_open_auth(monkeypatch: pytest
         DEBUG="false",
     )
     with client:
+        # No session cookie → login required (not open synthetic user / not full ledger)
         r_me = client.get("/api/auth/me")
-        assert r_me.status_code == 503, r_me.text
-        assert "ALLOW_OPEN_AUTH" in r_me.json()["detail"] or "oauth" in r_me.json()["detail"].lower()
+        assert r_me.status_code == 401, r_me.text
 
         r_dash = client.get("/api/dashboard-summary", params={"period_key": "this_month"})
-        assert r_dash.status_code == 503, r_dash.text
+        assert r_dash.status_code == 401, r_dash.text
 
 
 def test_production_disabled_auth_blocked(monkeypatch: pytest.MonkeyPatch):
@@ -67,7 +67,7 @@ def test_production_disabled_auth_blocked(monkeypatch: pytest.MonkeyPatch):
     )
     with client:
         r = client.get("/api/auth/me")
-        assert r.status_code == 503
+        assert r.status_code == 401
 
 
 def test_production_allow_open_auth_works(monkeypatch: pytest.MonkeyPatch):

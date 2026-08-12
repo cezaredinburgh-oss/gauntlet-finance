@@ -51,6 +51,8 @@ type PublicConfig = {
   multi_tenant: boolean;
   demo_login_enabled: boolean;
   demo_email: string | null;
+  owner_login_enabled?: boolean;
+  owner_email?: string | null;
   google_login_available: boolean;
   open_auth?: boolean;
 };
@@ -97,6 +99,8 @@ export function LandingPage() {
           setPublicCfg(cfg);
           if (cfg.demo_login_enabled && cfg.demo_email) {
             setEmail(cfg.demo_email);
+          } else if (cfg.owner_login_enabled && cfg.owner_email) {
+            setEmail(cfg.owner_email);
           }
         }
       } catch {
@@ -148,13 +152,12 @@ export function LandingPage() {
   }
 
   const demoOn = publicCfg?.demo_login_enabled === true;
+  const ownerOn = publicCfg?.owner_login_enabled === true;
+  const passwordOn = demoOn || ownerOn;
   const googleOn = publicCfg?.google_login_available === true;
   const notInvited = authError === "not_invited";
-  const isDevAuth =
-    publicCfg?.auth_mode === "dev" ||
-    publicCfg?.auth_mode === "disabled" ||
-    user?.auth_mode === "dev" ||
-    user?.auth_mode === "disabled";
+  /** Only when host allows unauthenticated full access (dangerous on public URLs). */
+  const openAuth = publicCfg?.open_auth === true;
   const signedIn = Boolean(user);
 
   return (
@@ -216,10 +219,10 @@ export function LandingPage() {
                 {user?.is_demo && (
                   <div className="mt-1 text-xs text-amber-200">Demo session</div>
                 )}
-                {isDevAuth && !user?.is_demo && (
+                {openAuth && !user?.is_demo && (
                   <div className="mt-1 text-xs text-amber-200">
-                    Local <code className="text-ink-muted">AUTH_MODE=dev</code> auto-signs you
-                    in (no login screen by default). That is why the app opened immediately.
+                    This host allows open access (auto sign-in). Turn off ALLOW_OPEN_AUTH on
+                    public domains.
                   </div>
                 )}
               </div>
@@ -233,7 +236,6 @@ export function LandingPage() {
                   onClick={() => {
                     void (async () => {
                       await logout();
-                      // Stay on landing; show login forms after guest cookie is set
                     })();
                   }}
                 >
@@ -241,9 +243,7 @@ export function LandingPage() {
                 </button>
               </div>
               <p className="text-xs text-ink-faint">
-                Sign out clears your session so you can use the demo account or Google. Under{" "}
-                <code className="text-ink-muted">AUTH_MODE=dev</code>, sign-out also enters guest
-                mode so the app does not auto-login again.
+                Sign out clears your session so you can use the demo or owner password again.
               </p>
             </div>
           )}
@@ -280,10 +280,10 @@ export function LandingPage() {
             </div>
           )}
 
-          {!signedIn && demoOn && (
+          {!signedIn && passwordOn && (
             <form className="space-y-3" onSubmit={(e) => void onDemoSubmit(e)}>
               <div className="text-xs font-semibold uppercase tracking-wide text-brand">
-                Demo account
+                Email &amp; password
               </div>
               <div>
                 <label className="label" htmlFor="demo-email">
@@ -311,22 +311,31 @@ export function LandingPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  placeholder="demo"
                 />
               </div>
-              <p className="text-xs text-ink-faint">
-                Host-configured demo credentials (default password when set:{" "}
-                <code className="text-ink-muted">demo</code>). Isolated demo ledger — not your
-                real data.
-              </p>
+              <ul className="space-y-1 text-xs text-ink-faint">
+                {demoOn && (
+                  <li>
+                    <strong className="text-ink-muted">Demo:</strong>{" "}
+                    {publicCfg?.demo_email || "demo@gauntlet.local"} — isolated empty ledger
+                    (safe to share).
+                  </li>
+                )}
+                {ownerOn && (
+                  <li>
+                    <strong className="text-ink-muted">Owner:</strong> your private credentials
+                    — full real data (do not share).
+                  </li>
+                )}
+              </ul>
               <button type="submit" className="btn-primary w-full" disabled={busy}>
                 {busy ? <Spinner className="border-t-slate-900" /> : null}
-                Enter demo
+                Sign in
               </button>
             </form>
           )}
 
-          {!signedIn && demoOn && googleOn && (
+          {!signedIn && passwordOn && googleOn && (
             <div className="flex items-center gap-3 text-xs text-ink-faint">
               <div className="h-px flex-1 bg-white/10" />
               or
@@ -338,29 +347,22 @@ export function LandingPage() {
             <div className="space-y-2">
               <button
                 type="button"
-                className={cn("w-full", demoOn ? "btn-secondary" : "btn-primary")}
+                className={cn("w-full", passwordOn ? "btn-secondary" : "btn-primary")}
                 onClick={login}
               >
                 Continue with Google
               </button>
-              {publicCfg?.multi_tenant && (
-                <p className="text-center text-xs text-ink-faint">
-                  Platform admins manage invites after signing in with an admin Google account.
-                </p>
-              )}
             </div>
           )}
 
-          {!signedIn && !demoOn && !googleOn && (
+          {!signedIn && !passwordOn && !googleOn && (
             <p className="text-sm text-ink-muted">
-              No login methods are enabled. Set{" "}
-              <code className="text-ink">DEMO_LOGIN_ENABLED=true</code> (with{" "}
-              <code className="text-ink">DEMO_PASSWORD</code>) or{" "}
-              <code className="text-ink">AUTH_MODE=oauth</code>.
+              No login methods are enabled on this host. Ask the operator to set demo or owner
+              password login, or Google OAuth.
             </p>
           )}
 
-          {!signedIn && isDevAuth && (
+          {!signedIn && openAuth && (
             <button
               type="button"
               className="btn-secondary w-full text-sm"
@@ -378,7 +380,7 @@ export function LandingPage() {
                 })();
               }}
             >
-              Continue as local dev user
+              Continue as local dev user (open access)
             </button>
           )}
 

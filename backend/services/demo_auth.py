@@ -98,7 +98,16 @@ def ensure_demo_tenant(settings: Settings) -> SessionUser:
     )
 
 
-def authenticate_demo_password(
+def _password_ok(got: str, expected: str) -> bool:
+    if not expected:
+        return False
+    if len(got) != len(expected):
+        secrets.compare_digest(expected, expected)
+        return False
+    return secrets.compare_digest(got, expected)
+
+
+def authenticate_password_login(
     settings: Settings,
     *,
     email: str,
@@ -106,12 +115,39 @@ def authenticate_demo_password(
     client_ip: str = "",
 ) -> SessionUser:
     """
-    Validate demo credentials and return a SessionUser.
+    Password login for demo (isolated ledger) or owner (real ledger).
 
     Raises DemoAuthError on failure.
     """
+    check_password_rate_limit(email, client_ip)
+    got_email = normalize_email(email)
+    pw = password or ""
+
+    # --- Owner: real Google Sheet (single-tenant) ---
+    owner_email = normalize_email(settings.owner_email)
+    owner_pw = (settings.owner_password or "").strip()
+    if owner_email and owner_pw and secrets.compare_digest(got_email, owner_email):
+        if _password_ok(pw, owner_pw):
+            return SessionUser(
+                email=owner_email,
+                name="Owner",
+                picture=None,
+                access_token="",
+                refresh_token=None,
+                token_expiry=None,
+                user_id=None,
+                role="user",
+                spreadsheet_id=None,
+                is_demo=False,
+            )
+        raise DemoAuthError("Invalid email or password.")
+
+    # --- Demo: isolated memory ledger ---
     if not settings.demo_login_enabled:
-        raise DemoAuthError("Demo login is disabled.", status_code=403)
+        raise DemoAuthError(
+            "Demo login is disabled. Use owner credentials or ask the host to enable demo.",
+            status_code=403,
+        )
     expected_pw = (settings.demo_password or "").strip()
     if not expected_pw:
         raise DemoAuthError(
@@ -119,27 +155,15 @@ def authenticate_demo_password(
             status_code=503,
         )
 
-    check_password_rate_limit(email, client_ip)
-
     expected_email = normalize_email(settings.demo_email) or "demo@gauntlet.local"
-    got_email = normalize_email(email)
-    email_ok = secrets.compare_digest(got_email, expected_email)
-    # Pad to reduce trivial length oracle (compare_digest needs same length)
-    pw = password or ""
-    if len(pw) != len(expected_pw):
-        # Still burn a compare of equal length material
-        secrets.compare_digest(expected_pw, expected_pw)
-        pw_ok = False
-    else:
-        pw_ok = secrets.compare_digest(pw, expected_pw)
-
-    if not (email_ok and pw_ok):
+    if not secrets.compare_digest(got_email, expected_email) or not _password_ok(
+        pw, expected_pw
+    ):
         raise DemoAuthError("Invalid email or password.")
 
     if settings.multi_tenant:
         return ensure_demo_tenant(settings)
 
-    # Single-tenant: isolated demo memory ledger (get_repository routes is_demo → memory).
     return SessionUser(
         email=expected_email,
         name="Demo User",
@@ -151,4 +175,17 @@ def authenticate_demo_password(
         role="user",
         spreadsheet_id="demo-public",
         is_demo=True,
+    )
+
+
+# Back-compat name
+def authenticate_demo_password(
+    settings: Settings,
+    *,
+    email: str,
+    password: str,
+    client_ip: str = "",
+) -> SessionUser:
+    return authenticate_password_login(
+        settings, email=email, password=password, client_ip=client_ip
     )

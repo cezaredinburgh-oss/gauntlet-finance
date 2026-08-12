@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     demo_email: str = "demo@gauntlet.local"  # env DEMO_EMAIL
     demo_password: str = ""  # env DEMO_PASSWORD — e.g. "demo"; never commit real secrets
 
+    # Owner password login (real ledger). Use when ALLOW_OPEN_AUTH=false on public hosts.
+    owner_email: str = ""  # env OWNER_EMAIL — shown on landing; must match login email
+    owner_password: str = ""  # env OWNER_PASSWORD — long secret; never commit
+
     @field_validator("spreadsheet_id", mode="before")
     @classmethod
     def strip_spreadsheet_id(cls, v: object) -> object:

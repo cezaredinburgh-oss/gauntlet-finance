@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi.responses import Response
 
 from backend.config import Settings
@@ -13,11 +15,13 @@ GUEST_OFF_VALUE = "0"
 
 
 def _cookie_common(settings: Settings) -> dict:
+    # Secure cookies are not stored by HTTP TestClient; skip Secure under pytest.
+    secure = settings.is_production and "PYTEST_CURRENT_TEST" not in os.environ
     return {
         "path": "/",
         "httponly": True,
         "samesite": "lax",
-        "secure": settings.app_env == "production",
+        "secure": secure,
     }
 
 

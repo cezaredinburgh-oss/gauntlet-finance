@@ -27,7 +27,7 @@ from backend.api.session_cookies import (
     set_guest_cookie,
     set_session_cookie,
 )
-from backend.services.demo_auth import DemoAuthError, authenticate_demo_password
+from backend.services.demo_auth import DemoAuthError, authenticate_password_login
 from backend.tenancy.store import get_control_store, normalize_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -142,7 +142,7 @@ async def password_login(
     if request.client:
         client_ip = request.client.host or ""
     try:
-        session_user = authenticate_demo_password(
+        session_user = authenticate_password_login(
             settings,
             email=body.email,
             password=body.password,
@@ -201,11 +201,21 @@ async def public_auth_config(settings: SettingsDep) -> dict:
             if settings.demo_login_enabled
             else None
         ),
+        "owner_login_enabled": bool(
+            (settings.owner_email or "").strip() and (settings.owner_password or "").strip()
+        ),
+        "owner_email": (
+            (settings.owner_email or "").strip().lower()
+            if (settings.owner_email or "").strip() and (settings.owner_password or "").strip()
+            else None
+        ),
         "google_login_available": (
             settings.auth_mode == "oauth"
             and bool(settings.google_client_id and settings.google_client_secret)
         ),
-        "open_auth": settings.auth_mode in {"dev", "disabled"},
+        # True only when the host allows unauthenticated full access (dangerous on public URLs)
+        "open_auth": bool(settings.open_auth_permitted)
+        and settings.auth_mode in {"dev", "disabled"},
     }
 
 

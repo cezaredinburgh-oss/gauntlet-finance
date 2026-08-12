@@ -17,6 +17,8 @@ export type PublicAuthConfig = {
   multi_tenant: boolean;
   demo_login_enabled: boolean;
   demo_email: string | null;
+  owner_login_enabled?: boolean;
+  owner_email?: string | null;
   google_login_available: boolean;
   open_auth?: boolean;
 };

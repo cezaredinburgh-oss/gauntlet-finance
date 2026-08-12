@@ -183,7 +183,7 @@ def test_open_auth_logout_stays_guest(monkeypatch: pytest.MonkeyPatch, tmp_path:
     get_settings.cache_clear()
     clear_repo_cache()
     with _client() as client:
-        # Open auth: me works without cookie
+        # Open auth (test env): me works without cookie
         assert client.get("/api/auth/me").status_code == 200
         assert client.post("/api/auth/logout").status_code == 200
         # Guest cookie blocks synthetic user
@@ -191,3 +191,35 @@ def test_open_auth_logout_stays_guest(monkeypatch: pytest.MonkeyPatch, tmp_path:
         # Resume local dev
         assert client.post("/api/auth/local-dev").status_code == 200
         assert client.get("/api/auth/me").status_code == 200
+
+
+def test_public_production_no_open_ledger_demo_ok(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Public host: no cookie → 401; demo password → isolated session."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("AUTH_MODE", "dev")
+    monkeypatch.setenv("ALLOW_OPEN_AUTH", "false")
+    monkeypatch.setenv("SECRET_KEY", "prod-public-secret-ok12")
+    monkeypatch.setenv("SPREADSHEET_ID", "real-sheet-id-not-for-demo")
+    monkeypatch.setenv("REPO_BACKEND", "memory")
+    monkeypatch.setenv("MULTI_TENANT", "false")
+    monkeypatch.setenv("DEMO_LOGIN_ENABLED", "true")
+    monkeypatch.setenv("DEMO_EMAIL", "demo@gauntlet.local")
+    monkeypatch.setenv("DEMO_PASSWORD", "demo")
+    monkeypatch.setenv("DEBUG", "false")
+    get_settings.cache_clear()
+    clear_repo_cache()
+    clear_tenant_memory_repos()
+    with _client() as client:
+        assert client.get("/api/auth/me").status_code == 401
+        dash = client.get("/api/dashboard-summary", params={"period_key": "this_month"})
+        assert dash.status_code == 401
+        r = client.post(
+            "/api/auth/password",
+            json={"email": "demo@gauntlet.local", "password": "demo"},
+        )
+        assert r.status_code == 200
+        me = client.get("/api/auth/me")
+        assert me.status_code == 200
+        assert me.json()["is_demo"] is True
+        # Demo can load domain data (isolated memory), not 401
+        assert client.get("/api/transactions").status_code == 200
