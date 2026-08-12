@@ -223,3 +223,147 @@ def test_public_production_no_open_ledger_demo_ok(monkeypatch: pytest.MonkeyPatc
         assert me.json()["is_demo"] is True
         # Demo can load domain data (isolated memory), not 401
         assert client.get("/api/transactions").status_code == 200
+        cfg = client.get("/api/auth/public-config").json()
+        assert cfg["open_auth"] is False
+        assert cfg["demo_login_enabled"] is True
+        assert "owner_email" not in cfg
+        assert "password" not in cfg
+        assert "DEMO_PASSWORD" not in str(cfg)
+
+
+def test_owner_password_login_not_demo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("AUTH_MODE", "dev")
+    monkeypatch.setenv("ALLOW_OPEN_AUTH", "false")
+    monkeypatch.setenv("SECRET_KEY", "prod-owner-secret-ok12")
+    monkeypatch.setenv("SPREADSHEET_ID", "owner-sheet-id")
+    monkeypatch.setenv("REPO_BACKEND", "memory")
+    monkeypatch.setenv("MULTI_TENANT", "false")
+    monkeypatch.setenv("DEMO_LOGIN_ENABLED", "false")
+    monkeypatch.setenv("OWNER_EMAIL", "owner@example.com")
+    monkeypatch.setenv("OWNER_PASSWORD", "owner-secret-pass")
+    monkeypatch.setenv("DEBUG", "false")
+    get_settings.cache_clear()
+    clear_repo_cache()
+    clear_tenant_memory_repos()
+    with _client() as client:
+        cfg = client.get("/api/auth/public-config").json()
+        assert cfg["owner_login_enabled"] is True
+        assert "owner_email" not in cfg
+        assert cfg["open_auth"] is False
+
+        bad = client.post(
+            "/api/auth/password",
+            json={"email": "owner@example.com", "password": "wrong"},
+        )
+        assert bad.status_code == 401
+
+        # Different-length email must not 500
+        bad2 = client.post(
+            "/api/auth/password",
+            json={"email": "x@y.z", "password": "owner-secret-pass"},
+        )
+        assert bad2.status_code in (401, 403)
+
+        r = client.post(
+            "/api/auth/password",
+            json={"email": "OWNER@example.com", "password": "owner-secret-pass"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["is_demo"] is False
+        me = client.get("/api/auth/me").json()
+        assert me["is_demo"] is False
+        assert me["email"] == "owner@example.com"
+
+
+def test_demo_never_calls_google_build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Even with a real SPREADSHEET_ID, demo must not open SA repository."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("AUTH_MODE", "dev")
+    monkeypatch.setenv("ALLOW_OPEN_AUTH", "false")
+    monkeypatch.setenv("SECRET_KEY", "prod-demo-sa-secret12")
+    monkeypatch.setenv("SPREADSHEET_ID", "should-not-open")
+    monkeypatch.setenv("REPO_BACKEND", "")  # not forced memory via REPO_BACKEND
+    monkeypatch.setenv("MULTI_TENANT", "false")
+    monkeypatch.setenv("DEMO_LOGIN_ENABLED", "true")
+    monkeypatch.setenv("DEMO_EMAIL", "demo@gauntlet.local")
+    monkeypatch.setenv("DEMO_PASSWORD", "demo")
+    monkeypatch.setenv("DEBUG", "false")
+    # APP_ENV=production alone would use Google unless is_demo short-circuits
+    get_settings.cache_clear()
+    clear_repo_cache()
+    clear_tenant_memory_repos()
+
+    calls: list[str] = []
+
+    def boom(*_a, **_k):
+        calls.append("build")
+        raise AssertionError("build_repository_from_settings must not run for demo")
+
+    monkeypatch.setattr(
+        "backend.api.deps.build_repository_from_settings",
+        boom,
+    )
+    # production + no REPO_BACKEND=memory + test app_env is production
+    # _use_memory_repo still true for app_env=test only; here production so would use SA
+    # unless is_demo path wins.
+    with _client() as client:
+        r = client.post(
+            "/api/auth/password",
+            json={"email": "demo@gauntlet.local", "password": "demo"},
+        )
+        assert r.status_code == 200, r.text
+        # Force repository resolution
+        assert client.get("/api/transactions").status_code == 200
+    assert calls == []
+
+
+def test_password_rate_limit_429(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from backend.services.demo_auth import (
+        _MAX_ATTEMPTS,
+        clear_password_rate_limits_for_tests,
+    )
+
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("AUTH_MODE", "oauth")
+    monkeypatch.setenv("SECRET_KEY", "rate-limit-secret-key")
+    monkeypatch.setenv("SPREADSHEET_ID", "")
+    monkeypatch.setenv("REPO_BACKEND", "memory")
+    monkeypatch.setenv("MULTI_TENANT", "true")
+    monkeypatch.setenv("MULTI_TENANT_MEMORY_SHEETS", "true")
+    monkeypatch.setenv("CONTROL_DB_PATH", str(tmp_path / "rl.db"))
+    monkeypatch.setenv("DEMO_LOGIN_ENABLED", "true")
+    monkeypatch.setenv("DEMO_EMAIL", "demo@gauntlet.local")
+    monkeypatch.setenv("DEMO_PASSWORD", "demo")
+    get_settings.cache_clear()
+    reset_control_store_for_tests()
+    clear_password_rate_limits_for_tests()
+    with _client() as client:
+        for _ in range(_MAX_ATTEMPTS):
+            r = client.post(
+                "/api/auth/password",
+                json={"email": "demo@gauntlet.local", "password": "wrong"},
+            )
+            assert r.status_code == 401
+        blocked = client.post(
+            "/api/auth/password",
+            json={"email": "demo@gauntlet.local", "password": "demo"},
+        )
+        assert blocked.status_code == 429, blocked.text
+    clear_password_rate_limits_for_tests()
+
+
+def test_local_dev_forbidden_when_open_auth_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("AUTH_MODE", "dev")
+    monkeypatch.setenv("ALLOW_OPEN_AUTH", "false")
+    monkeypatch.setenv("SECRET_KEY", "prod-localdev-secret12")
+    monkeypatch.setenv("DEBUG", "false")
+    monkeypatch.setenv("SPREADSHEET_ID", "")
+    monkeypatch.setenv("REPO_BACKEND", "memory")
+    get_settings.cache_clear()
+    with _client() as client:
+        r = client.post("/api/auth/local-dev")
+        assert r.status_code == 403, r.text

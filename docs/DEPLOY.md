@@ -69,7 +69,7 @@ Or use wizard step **Deploy → Generate env vars**.
 | `ALLOW_OPEN_AUTH` | `true` only with `AUTH_MODE=dev` on a private/trusted host. Omit (or `false`) with `oauth` |
 | `REQUIRE_SHEETS` | `true` |
 
-**Auth note:** Production refuses open API access when `AUTH_MODE` is `dev` or `disabled` unless `ALLOW_OPEN_AUTH=true`. Without that flag the API returns **503** on authenticated routes.
+**Auth note:** Production refuses open API access when `AUTH_MODE` is `dev` or `disabled` unless `ALLOW_OPEN_AUTH=true`. Without that flag unauthenticated domain routes return **401** (login required). Prefer owner/demo password or `AUTH_MODE=oauth` on public domains — never leave `ALLOW_OPEN_AUTH=true` on a shared URL.
 
 ## 4. Render (alternative)
 

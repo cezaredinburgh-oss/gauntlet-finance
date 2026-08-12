@@ -52,7 +52,6 @@ type PublicConfig = {
   demo_login_enabled: boolean;
   demo_email: string | null;
   owner_login_enabled?: boolean;
-  owner_email?: string | null;
   google_login_available: boolean;
   open_auth?: boolean;
 };
@@ -99,9 +98,8 @@ export function LandingPage() {
           setPublicCfg(cfg);
           if (cfg.demo_login_enabled && cfg.demo_email) {
             setEmail(cfg.demo_email);
-          } else if (cfg.owner_login_enabled && cfg.owner_email) {
-            setEmail(cfg.owner_email);
           }
+          // Owner email is not exposed publicly — user types their own.
         }
       } catch {
         if (!cancelled) {
@@ -323,8 +321,8 @@ export function LandingPage() {
                 )}
                 {ownerOn && (
                   <li>
-                    <strong className="text-ink-muted">Owner:</strong> your private credentials
-                    — full real data (do not share).
+                    <strong className="text-ink-muted">Owner:</strong> your private email +
+                    password from the host env — full real data (do not share).
                   </li>
                 )}
               </ul>

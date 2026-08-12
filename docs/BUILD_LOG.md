@@ -4,6 +4,14 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Auth review remediations (post-lockdown)
+
+- Safe email equality (no `compare_digest` length 500s); password still constant-time.
+- `POST /auth/local-dev` → **403** unless `open_auth_permitted`.
+- `public-config` no longer exposes `owner_email`.
+- Tests: owner login, demo never SA, rate-limit 429, production `open_auth:false`.
+- Docs/boot log: closed open-auth is **401**, not 503.
+
 ## 2026-08-12 — Landing page + demo password login + admin invites
 
 - Public SPA `/login` landing (USPs + Google + optional demo password form).
@@ -155,7 +163,7 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ## 2026-08-11 — PR1 security: production auth gate + SPA path + deploy-env redaction
 
-- Production + `AUTH_MODE=dev|disabled` without `ALLOW_OPEN_AUTH=true` → API returns **503** (no open access). Tests/dev (`APP_ENV=test|development`) unchanged.
+- Production + `AUTH_MODE=dev|disabled` without `ALLOW_OPEN_AUTH=true` → unauthenticated routes return **401** (login required). Tests/dev (`APP_ENV=test|development`) still allow open synthetic user.
 - Setup wizard: blocked in production when sheet already configured unless `ALLOW_SETUP_WIZARD`; optional `SETUP_TOKEN` / `X-Setup-Token` on write endpoints.
 - `GET /setup/api/deploy-env` never returns SA private key (placeholder only + `has_service_account`); template uses `AUTH_MODE=dev` + `ALLOW_OPEN_AUTH=true` for trusted single-user (document prefer oauth).
 - SPA fallback path sandbox (`_safe_dist_file`); production CORS never falls back to `*`.

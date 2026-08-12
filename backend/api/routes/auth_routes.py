@@ -201,13 +201,9 @@ async def public_auth_config(settings: SettingsDep) -> dict:
             if settings.demo_login_enabled
             else None
         ),
+        # Do not expose owner_email publicly (reduces targeted guessing).
         "owner_login_enabled": bool(
             (settings.owner_email or "").strip() and (settings.owner_password or "").strip()
-        ),
-        "owner_email": (
-            (settings.owner_email or "").strip().lower()
-            if (settings.owner_email or "").strip() and (settings.owner_password or "").strip()
-            else None
         ),
         "google_login_available": (
             settings.auth_mode == "oauth"
@@ -237,11 +233,21 @@ async def logout(settings: SettingsDep) -> JSONResponse:
 async def resume_local_dev(settings: SettingsDep) -> JSONResponse:
     """
     Exit guest mode under open auth (dev/disabled) so synthetic local user returns.
+
+    Refused when open auth is not permitted (public production lockdown).
     """
     if settings.auth_mode not in {"dev", "disabled"}:
         raise HTTPException(
             status_code=400,
             detail="Local dev resume only applies when AUTH_MODE is dev or disabled.",
+        )
+    if not settings.open_auth_permitted:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Open local-dev access is disabled on this host. "
+                "Use owner or demo password login (or OAuth)."
+            ),
         )
     resp = JSONResponse({"status": "ok", "auth_mode": settings.auth_mode})
     clear_guest_cookie(resp, settings)

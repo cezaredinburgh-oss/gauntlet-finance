@@ -97,11 +97,21 @@ async def lifespan(app: FastAPI):
         and settings.auth_mode in {"dev", "disabled"}
         and not settings.allow_open_auth
     ):
-        logger.critical(
+        logger.info(
             "Production with AUTH_MODE=%s and ALLOW_OPEN_AUTH=false: "
-            "API will refuse open access (503). Set AUTH_MODE=oauth or "
-            "ALLOW_OPEN_AUTH=true for trusted single-user deploys only.",
+            "unauthenticated API calls return 401 (login required). "
+            "Use owner/demo password or AUTH_MODE=oauth. "
+            "Do not set APP_ENV=development on a public host.",
             settings.auth_mode,
+        )
+    if (
+        settings.is_production
+        and settings.auth_mode in {"dev", "disabled"}
+        and settings.allow_open_auth
+    ):
+        logger.critical(
+            "Production ALLOW_OPEN_AUTH=true: the full ledger is reachable without login. "
+            "Only use this on a private/trusted URL."
         )
     logger.info(
         "Starting %s (auth_mode=%s, spreadsheet=%s, multi_tenant=%s)",

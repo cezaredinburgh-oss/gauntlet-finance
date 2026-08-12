@@ -44,6 +44,12 @@ def check_password_rate_limit(email: str, client_ip: str) -> None:
         _ATTEMPTS[key] = window
 
 
+def clear_password_rate_limits_for_tests() -> None:
+    """Reset in-process rate-limit state (tests only)."""
+    with _RATE_LOCK:
+        _ATTEMPTS.clear()
+
+
 def ensure_demo_tenant(settings: Settings) -> SessionUser:
     """
     Ensure demo control-plane user + isolated memory spreadsheet binding.
@@ -98,13 +104,25 @@ def ensure_demo_tenant(settings: Settings) -> SessionUser:
     )
 
 
-def _password_ok(got: str, expected: str) -> bool:
+def _secret_ok(got: str, expected: str) -> bool:
+    """Constant-time compare for secrets; never raises on length mismatch."""
     if not expected:
         return False
-    if len(got) != len(expected):
+    g = got or ""
+    if len(g) != len(expected):
         secrets.compare_digest(expected, expected)
         return False
-    return secrets.compare_digest(got, expected)
+    return secrets.compare_digest(g, expected)
+
+
+def _email_eq(got: str, expected: str) -> bool:
+    """
+    Case-normalized email equality.
+
+    Not constant-time (emails are not secrets); avoids compare_digest ValueError
+    when lengths differ.
+    """
+    return normalize_email(got) == normalize_email(expected)
 
 
 def authenticate_password_login(
@@ -123,11 +141,16 @@ def authenticate_password_login(
     got_email = normalize_email(email)
     pw = password or ""
 
-    # --- Owner: real Google Sheet (single-tenant) ---
+    # --- Owner: real Google Sheet (single-tenant only) ---
     owner_email = normalize_email(settings.owner_email)
     owner_pw = (settings.owner_password or "").strip()
-    if owner_email and owner_pw and secrets.compare_digest(got_email, owner_email):
-        if _password_ok(pw, owner_pw):
+    if owner_email and owner_pw and _email_eq(got_email, owner_email):
+        if settings.multi_tenant:
+            raise DemoAuthError(
+                "Owner password login is not available in multi-tenant mode.",
+                status_code=403,
+            )
+        if _secret_ok(pw, owner_pw):
             return SessionUser(
                 email=owner_email,
                 name="Owner",
@@ -156,9 +179,7 @@ def authenticate_password_login(
         )
 
     expected_email = normalize_email(settings.demo_email) or "demo@gauntlet.local"
-    if not secrets.compare_digest(got_email, expected_email) or not _password_ok(
-        pw, expected_pw
-    ):
+    if not _email_eq(got_email, expected_email) or not _secret_ok(pw, expected_pw):
         raise DemoAuthError("Invalid email or password.")
 
     if settings.multi_tenant:

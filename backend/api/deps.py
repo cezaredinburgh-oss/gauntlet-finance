@@ -26,31 +26,6 @@ def settings_dep() -> Settings:
 
 SettingsDep = Annotated[Settings, Depends(settings_dep)]
 
-_OPEN_AUTH_BLOCKED_DETAIL = (
-    "Open authentication is not allowed in production. "
-    "Set AUTH_MODE=oauth, or set ALLOW_OPEN_AUTH=true only for "
-    "trusted single-user deploys."
-)
-
-_MT_OPEN_AUTH_DETAIL = (
-    "Multi-tenant production requires AUTH_MODE=oauth. "
-    "Open authentication is disabled."
-)
-
-
-def _reject_unpermitted_open_auth(settings: Settings) -> None:
-    """Block AUTH_MODE=dev/disabled when open auth is not permitted."""
-    if settings.auth_mode in {"dev", "disabled"} and not settings.open_auth_permitted:
-        detail = (
-            _MT_OPEN_AUTH_DETAIL
-            if settings.multi_tenant and settings.is_production
-            else _OPEN_AUTH_BLOCKED_DETAIL
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=detail,
-        )
-
 
 def _session_token_from_request(
     request: Request,
