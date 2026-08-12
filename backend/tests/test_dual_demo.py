@@ -245,3 +245,38 @@ def test_tour_never_builds_google(dual_demo_env, monkeypatch: pytest.MonkeyPatch
         assert client.post("/api/auth/demo/tour").status_code == 200
         assert client.get("/api/transactions").status_code == 200
     assert calls == []
+
+
+def test_demos_have_no_personal_residue(dual_demo_env):
+    from backend.schema.demo_public import ledger_contains_personal_residue
+
+    with _client() as client:
+        assert client.post("/api/auth/demo/sandbox").status_code == 200
+        rules = client.get("/api/category-rules")
+        cats = client.get("/api/categories")
+        blob = (rules.text if rules.status_code == 200 else "") + cats.text
+        assert "BIERNAT" not in blob.upper()
+        assert "2489943002" not in blob
+        assert "Motorcycling" not in blob
+        assert "My business" not in blob
+        assert "filament" not in blob.lower()
+
+        # bootstrap blocked
+        boot = client.post("/api/categories/bootstrap-rules", json={"also_apply": False})
+        assert boot.status_code == 403
+
+        client.post("/api/auth/logout")
+        assert client.post("/api/auth/demo/tour").status_code == 200
+        txs = client.get("/api/transactions")
+        assert txs.status_code == 200
+        assert "BIERNAT" not in txs.text.upper()
+        assert "2489943002" not in txs.text
+        assert "Bad Jeffs" not in txs.text
+        assert "Demo Cafe" in txs.text or "Spotify" in txs.text
+
+        # memory ledger helper
+        from backend.api.deps import get_memory_repo_for_tenant
+        from backend.services.demo_sessions import TOUR_SHEET_ID, demo_memory_key
+
+        repo = get_memory_repo_for_tenant(demo_memory_key(TOUR_SHEET_ID))
+        assert ledger_contains_personal_residue(repo) == []

@@ -184,8 +184,15 @@ async def delete_category(
 
 
 @router.post("/categories/ensure-defaults")
-async def ensure_defaults(repo: RepoDep, _user: UserDep) -> dict[str, Any]:
+async def ensure_defaults(repo: RepoDep, user: UserDep) -> dict[str, Any]:
     """Ensure default categories + seed rules; fill blanks so new rules apply."""
+    if user.is_demo:
+        # Public demos: generic tree + Digital Assets only (no personal name rules).
+        from backend.schema.demo_public import ensure_public_demo_categories
+
+        cat_stats = ensure_public_demo_categories(repo)
+        fill = apply_rules_fill_blanks(repo)
+        return {**cat_stats, "fill_blanks": fill, "public_demo": True}
     cat_stats = ensure_default_categories(repo)
     fill = apply_rules_fill_blanks(repo)
     return {**cat_stats, "fill_blanks": fill}
@@ -244,9 +251,17 @@ async def post_merchant_queue_apply(
 @router.post("/categories/bootstrap-rules")
 async def bootstrap_rules(
     repo: RepoDep,
-    _user: UserDep,
+    user: UserDep,
     body: BootstrapBody | None = None,
 ) -> dict[str, Any]:
+    if user.is_demo:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Bootstrap rules are disabled in public demos "
+                "(owner keyword pack is personal). Use a real account."
+            ),
+        )
     also = True if body is None else body.also_apply
     return bootstrap_rules_from_data(repo, also_apply=also)
 

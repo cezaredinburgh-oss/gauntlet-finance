@@ -217,3 +217,21 @@ DEFAULT_CATEGORIES: list[Category] = [
 
 # name lower -> id for bootstrap mapping
 DEFAULT_CATEGORY_BY_NAME: dict[str, UUID] = {c.name.lower(): c.id for c in DEFAULT_CATEGORIES}
+
+# Re-export for callers that need lifestyle ids (public demos exclude these).
+OWNER_LIFESTYLE_CATEGORY_IDS: frozenset[UUID] = frozenset(
+    {
+        CAT_MOTORCYCLING,
+        CAT_MOTO_FUEL,
+        CAT_MOTO_GEAR,
+        CAT_MOTO_SERVICE,
+        CAT_MOTO_INSURANCE,
+        CAT_MOTO_OTHER,
+        CAT_BUSINESS,
+        CAT_BIZ_MATERIALS,
+        CAT_BIZ_TOOLS,
+        CAT_BIZ_SHIPPING,
+        CAT_BIZ_OTHER,
+        CAT_BIZ_INCOME,
+    }
+)

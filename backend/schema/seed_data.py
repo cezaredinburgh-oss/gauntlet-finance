@@ -113,7 +113,8 @@ SEED_ACCOUNTS: list[Account] = [
         institution=Institution.RAIFFEISEN,
         account_type=AccountType.CHECKING,
         currency="CZK",
-        account_number_mask="2489943002/5500",
+        # Synthetic mask only — never ship real account numbers in seed/demo.
+        account_number_mask="****0001/5500",
         is_active=True,
         created_at=SEED_TS,
         updated_at=SEED_TS,

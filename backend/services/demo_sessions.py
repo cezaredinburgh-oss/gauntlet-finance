@@ -90,11 +90,11 @@ def ensure_tour_seeded() -> None:
         if _TOUR_SEEDED:
             return
         from backend.api.deps import get_memory_repo_for_tenant
-        from backend.scripts.seed_dev_repo import seed_full_demo
+        from backend.schema.demo_public import seed_public_tour
 
         repo = get_memory_repo_for_tenant(demo_memory_key(TOUR_SHEET_ID))
         try:
-            seed_full_demo(repo)
+            seed_public_tour(repo)
         except Exception:
             logger.exception("tour seed failed")
             raise
@@ -123,13 +123,14 @@ def enter_sandbox(settings: Settings, *, client_ip: str = "") -> SessionUser:
         _ACTIVE_SANDBOXES[sid] = time.monotonic()
 
     from backend.api.deps import get_memory_repo_for_tenant
-    from backend.services.categorization import ensure_default_categories
+    from backend.schema.demo_public import ensure_public_demo_categories
 
     repo = get_memory_repo_for_tenant(demo_memory_key(sid))
     try:
-        ensure_default_categories(repo)
+        # Public pack only — never owner self-education / name rules.
+        ensure_public_demo_categories(repo)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("sandbox ensure_default_categories: %s", exc)
+        logger.warning("sandbox ensure_public_demo_categories: %s", exc)
 
     return SessionUser(
         email=SANDBOX_EMAIL,

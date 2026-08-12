@@ -4,6 +4,15 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Public demo data hygiene (no personal residue)
+
+- Sandbox / tour no longer call owner `ensure_default_categories` (which seeded **`CEZARY BIERNAT`** self-education rule).
+- New `backend/schema/demo_public.py`: generic category pack (no Motorcycling / My business), synthetic accounts (`****0001/5500`), synthetic tour txs/lots, Digital Assets rule only.
+- Tour seed = `seed_public_tour`; import empty-ledger bootstrap uses `seed_minimal(public_demo=True)`.
+- `POST /categories/bootstrap-rules` **403** for `is_demo` (owner keyword pack is personal).
+- `POST /categories/ensure-defaults` on demo → public pack only.
+- Regression: `test_demos_have_no_personal_residue`.
+
 ## 2026-08-12 — Dual public demos (sandbox + tour)
 
 - Replace shared password demo as primary path with **two one-click entries**:

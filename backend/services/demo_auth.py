@@ -83,11 +83,11 @@ def ensure_demo_tenant(settings: Settings) -> SessionUser:
                     user.id, f"mem-demo-{user.id}-v2", only_if_empty=False
                 )
         from backend.api.deps import get_memory_repo_for_tenant
-        from backend.services.categorization import ensure_default_categories
+        from backend.schema.demo_public import ensure_public_demo_categories
 
         repo = get_memory_repo_for_tenant(user.spreadsheet_id or sheet_id)
         try:
-            ensure_default_categories(repo)
+            ensure_public_demo_categories(repo)
         except Exception:  # noqa: BLE001
             pass
     return SessionUser(

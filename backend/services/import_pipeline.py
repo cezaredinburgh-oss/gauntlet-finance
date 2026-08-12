@@ -223,11 +223,12 @@ class ImportPipeline:
             if isinstance(a, Account)
         ]
         if not accounts:
-            # Persist seed accounts so later uploads share stable account_ids
+            # Persist seed accounts so later uploads share stable account_ids.
+            # Always use public-safe accounts (synthetic masks) — never personal.
             try:
                 from backend.scripts.seed_dev_repo import seed_minimal
 
-                seed_minimal(self.repo)
+                seed_minimal(self.repo, public_demo=True)
                 accounts = [
                     a
                     for a in self.repo.list_rows("Accounts")
