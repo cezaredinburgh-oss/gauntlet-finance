@@ -283,7 +283,15 @@ def test_demos_have_no_personal_residue(dual_demo_env):
 
         # memory ledger helper
         from backend.api.deps import get_memory_repo_for_tenant
+        from backend.schema.models import InvestmentLot
         from backend.services.demo_sessions import TOUR_SHEET_ID, demo_memory_key
 
         repo = get_memory_repo_for_tenant(demo_memory_key(TOUR_SHEET_ID))
         assert ledger_contains_personal_residue(repo) == []
+        lot_tickers = {
+            r.ticker.upper()
+            for r in repo.list_rows("InvestmentLots")
+            if isinstance(r, InvestmentLot)
+        }
+        assert "DEMO" not in lot_tickers and "SAMPLE" not in lot_tickers
+        assert {"AAPL", "MSFT", "ETH", "VTI"}.issubset(lot_tickers)

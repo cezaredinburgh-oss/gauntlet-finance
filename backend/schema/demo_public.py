@@ -83,11 +83,11 @@ def public_demo_categories() -> list[Category]:
     return [c for c in DEFAULT_CATEGORIES if c.id not in OWNER_LIFESTYLE_CATEGORY_IDS]
 
 
-# Synthetic institution accounts (no real masks / personal data)
+# Real institution display names (synthetic account masks only — no personal numbers)
 DEMO_ACCOUNTS: list[Account] = [
     Account(
         id=ACC_RB,
-        name="Demo Bank CZK",
+        name="Raiffeisen CZK",
         institution=Institution.RAIFFEISEN,
         account_type=AccountType.CHECKING,
         currency="CZK",
@@ -98,7 +98,7 @@ DEMO_ACCOUNTS: list[Account] = [
     ),
     Account(
         id=ACC_REV_CZK,
-        name="Demo Wallet CZK",
+        name="Revolut CZK",
         institution=Institution.REVOLUT,
         account_type=AccountType.CHECKING,
         currency="CZK",
@@ -108,7 +108,7 @@ DEMO_ACCOUNTS: list[Account] = [
     ),
     Account(
         id=ACC_REV_USD,
-        name="Demo Wallet USD",
+        name="Revolut USD",
         institution=Institution.REVOLUT,
         account_type=AccountType.CHECKING,
         currency="USD",
@@ -118,7 +118,7 @@ DEMO_ACCOUNTS: list[Account] = [
     ),
     Account(
         id=ACC_REV_STOCKS,
-        name="Demo Stocks",
+        name="Revolut Stocks",
         institution=Institution.REVOLUT,
         account_type=AccountType.INVESTMENT,
         currency="USD",
@@ -128,7 +128,7 @@ DEMO_ACCOUNTS: list[Account] = [
     ),
     Account(
         id=ACC_REV_CRYPTO,
-        name="Demo Crypto",
+        name="Revolut Crypto",
         institution=Institution.REVOLUT,
         account_type=AccountType.CRYPTO,
         currency="USD",
@@ -138,7 +138,7 @@ DEMO_ACCOUNTS: list[Account] = [
     ),
     Account(
         id=ACC_ETORO,
-        name="Demo Broker",
+        name="eToro",
         institution=Institution.ETORO,
         account_type=AccountType.INVESTMENT,
         currency="USD",
@@ -315,7 +315,7 @@ def _build_tour_transactions() -> list[Transaction]:
         rows.append(_tx(n, **kwargs))  # type: ignore[arg-type]
         n += 1
 
-    # --- Monthly salary + rent (Demo Bank / Raiffeisen) Mar–Aug 2026 ---
+    # --- Monthly salary + rent (Raiffeisen checking) Mar–Aug 2026 ---
     for month in range(3, 9):
         add(
             account_id=ACC_RB,
@@ -525,7 +525,7 @@ def _build_tour_transactions() -> list[Transaction]:
         (4, 15, "-1290", "Demo Apparel", CAT_CLOTHING, ACC_RB, Institution.RAIFFEISEN),
         (5, 12, "-890", "Demo Pharmacy", CAT_PHARMACY, ACC_REV_CZK, Institution.REVOLUT),
         (6, 3, "-3200", "Demo Store", CAT_SHOP_GENERAL, ACC_RB, Institution.RAIFFEISEN),
-        (7, 15, "-4500", "ATM Demo Bank", CAT_CASH_WITHDRAWAL, ACC_RB, Institution.RAIFFEISEN),
+        (7, 15, "-4500", "ATM Raiffeisen", CAT_CASH_WITHDRAWAL, ACC_RB, Institution.RAIFFEISEN),
         (8, 4, "-1590", "Demo Apparel", CAT_CLOTHING, ACC_REV_CZK, Institution.REVOLUT),
         (4, 28, "-80", "Bank fee", CAT_BANK_FEES, ACC_RB, Institution.RAIFFEISEN),
         (7, 1, "-80", "Bank fee", CAT_BANK_FEES, ACC_RB, Institution.RAIFFEISEN),
@@ -597,7 +597,7 @@ def _build_tour_transactions() -> list[Transaction]:
         category_id=CAT_INTERNAL,
         is_internal=True,
         transfer_group_id=XFER_GROUP_REV_RB,
-        counterparty_name="Demo Wallet",
+        counterparty_name="Revolut",
         source_file_id=f_rb,
         original_file_hash=h_rb,
     )
@@ -640,7 +640,7 @@ def _build_tour_transactions() -> list[Transaction]:
         amount="-500.00",
         currency="USD",
         institution=Institution.REVOLUT,
-        description="Transfer to Demo Broker",
+        description="Transfer to eToro",
         category_id=CAT_BROKER,
         source_file_id=f_stk,
         original_file_hash=h_stk,
@@ -651,7 +651,7 @@ def _build_tour_transactions() -> list[Transaction]:
         amount="500.00",
         currency="USD",
         institution=Institution.ETORO,
-        description="Deposit",
+        description="eToro deposit",
         category_id=CAT_BROKER,
         is_internal=True,
         source_file_id=f_stk,
@@ -685,7 +685,7 @@ FILE_STK = _file_id(3)
 DEMO_STATEMENT_FILES: list[StatementFile] = [
     StatementFile(
         id=FILE_RB,
-        original_filename="demo_bank_checking_2026.csv",
+        original_filename="raiffeisen_checking_2026.csv",
         uploaded_at=_TS,
         content_sha256=_hash(1),
         institution=Institution.RAIFFEISEN.value,
@@ -698,7 +698,7 @@ DEMO_STATEMENT_FILES: list[StatementFile] = [
     ),
     StatementFile(
         id=FILE_REV,
-        original_filename="demo_wallet_expenses_2026.csv",
+        original_filename="revolut_checking_expenses_2026.csv",
         uploaded_at=_TS,
         content_sha256=_hash(2),
         institution=Institution.REVOLUT.value,
@@ -711,7 +711,7 @@ DEMO_STATEMENT_FILES: list[StatementFile] = [
     ),
     StatementFile(
         id=FILE_STK,
-        original_filename="demo_broker_activity_2026.csv",
+        original_filename="etoro_activity_2026.csv",
         uploaded_at=_TS,
         content_sha256=_hash(3),
         institution=Institution.ETORO.value,
@@ -725,50 +725,53 @@ DEMO_STATEMENT_FILES: list[StatementFile] = [
 ]
 
 
-LOT_DEMO = _lot_id(1)
-LOT_SAMPLE = _lot_id(2)
+# Real Yahoo/yfinance-friendly tickers (crypto ETH → ETH-USD via PriceService).
+LOT_AAPL = _lot_id(1)
+LOT_MSFT = _lot_id(2)
 LOT_ETH = _lot_id(3)
-LOT_INDEX = _lot_id(4)
-EVT_BUY_DEMO = _evt_id(1)
-EVT_BUY_SAMPLE = _evt_id(2)
+LOT_VTI = _lot_id(4)
+EVT_BUY_AAPL = _evt_id(1)
+EVT_BUY_MSFT = _evt_id(2)
 EVT_BUY_ETH = _evt_id(3)
-EVT_BUY_INDEX = _evt_id(4)
-EVT_SELL_PARTIAL = _evt_id(5)
+EVT_BUY_VTI = _evt_id(4)
+EVT_SELL_MSFT = _evt_id(5)
+
+_FAKE_TICKERS = frozenset({"DEMO", "SAMPLE"})
 
 DEMO_TOUR_LOTS: list[InvestmentLot] = [
     InvestmentLot(
-        id=LOT_DEMO,
+        id=LOT_AAPL,
         account_id=ACC_REV_STOCKS,
-        ticker="DEMO",
+        ticker="AAPL",
         asset_class=AssetClass.STOCK,
         source=Institution.REVOLUT.value,
         acquisition_date=date(2024, 1, 15),
         quantity_opened=Decimal("10"),
         quantity_remaining=Decimal("10"),
-        cost_basis_native=Decimal("1000.00"),
-        cost_basis_czk=Decimal("23100.00"),
-        cost_basis_usd=Decimal("1000.00"),
+        cost_basis_native=Decimal("1850.00"),
+        cost_basis_czk=Decimal("42735.00"),
+        cost_basis_usd=Decimal("1850.00"),
         native_currency="USD",
-        open_event_id=EVT_BUY_DEMO,
+        open_event_id=EVT_BUY_AAPL,
         status=LotStatus.OPEN,
-        notes="demo synthetic lot",
+        notes="demo synthetic lot — live quotes via yfinance",
         created_at=_TS,
         updated_at=_TS,
     ),
     InvestmentLot(
-        id=LOT_SAMPLE,
+        id=LOT_MSFT,
         account_id=ACC_ETORO,
-        ticker="SAMPLE",
+        ticker="MSFT",
         asset_class=AssetClass.STOCK,
         source=Institution.ETORO.value,
         acquisition_date=date(2025, 3, 1),
-        quantity_opened=Decimal("20"),
-        quantity_remaining=Decimal("15"),
-        cost_basis_native=Decimal("1500.00"),
-        cost_basis_czk=Decimal("34650.00"),
-        cost_basis_usd=Decimal("1500.00"),
+        quantity_opened=Decimal("8"),
+        quantity_remaining=Decimal("6"),
+        cost_basis_native=Decimal("2520.00"),
+        cost_basis_czk=Decimal("58212.00"),
+        cost_basis_usd=Decimal("2520.00"),
         native_currency="USD",
-        open_event_id=EVT_BUY_SAMPLE,
+        open_event_id=EVT_BUY_MSFT,
         status=LotStatus.OPEN,
         notes="demo synthetic — partial sell applied",
         created_at=_TS,
@@ -789,12 +792,12 @@ DEMO_TOUR_LOTS: list[InvestmentLot] = [
         native_currency="USD",
         open_event_id=EVT_BUY_ETH,
         status=LotStatus.OPEN,
-        notes="demo synthetic crypto lot",
+        notes="demo synthetic crypto lot (Yahoo ETH-USD)",
         created_at=_TS,
         updated_at=_TS,
     ),
     InvestmentLot(
-        id=LOT_INDEX,
+        id=LOT_VTI,
         account_id=ACC_ETORO,
         ticker="VTI",
         asset_class=AssetClass.ETF,
@@ -802,11 +805,11 @@ DEMO_TOUR_LOTS: list[InvestmentLot] = [
         acquisition_date=date(2026, 4, 2),
         quantity_opened=Decimal("4"),
         quantity_remaining=Decimal("4"),
-        cost_basis_native=Decimal("800.00"),
-        cost_basis_czk=Decimal("18480.00"),
-        cost_basis_usd=Decimal("800.00"),
+        cost_basis_native=Decimal("1000.00"),
+        cost_basis_czk=Decimal("23100.00"),
+        cost_basis_usd=Decimal("1000.00"),
         native_currency="USD",
-        open_event_id=EVT_BUY_INDEX,
+        open_event_id=EVT_BUY_VTI,
         status=LotStatus.OPEN,
         notes="demo synthetic ETF lot",
         created_at=_TS,
@@ -816,67 +819,67 @@ DEMO_TOUR_LOTS: list[InvestmentLot] = [
 
 DEMO_TOUR_EVENTS: list[InvestmentEvent] = [
     InvestmentEvent(
-        id=EVT_BUY_DEMO,
+        id=EVT_BUY_AAPL,
         account_id=ACC_REV_STOCKS,
         event_type=InvestmentEventType.BUY,
         event_date=date(2024, 1, 15),
-        ticker="DEMO",
+        ticker="AAPL",
         asset_class=AssetClass.STOCK,
         side=TradeSide.BUY,
         quantity=Decimal("10"),
-        price_native=Decimal("100.00"),
+        price_native=Decimal("185.00"),
         native_currency="USD",
-        value_native=Decimal("1000.00"),
-        value_usd=Decimal("1000.00"),
-        value_czk=Decimal("23100.00"),
-        lot_id=LOT_DEMO,
+        value_native=Decimal("1850.00"),
+        value_usd=Decimal("1850.00"),
+        value_czk=Decimal("42735.00"),
+        lot_id=LOT_AAPL,
         source=Institution.REVOLUT.value,
         external_id="demo-evt-0001",
-        description="Buy DEMO",
+        description="Buy AAPL",
         created_at=_TS,
         updated_at=_TS,
     ),
     InvestmentEvent(
-        id=EVT_BUY_SAMPLE,
+        id=EVT_BUY_MSFT,
         account_id=ACC_ETORO,
         event_type=InvestmentEventType.BUY,
         event_date=date(2025, 3, 1),
-        ticker="SAMPLE",
+        ticker="MSFT",
         asset_class=AssetClass.STOCK,
         side=TradeSide.BUY,
-        quantity=Decimal("20"),
-        price_native=Decimal("100.00"),
+        quantity=Decimal("8"),
+        price_native=Decimal("420.00"),
         native_currency="USD",
-        value_native=Decimal("2000.00"),
-        value_usd=Decimal("2000.00"),
-        value_czk=Decimal("46200.00"),
-        lot_id=LOT_SAMPLE,
+        value_native=Decimal("3360.00"),
+        value_usd=Decimal("3360.00"),
+        value_czk=Decimal("77616.00"),
+        lot_id=LOT_MSFT,
         source=Institution.ETORO.value,
         external_id="demo-evt-0002",
-        description="Buy SAMPLE",
+        description="Buy MSFT",
         created_at=_TS,
         updated_at=_TS,
     ),
     InvestmentEvent(
-        id=EVT_SELL_PARTIAL,
+        id=EVT_SELL_MSFT,
         account_id=ACC_ETORO,
         event_type=InvestmentEventType.SELL,
         event_date=date(2025, 11, 10),
-        ticker="SAMPLE",
+        ticker="MSFT",
         asset_class=AssetClass.STOCK,
         side=TradeSide.SELL,
-        quantity=Decimal("5"),
-        price_native=Decimal("120.00"),
+        quantity=Decimal("2"),
+        price_native=Decimal("430.00"),
         native_currency="USD",
-        value_native=Decimal("600.00"),
-        value_usd=Decimal("600.00"),
-        value_czk=Decimal("13860.00"),
-        lot_id=LOT_SAMPLE,
+        value_native=Decimal("860.00"),
+        value_usd=Decimal("860.00"),
+        value_czk=Decimal("19866.00"),
+        lot_id=LOT_MSFT,
         source=Institution.ETORO.value,
         external_id="demo-evt-0005",
-        description="Partial sell SAMPLE",
-        realized_gain_usd=Decimal("100.00"),
-        realized_gain_czk=Decimal("2310.00"),
+        description="Partial sell MSFT",
+        realized_gain_usd=Decimal("20.00"),
+        realized_gain_czk=Decimal("462.00"),
         holding_period_days=254,
         qualifies_3y_exemption=False,
         created_at=_TS,
@@ -904,7 +907,7 @@ DEMO_TOUR_EVENTS: list[InvestmentEvent] = [
         updated_at=_TS,
     ),
     InvestmentEvent(
-        id=EVT_BUY_INDEX,
+        id=EVT_BUY_VTI,
         account_id=ACC_ETORO,
         event_type=InvestmentEventType.BUY,
         event_date=date(2026, 4, 2),
@@ -912,12 +915,12 @@ DEMO_TOUR_EVENTS: list[InvestmentEvent] = [
         asset_class=AssetClass.ETF,
         side=TradeSide.BUY,
         quantity=Decimal("4"),
-        price_native=Decimal("200.00"),
+        price_native=Decimal("250.00"),
         native_currency="USD",
-        value_native=Decimal("800.00"),
-        value_usd=Decimal("800.00"),
-        value_czk=Decimal("18480.00"),
-        lot_id=LOT_INDEX,
+        value_native=Decimal("1000.00"),
+        value_usd=Decimal("1000.00"),
+        value_czk=Decimal("23100.00"),
+        lot_id=LOT_VTI,
         source=Institution.ETORO.value,
         external_id="demo-evt-0004",
         description="Buy VTI",
@@ -984,8 +987,18 @@ def ensure_public_demo_categories(repo: SheetsRepository) -> dict[str, int]:
 
 def seed_public_minimal(repo: SheetsRepository) -> None:
     """Accounts + public categories/rules/FX/settings for demos (no personal data)."""
-    if not repo.list_rows("Accounts"):
-        repo.upsert_rows("Accounts", DEMO_ACCOUNTS)
+    existing_acc = repo.list_rows("Accounts")
+    acc_names = {str(getattr(a, "name", "") or "") for a in existing_acc}
+    # Upgrade placeholder "Demo Bank/Wallet" names to real institution labels.
+    need_accounts = (
+        not existing_acc
+        or any(n.startswith("Demo ") for n in acc_names)
+        or "Raiffeisen CZK" not in acc_names
+        or "Revolut CZK" not in acc_names
+        or "eToro" not in acc_names
+    )
+    if need_accounts:
+        repo.replace_all_rows("Accounts", list(DEMO_ACCOUNTS))
     ensure_public_demo_categories(repo)
     existing_rules = repo.list_rows("CategoryRules")
     if not existing_rules:
@@ -1019,12 +1032,38 @@ def seed_public_tour(repo: SheetsRepository) -> None:
             repo.upsert_rows("StatementFiles", DEMO_STATEMENT_FILES)
         except Exception:  # noqa: BLE001
             pass
-    if DEMO_TOUR_LOTS and len(repo.list_rows("InvestmentLots")) < 3:
+    existing_lots = repo.list_rows("InvestmentLots")
+    lot_tickers = {
+        str(getattr(r, "ticker", "") or "").upper()
+        for r in existing_lots
+    }
+    need_lots = (
+        DEMO_TOUR_LOTS
+        and (
+            len(existing_lots) < 3
+            or bool(lot_tickers & _FAKE_TICKERS)
+            or not {"AAPL", "MSFT", "ETH", "VTI"}.issubset(lot_tickers)
+        )
+    )
+    if need_lots:
         try:
             repo.replace_all_rows("InvestmentLots", list(DEMO_TOUR_LOTS))
         except Exception:  # noqa: BLE001
             pass
-    if DEMO_TOUR_EVENTS and len(repo.list_rows("InvestmentEvents")) < 3:
+    existing_evts = repo.list_rows("InvestmentEvents")
+    evt_tickers = {
+        str(getattr(r, "ticker", "") or "").upper()
+        for r in existing_evts
+    }
+    need_evts = (
+        DEMO_TOUR_EVENTS
+        and (
+            len(existing_evts) < 3
+            or bool(evt_tickers & _FAKE_TICKERS)
+            or not {"AAPL", "MSFT", "ETH", "VTI"}.issubset(evt_tickers)
+        )
+    )
+    if need_evts:
         try:
             repo.replace_all_rows("InvestmentEvents", list(DEMO_TOUR_EVENTS))
         except Exception:  # noqa: BLE001
