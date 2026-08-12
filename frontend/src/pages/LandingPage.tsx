@@ -12,6 +12,7 @@ import { api, ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { Spinner } from "../components/Spinner";
 import { cn } from "../lib/cn";
+import { resetDemoOnboarding } from "../lib/onboarding";
 
 const USPS = [
   {
@@ -130,7 +131,8 @@ export function LandingPage() {
       try {
         if (kind === "tour") await enterTour();
         else await enterSandbox();
-        navigate("/", { replace: true });
+        resetDemoOnboarding(kind);
+        navigate("/onboarding", { replace: true });
       } catch (err) {
         const msg =
           err instanceof ApiError
@@ -226,210 +228,156 @@ export function LandingPage() {
           </div>
         </section>
 
-        <section className="card space-y-5 p-6 sm:p-8">
-          <div>
-            <h2 className="text-xl font-semibold tracking-tight">
-              {signedIn ? "You're signed in" : "Sign in"}
-            </h2>
-            <p className="mt-1 text-sm text-ink-muted">
-              {signedIn
-                ? "This is the public landing page. Open the app, or sign out to try demos or sign in again."
-                : publicCfg?.multi_tenant
-                  ? "Invite-only for Google accounts. Or explore a sample portfolio / try a sandbox."
-                  : "Explore a sample portfolio, try a sandbox with your statements, or sign in."}
-            </p>
-          </div>
+        <div className="space-y-4">
+          {/* —— Account sign-in (real users / owner) —— */}
+          <section className="card space-y-5 p-6 sm:p-8">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight">
+                {signedIn ? "You're signed in" : "Sign in to your account"}
+              </h2>
+              <p className="mt-1 text-sm text-ink-muted">
+                {signedIn
+                  ? "Open the app, or sign out to use another account or try a public demo."
+                  : publicCfg?.multi_tenant
+                    ? "Invite-only Google accounts and host-configured password logins."
+                    : "Use Google or your host email/password — this is your real ledger, not a demo."}
+              </p>
+            </div>
 
-          {signedIn && (
-            <div className="space-y-3 rounded-xl border border-brand/30 bg-brand/10 px-4 py-3 text-sm">
-              <div>
-                <div className="font-medium text-ink">{user?.name || "Signed in"}</div>
-                <div className="text-ink-muted">{user?.email}</div>
-                {user?.is_demo && (
-                  <div className="mt-1 text-xs text-amber-200">
-                    {user.demo_kind === "tour"
-                      ? "Sample portfolio (read-only)"
-                      : "Sandbox session"}
-                  </div>
-                )}
-                {openAuth && !user?.is_demo && (
-                  <div className="mt-1 text-xs text-amber-200">
-                    This host allows open access (auto sign-in). Turn off ALLOW_OPEN_AUTH on
-                    public domains.
-                  </div>
-                )}
+            {signedIn && (
+              <div className="space-y-3 rounded-xl border border-brand/30 bg-brand/10 px-4 py-3 text-sm">
+                <div>
+                  <div className="font-medium text-ink">{user?.name || "Signed in"}</div>
+                  <div className="text-ink-muted">{user?.email}</div>
+                  {user?.is_demo && (
+                    <div className="mt-1 text-xs text-amber-200">
+                      {user.demo_kind === "tour"
+                        ? "Sample portfolio (read-only demo)"
+                        : "Sandbox demo session"}
+                    </div>
+                  )}
+                  {openAuth && !user?.is_demo && (
+                    <div className="mt-1 text-xs text-amber-200">
+                      This host allows open access (auto sign-in). Turn off ALLOW_OPEN_AUTH on
+                      public domains.
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Link to="/" className="btn-primary">
+                    Open app
+                  </Link>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      void (async () => {
+                        await logout();
+                      })();
+                    }}
+                  >
+                    Sign out
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Link to="/" className="btn-primary">
-                  Open app
-                </Link>
+            )}
+
+            {notInvited && (
+              <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-3 text-sm text-amber-100">
+                <div className="font-semibold">Not invited</div>
+                <p className="mt-1 text-amber-100/90">
+                  {authEmail ? (
+                    <>
+                      <span className="font-medium text-ink">{authEmail}</span> is not on the
+                      invite list. Ask a platform admin to invite you.
+                    </>
+                  ) : (
+                    <>Ask a platform admin to invite your Google email.</>
+                  )}
+                </p>
                 <button
                   type="button"
-                  className="btn-secondary"
+                  className="mt-2 text-xs underline"
                   onClick={() => {
-                    void (async () => {
-                      await logout();
-                    })();
+                    setAuthError(null);
+                    setAuthEmail(null);
                   }}
                 >
-                  Sign out
+                  Dismiss
                 </button>
               </div>
-              <p className="text-xs text-ink-faint">
-                Sign out clears your session so you can use the demo or owner password again.
-              </p>
-            </div>
-          )}
+            )}
 
-          {notInvited && (
-            <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-3 text-sm text-amber-100">
-              <div className="font-semibold">Not invited</div>
-              <p className="mt-1 text-amber-100/90">
-                {authEmail ? (
-                  <>
-                    <span className="font-medium text-ink">{authEmail}</span> is not on the
-                    invite list. Ask a platform admin to invite you.
-                  </>
-                ) : (
-                  <>Ask a platform admin to invite your Google email.</>
-                )}
-              </p>
-              <button
-                type="button"
-                className="mt-2 text-xs underline"
-                onClick={() => {
-                  setAuthError(null);
-                  setAuthEmail(null);
-                }}
-              >
-                Dismiss
-              </button>
-            </div>
-          )}
-
-          {formError && (
-            <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-              {formError}
-            </div>
-          )}
-
-          {!signedIn && oneClickOn && (
-            <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-brand">
-                Try without an account
+            {formError && (
+              <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                {formError}
               </div>
-              {tourOn && (
-                <button
-                  type="button"
-                  className="btn-primary w-full"
-                  disabled={busy}
-                  onClick={() => void onOneClick("tour")}
-                >
+            )}
+
+            {!signedIn && passwordOn && (
+              <form className="space-y-3" onSubmit={(e) => void onDemoSubmit(e)}>
+                <div className="text-xs font-semibold uppercase tracking-wide text-brand">
+                  Email &amp; password
+                </div>
+                <div>
+                  <label className="label" htmlFor="account-email">
+                    Email
+                  </label>
+                  <input
+                    id="account-email"
+                    className="input"
+                    type="email"
+                    autoComplete="username"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="account-password">
+                    Password
+                  </label>
+                  <input
+                    id="account-password"
+                    className="input"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                  />
+                </div>
+                <ul className="space-y-1 text-xs text-ink-faint">
+                  {ownerOn && (
+                    <li>
+                      <strong className="text-ink-muted">Owner:</strong> private host password
+                      — full real data (do not share).
+                    </li>
+                  )}
+                  {demoOn && (
+                    <li>
+                      <strong className="text-ink-muted">Legacy password demo:</strong>{" "}
+                      {publicCfg?.demo_email || "demo@gauntlet.local"} — prefer the one-click
+                      demos below when enabled.
+                    </li>
+                  )}
+                </ul>
+                <button type="submit" className="btn-primary w-full" disabled={busy}>
                   {busy ? <Spinner className="border-t-slate-900" /> : null}
-                  Explore sample portfolio
+                  Sign in
                 </button>
-              )}
-              {sandboxOn && (
-                <button
-                  type="button"
-                  className={cn("w-full", tourOn ? "btn-secondary" : "btn-primary")}
-                  disabled={busy}
-                  onClick={() => void onOneClick("sandbox")}
-                >
-                  {busy ? <Spinner /> : null}
-                  Try with your statements
-                </button>
-              )}
-              <ul className="space-y-1 text-xs text-ink-faint">
-                {tourOn && (
-                  <li>
-                    <strong className="text-ink-muted">Sample:</strong> synthetic data, read-only
-                    — play with the UI without sharing bank files.
-                  </li>
-                )}
-                {sandboxOn && (
-                  <li>
-                    <strong className="text-ink-muted">Sandbox:</strong> empty private session —
-                    upload statements; wiped when you sign out.
-                  </li>
-                )}
-              </ul>
-            </div>
-          )}
+              </form>
+            )}
 
-          {!signedIn && oneClickOn && (passwordOn || googleOn) && (
-            <div className="flex items-center gap-3 text-xs text-ink-faint">
-              <div className="h-px flex-1 bg-white/10" />
-              or sign in
-              <div className="h-px flex-1 bg-white/10" />
-            </div>
-          )}
-
-          {!signedIn && passwordOn && (
-            <form className="space-y-3" onSubmit={(e) => void onDemoSubmit(e)}>
-              <div className="text-xs font-semibold uppercase tracking-wide text-brand">
-                Email &amp; password
+            {!signedIn && passwordOn && googleOn && (
+              <div className="flex items-center gap-3 text-xs text-ink-faint">
+                <div className="h-px flex-1 bg-white/10" />
+                or
+                <div className="h-px flex-1 bg-white/10" />
               </div>
-              <div>
-                <label className="label" htmlFor="demo-email">
-                  Email
-                </label>
-                <input
-                  id="demo-email"
-                  className="input"
-                  type="email"
-                  autoComplete="username"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="label" htmlFor="demo-password">
-                  Password
-                </label>
-                <input
-                  id="demo-password"
-                  className="input"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-              <ul className="space-y-1 text-xs text-ink-faint">
-                {demoOn && (
-                  <li>
-                    <strong className="text-ink-muted">Demo:</strong>{" "}
-                    {publicCfg?.demo_email || "demo@gauntlet.local"} — isolated empty ledger
-                    (safe to share).
-                  </li>
-                )}
-                {ownerOn && (
-                  <li>
-                    <strong className="text-ink-muted">Owner:</strong> your private email +
-                    password from the host env — full real data (do not share).
-                  </li>
-                )}
-              </ul>
-              <button type="submit" className="btn-primary w-full" disabled={busy}>
-                {busy ? <Spinner className="border-t-slate-900" /> : null}
-                Sign in
-              </button>
-            </form>
-          )}
+            )}
 
-          {!signedIn && passwordOn && googleOn && (
-            <div className="flex items-center gap-3 text-xs text-ink-faint">
-              <div className="h-px flex-1 bg-white/10" />
-              or
-              <div className="h-px flex-1 bg-white/10" />
-            </div>
-          )}
-
-          {!signedIn && googleOn && (
-            <div className="space-y-2">
+            {!signedIn && googleOn && (
               <button
                 type="button"
                 className={cn("w-full", passwordOn ? "btn-secondary" : "btn-primary")}
@@ -437,48 +385,102 @@ export function LandingPage() {
               >
                 Continue with Google
               </button>
-            </div>
-          )}
+            )}
 
-          {!signedIn && !passwordOn && !googleOn && (
-            <p className="text-sm text-ink-muted">
-              No login methods are enabled on this host. Ask the operator to set demo or owner
-              password login, or Google OAuth.
-            </p>
-          )}
+            {!signedIn && !passwordOn && !googleOn && !oneClickOn && (
+              <p className="text-sm text-ink-muted">
+                No login methods are enabled on this host. Ask the operator to configure Google
+                OAuth or password login.
+              </p>
+            )}
 
-          {!signedIn && openAuth && (
-            <button
-              type="button"
-              className="btn-secondary w-full text-sm"
-              onClick={() => {
-                void (async () => {
-                  try {
-                    await api.resumeLocalDev();
-                    await refresh();
-                    navigate("/", { replace: true });
-                  } catch (err) {
-                    setFormError(
-                      err instanceof Error ? err.message : "Could not resume local dev",
-                    );
-                  }
-                })();
-              }}
-            >
-              Continue as local dev user (open access)
-            </button>
-          )}
+            {!signedIn && openAuth && (
+              <button
+                type="button"
+                className="btn-secondary w-full text-sm"
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      await api.resumeLocalDev();
+                      await refresh();
+                      navigate("/", { replace: true });
+                    } catch (err) {
+                      setFormError(
+                        err instanceof Error ? err.message : "Could not resume local dev",
+                      );
+                    }
+                  })();
+                }}
+              >
+                Continue as local dev user (open access)
+              </button>
+            )}
 
-          {!signedIn && (
-            <button
-              type="button"
-              className="btn-ghost w-full text-xs"
-              onClick={() => void refresh()}
-            >
-              Check existing session
-            </button>
+            {!signedIn && (
+              <button
+                type="button"
+                className="btn-ghost w-full text-xs"
+                onClick={() => void refresh()}
+              >
+                Check existing session
+              </button>
+            )}
+          </section>
+
+          {/* —— Public demos (separate product surface) —— */}
+          {!signedIn && oneClickOn && (
+            <section className="card space-y-4 border border-sky-400/25 p-6 sm:p-8">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-sky-300/90">
+                  Public demos
+                </p>
+                <h2 className="mt-1 text-lg font-semibold tracking-tight">
+                  Try Gauntlet without an account
+                </h2>
+                <p className="mt-1 text-sm text-ink-muted">
+                  Not your real finances. One-click sessions — separate from sign-in above.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {tourOn && (
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      className="btn-primary w-full"
+                      disabled={busy}
+                      onClick={() => void onOneClick("tour")}
+                    >
+                      {busy ? <Spinner className="border-t-slate-900" /> : null}
+                      Explore sample portfolio
+                    </button>
+                    <p className="text-xs text-ink-faint">
+                      Guided setup walkthrough, then a read-only sample with multi-bank spend and
+                      investments.
+                    </p>
+                  </div>
+                )}
+                {sandboxOn && (
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      className={cn("w-full", tourOn ? "btn-secondary" : "btn-primary")}
+                      disabled={busy}
+                      onClick={() => void onOneClick("sandbox")}
+                    >
+                      {busy ? <Spinner /> : null}
+                      Try with your statements
+                    </button>
+                    <p className="text-xs text-ink-faint">
+                      Empty temporary sandbox — upload statements, try rules; wiped when you sign
+                      out.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </section>
           )}
-        </section>
+        </div>
       </div>
     </div>
   );

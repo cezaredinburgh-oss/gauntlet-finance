@@ -26,11 +26,12 @@ import { useAuth } from "../auth/AuthContext";
 import { Spinner } from "../components/Spinner";
 import { cn } from "../lib/cn";
 import {
-  ONBOARDING_STEPS,
   isStepId,
   markOnboardingComplete,
   markOnboardingStep,
   onboardingPath,
+  stepsForDemo,
+  type DemoOnboardingKind,
   type OnboardingStepId,
 } from "../lib/onboarding";
 
@@ -90,6 +91,15 @@ export function OnboardingPage() {
   const stepParam = params.get("step");
   const step: OnboardingStepId = isStepId(stepParam) ? stepParam : "welcome";
   const multiTenant = Boolean(user?.multi_tenant);
+  const demoKind: DemoOnboardingKind | null =
+    user?.is_demo && (user.demo_kind === "tour" || user.demo_kind === "sandbox")
+      ? user.demo_kind
+      : null;
+  const tourGuide = demoKind === "tour";
+  const sandboxSetup = demoKind === "sandbox";
+  /** Tour walkthrough is educational (like preview); sandbox is interactive. */
+  const educational = preview || tourGuide;
+  const steps = stepsForDemo(demoKind);
 
   const [health, setHealth] = useState<Health | null>(null);
   const [sheets, setSheets] = useState<SheetsStatus | null>(null);
@@ -100,14 +110,14 @@ export function OnboardingPage() {
 
   const setStep = useCallback(
     (next: OnboardingStepId) => {
-      if (!preview) markOnboardingStep(next);
+      if (!preview) markOnboardingStep(next, demoKind);
       const p = new URLSearchParams(params);
       if (next === "welcome") p.delete("step");
       else p.set("step", next);
       if (preview) p.set("preview", "1");
       setParams(p, { replace: true });
     },
-    [params, preview, setParams],
+    [params, preview, setParams, demoKind],
   );
 
   const refreshStatus = useCallback(async () => {
@@ -132,16 +142,26 @@ export function OnboardingPage() {
     void refreshStatus();
   }, [refreshStatus]);
 
-  const sheetConfigured = multiTenant
-    ? Boolean(user?.tenant_ready || user?.spreadsheet_bound || sheets?.spreadsheet_id)
-    : health?.spreadsheet_configured === true;
-  const sheetsOk = multiTenant
-    ? sheetConfigured || sheets?.ok === true || sheets?.backend === "memory"
-    : sheets?.ok === true;
+  const sheetConfigured =
+    demoKind != null
+      ? true // demos always have a memory ledger
+      : multiTenant
+        ? Boolean(user?.tenant_ready || user?.spreadsheet_bound || sheets?.spreadsheet_id)
+        : health?.spreadsheet_configured === true;
+  const sheetsOk =
+    demoKind != null
+      ? true
+      : multiTenant
+        ? sheetConfigured || sheets?.ok === true || sheets?.backend === "memory"
+        : sheets?.ok === true;
 
   async function runProvision() {
-    if (preview) {
-      setProvisionMsg("Preview: provision blocked — your live ledger was not changed.");
+    if (preview || educational) {
+      setProvisionMsg(
+        educational
+          ? "Walkthrough: in a real account you would provision or link a Google Sheet here."
+          : "Preview: provision blocked — your live ledger was not changed.",
+      );
       return;
     }
     setProvisionBusy(true);
@@ -162,26 +182,31 @@ export function OnboardingPage() {
       setProvisionBusy(false);
     }
   }
-  const stepIdx = ONBOARDING_STEPS.findIndex((s) => s.id === step);
+  const stepIdx = Math.max(
+    0,
+    steps.findIndex((s) => s.id === step),
+  );
 
   function goNext() {
-    const next = ONBOARDING_STEPS[Math.min(stepIdx + 1, ONBOARDING_STEPS.length - 1)];
+    const next = steps[Math.min(stepIdx + 1, steps.length - 1)];
     if (next) setStep(next.id);
   }
 
   function goBack() {
-    const prev = ONBOARDING_STEPS[Math.max(stepIdx - 1, 0)];
+    const prev = steps[Math.max(stepIdx - 1, 0)];
     if (prev) setStep(prev.id);
   }
 
   function finish() {
-    if (!preview) markOnboardingComplete();
+    if (!preview) {
+      markOnboardingComplete(demoKind, tourGuide ? "reveal" : "ready");
+    }
     navigate("/", { replace: true });
   }
 
   return (
     <div className="mx-auto max-w-3xl space-y-5 pb-10">
-      {preview && (
+      {preview && !tourGuide && (
         <div className="rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
           <strong className="font-semibold">Preview mode</strong>
           <span className="text-amber-100/85">
@@ -198,19 +223,54 @@ export function OnboardingPage() {
         </div>
       )}
 
+      {tourGuide && (
+        <div className="rounded-2xl border border-sky-400/40 bg-sky-400/10 px-4 py-3 text-sm text-sky-100">
+          <strong className="font-semibold">Sample portfolio walkthrough</strong>
+          <span className="text-sky-100/85">
+            {" "}
+            — this is how first-time setup works. No live sheet is modified. After the last
+            step you will open a fully populated sample account.
+          </span>
+        </div>
+      )}
+
+      {sandboxSetup && (
+        <div className="rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+          <strong className="font-semibold">Sandbox setup</strong>
+          <span className="text-amber-100/85">
+            {" "}
+            — temporary memory ledger. Upload real statements here; data clears when you sign
+            out.
+          </span>
+        </div>
+      )}
+
       <header className="space-y-1">
         <p className="text-xs font-semibold uppercase tracking-wide text-brand">
-          New user setup
+          {tourGuide
+            ? "How setup works"
+            : sandboxSetup
+              ? "Sandbox · New user setup"
+              : "New user setup"}
         </p>
-        <h1 className="text-2xl font-bold tracking-tight">Get Gauntlet ready</h1>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {tourGuide
+            ? "See how easy first-time setup is"
+            : sandboxSetup
+              ? "Set up your sandbox"
+              : "Get Gauntlet ready"}
+        </h1>
         <p className="text-sm text-ink-muted">
-          Guided path: welcome → Google Sheets → bank statements → spending rules. About
-          10–15 minutes.
+          {tourGuide
+            ? "Short guided tour of the same path a new user takes — then jump into a sample account already in use."
+            : sandboxSetup
+              ? "Same steps as a real account, on a temporary ledger you can try safely."
+              : "Guided path: welcome → Google Sheets → bank statements → spending rules. About 10–15 minutes."}
         </p>
       </header>
 
       <nav className="flex flex-wrap gap-2" aria-label="Setup steps">
-        {ONBOARDING_STEPS.map((s, i) => {
+        {steps.map((s, i) => {
           const active = s.id === step;
           const done = i < stepIdx;
           return (
@@ -233,11 +293,20 @@ export function OnboardingPage() {
       </nav>
 
       {step === "welcome" && (
-        <WelcomeStep onContinue={goNext} preview={preview} />
+        <WelcomeStep
+          onContinue={goNext}
+          onSkipSandbox={() => {
+            markOnboardingComplete("sandbox", "ready");
+            navigate("/", { replace: true });
+          }}
+          preview={preview}
+          tourGuide={tourGuide}
+          sandboxSetup={sandboxSetup}
+        />
       )}
       {step === "sheets" && (
         <SheetsStep
-          preview={preview}
+          preview={educational}
           multiTenant={multiTenant}
           health={health}
           sheets={sheets}
@@ -251,32 +320,42 @@ export function OnboardingPage() {
           onContinue={goNext}
           sheetConfigured={sheetConfigured}
           sheetsOk={sheetsOk}
+          tourGuide={tourGuide}
+          sandboxSetup={sandboxSetup}
         />
       )}
       {step === "upload" && (
         <UploadStep
-          preview={preview}
+          preview={educational}
           sheetConfigured={sheetConfigured}
           onBack={goBack}
           onContinue={goNext}
+          tourGuide={tourGuide}
+          sandboxSetup={sandboxSetup}
         />
       )}
       {step === "rules" && (
         <RulesStep
-          preview={preview}
+          preview={educational}
           sheetConfigured={sheetConfigured}
           onBack={goBack}
           onContinue={goNext}
+          tourGuide={tourGuide}
+          sandboxSetup={sandboxSetup}
         />
       )}
-      {step === "ready" && (
+      {step === "ready" && !tourGuide && (
         <ReadyStep
           preview={preview}
           sheetConfigured={sheetConfigured}
           sheetsOk={sheetsOk}
           onBack={goBack}
           onFinish={finish}
+          sandboxSetup={sandboxSetup}
         />
+      )}
+      {step === "reveal" && tourGuide && (
+        <RevealStep onBack={goBack} onFinish={finish} />
       )}
     </div>
   );
@@ -284,21 +363,40 @@ export function OnboardingPage() {
 
 function WelcomeStep({
   onContinue,
+  onSkipSandbox,
   preview,
+  tourGuide,
+  sandboxSetup,
 }: {
   onContinue: () => void;
+  onSkipSandbox: () => void;
   preview: boolean;
+  tourGuide: boolean;
+  sandboxSetup: boolean;
 }) {
   return (
     <div className="space-y-5">
       <section className="card space-y-3 p-5">
-        <h2 className="text-lg font-semibold">Welcome to Gauntlet Finance</h2>
+        <h2 className="text-lg font-semibold">
+          {tourGuide
+            ? "First-time setup in a nutshell"
+            : sandboxSetup
+              ? "Welcome to your sandbox"
+              : "Welcome to Gauntlet Finance"}
+        </h2>
         <p className="text-sm text-ink-muted">
-          Personal multi-currency finance desk: statements-only ledger, your Google Sheet as
-          storage, executive Home, and Czech tax runway on investments.
+          {tourGuide
+            ? "Real users connect a private Google Sheet, import bank exports, and bootstrap spending rules. This walkthrough shows that path — then opens a sample account that already has multi-bank activity and investments."
+            : sandboxSetup
+              ? "This sandbox mirrors new-user setup on a temporary memory ledger. Upload statements, try rules, then explore Home — everything clears when you sign out."
+              : "Personal multi-currency finance desk: statements-only ledger, your Google Sheet as storage, executive Home, and Czech tax runway on investments."}
         </p>
         <ol className="list-decimal space-y-1.5 pl-5 text-sm text-ink-muted">
-          <li>Connect a private Google Spreadsheet (service account — guided).</li>
+          <li>
+            {tourGuide || sandboxSetup
+              ? "Prepare a private ledger (Google Sheet in production; memory in this demo)."
+              : "Connect a private Google Spreadsheet (service account — guided)."}
+          </li>
           <li>Upload bank/broker exports (CSV or eToro Excel).</li>
           <li>Bootstrap spending rules and triage uncategorized merchants.</li>
           <li>Use Home as your executive snapshot; dig into Spending &amp; Investments.</li>
@@ -320,11 +418,24 @@ function WelcomeStep({
       </div>
 
       <div className="flex flex-wrap justify-end gap-2">
-        <Link to="/" className="btn-ghost">
-          Skip for now
-        </Link>
+        {sandboxSetup && (
+          <button type="button" className="btn-ghost" onClick={onSkipSandbox}>
+            Skip for now
+          </button>
+        )}
+        {!tourGuide && !sandboxSetup && (
+          <Link to="/" className="btn-ghost">
+            Skip for now
+          </Link>
+        )}
         <button type="button" className="btn-primary" onClick={onContinue}>
-          {preview ? "Continue preview" : "Start setup"}
+          {tourGuide
+            ? "Start walkthrough"
+            : preview
+              ? "Continue preview"
+              : sandboxSetup
+                ? "Start sandbox setup"
+                : "Start setup"}
           <ArrowRight className="h-4 w-4" />
         </button>
       </div>
@@ -347,6 +458,8 @@ function SheetsStep({
   onContinue,
   sheetConfigured,
   sheetsOk,
+  tourGuide,
+  sandboxSetup,
 }: {
   preview: boolean;
   multiTenant: boolean;
@@ -362,18 +475,27 @@ function SheetsStep({
   onContinue: () => void;
   sheetConfigured: boolean;
   sheetsOk: boolean;
+  tourGuide: boolean;
+  sandboxSetup: boolean;
 }) {
   const checks = useMemo(
     () => [
       {
-        label: multiTenant ? "Tenant ledger bound" : "Spreadsheet ID configured",
+        label:
+          tourGuide || sandboxSetup
+            ? "Demo ledger ready"
+            : multiTenant
+              ? "Tenant ledger bound"
+              : "Spreadsheet ID configured",
         ok: sheetConfigured,
         detail: sheetConfigured
-          ? multiTenant
-            ? sheets?.spreadsheet_id
-              ? `Bound: ${sheets.spreadsheet_id}`
-              : "Bound for this account"
-            : "Linked in app config"
+          ? tourGuide || sandboxSetup
+            ? "In-memory ledger for this session"
+            : multiTenant
+              ? sheets?.spreadsheet_id
+                ? `Bound: ${sheets.spreadsheet_id}`
+                : "Bound for this account"
+              : "Linked in app config"
           : multiTenant
             ? "Not provisioned yet"
             : "Not set yet",
@@ -381,18 +503,27 @@ function SheetsStep({
       {
         label: "Sheets connection",
         ok: sheetsOk,
-        detail: sheets?.message || (sheetsOk ? "OK" : "Not connected or status unavailable"),
+        detail:
+          tourGuide || sandboxSetup
+            ? "Memory backend (demo)"
+            : sheets?.message || (sheetsOk ? "OK" : "Not connected or status unavailable"),
       },
       {
         label: "Backend",
         ok:
           sheets?.backend === "google" ||
           sheets?.backend === "google_sheets" ||
-          sheets?.backend === "memory",
-        detail: sheets?.backend ? String(sheets.backend) : health?.auth_mode || "—",
+          sheets?.backend === "memory" ||
+          tourGuide ||
+          sandboxSetup,
+        detail: sheets?.backend
+          ? String(sheets.backend)
+          : tourGuide || sandboxSetup
+            ? "memory"
+            : health?.auth_mode || "—",
       },
     ],
-    [sheetConfigured, sheetsOk, sheets, health, multiTenant],
+    [sheetConfigured, sheetsOk, sheets, health, multiTenant, tourGuide, sandboxSetup],
   );
 
   return (
@@ -401,11 +532,30 @@ function SheetsStep({
         <div className="flex items-center gap-2 text-brand">
           <Cloud className="h-5 w-5" />
           <h2 className="text-lg font-semibold text-ink">
-            {multiTenant ? "Your private ledger" : "Connect Google Sheets"}
+            {tourGuide
+              ? "How you connect a ledger"
+              : sandboxSetup
+                ? "Your sandbox ledger"
+                : multiTenant
+                  ? "Your private ledger"
+                  : "Connect Google Sheets"}
           </h2>
         </div>
         <p className="text-sm text-ink-muted">
-          {multiTenant ? (
+          {tourGuide ? (
+            <>
+              In production, Gauntlet stores the ledger in{" "}
+              <strong className="text-ink">your private Google Spreadsheet</strong> (service
+              account) or a provisioned tenant sheet. Setup walks you through linking once —
+              after that, imports and dashboards read that sheet.
+            </>
+          ) : sandboxSetup ? (
+            <>
+              This sandbox uses an isolated <strong className="text-ink">memory ledger</strong>{" "}
+              so you can try the product without Google credentials. A real account would open
+              the Sheets wizard at <code className="text-xs text-brand">/setup</code> instead.
+            </>
+          ) : multiTenant ? (
             <>
               Multi-tenant mode creates a private spreadsheet (or memory ledger) for{" "}
               <strong className="text-ink">your account only</strong>. Use{" "}
@@ -422,8 +572,9 @@ function SheetsStep({
         </p>
         {preview && (
           <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
-            Preview: provision and mutating wizard actions are blocked so your live connection
-            stays intact.
+            {tourGuide
+              ? "Walkthrough: no live sheet is linked or changed."
+              : "Preview: provision and mutating wizard actions are blocked so your live connection stays intact."}
           </p>
         )}
       </section>
@@ -470,7 +621,7 @@ function SheetsStep({
       {provisionMsg && <p className="text-sm text-ok">{provisionMsg}</p>}
 
       <div className="flex flex-wrap gap-2">
-        {multiTenant ? (
+        {!tourGuide && !sandboxSetup && multiTenant ? (
           <button
             type="button"
             className="btn-primary inline-flex"
@@ -480,7 +631,7 @@ function SheetsStep({
             {provisionBusy ? <Spinner /> : null}
             Provision ledger
           </button>
-        ) : (
+        ) : !tourGuide && !sandboxSetup ? (
           <a
             className="btn-primary inline-flex"
             href={setupWizardUrl()}
@@ -490,21 +641,25 @@ function SheetsStep({
             {preview ? "Open Sheets wizard (browse carefully)" : "Open Sheets wizard"}
             <ExternalLink className="h-4 w-4" />
           </a>
+        ) : null}
+        {!tourGuide && !sandboxSetup && (
+          <button type="button" className="btn-secondary" onClick={onRefresh}>
+            {multiTenant ? "Recheck status" : "I’ve finished — recheck"}
+          </button>
         )}
-        <button type="button" className="btn-secondary" onClick={onRefresh}>
-          {multiTenant ? "Recheck status" : "I’ve finished — recheck"}
-        </button>
       </div>
 
       <NavRow
         onBack={onBack}
         onContinue={onContinue}
         continueLabel={
-          sheetConfigured || preview
-            ? "Continue"
-            : "Continue without sheet (not recommended)"
+          tourGuide
+            ? "Next: bank imports"
+            : sheetConfigured || preview
+              ? "Continue"
+              : "Continue without sheet (not recommended)"
         }
-        continueVariant={sheetConfigured || preview ? "primary" : "secondary"}
+        continueVariant={sheetConfigured || preview || tourGuide ? "primary" : "secondary"}
       />
     </div>
   );
@@ -515,11 +670,15 @@ function UploadStep({
   sheetConfigured,
   onBack,
   onContinue,
+  tourGuide,
+  sandboxSetup,
 }: {
   preview: boolean;
   sheetConfigured: boolean;
   onBack: () => void;
   onContinue: () => void;
+  tourGuide: boolean;
+  sandboxSetup: boolean;
 }) {
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -582,14 +741,29 @@ function UploadStep({
       <section className="card space-y-3 p-5">
         <div className="flex items-center gap-2 text-brand">
           <FileUp className="h-5 w-5" />
-          <h2 className="text-lg font-semibold text-ink">Upload bank statements</h2>
+          <h2 className="text-lg font-semibold text-ink">
+            {tourGuide ? "How bank imports work" : "Upload bank statements"}
+          </h2>
         </div>
         <p className="text-sm text-ink-muted">
-          Export from your bank or broker and drop the files here. Supported: Raiffeisen CZ,
-          Revolut (cash / stocks / crypto), eToro account statement (.xlsx). Institution is
-          detected automatically. Same file re-upload is idempotent (SHA-256).
+          {tourGuide ? (
+            <>
+              Real accounts drop exports here. Supported:{" "}
+              <strong className="text-ink">Raiffeisen</strong> checking,{" "}
+              <strong className="text-ink">Revolut</strong> cash / stocks / crypto, and{" "}
+              <strong className="text-ink">eToro</strong> statements. Formats are auto-detected;
+              re-uploads are safe (SHA-256 idempotency). The sample portfolio you open next
+              already includes multi-bank history built the same way.
+            </>
+          ) : (
+            <>
+              Export from your bank or broker and drop the files here. Supported: Raiffeisen CZ,
+              Revolut (cash / stocks / crypto), eToro account statement (.xlsx). Institution is
+              detected automatically. Same file re-upload is idempotent (SHA-256).
+            </>
+          )}
         </p>
-        {!sheetConfigured && !preview && (
+        {!sheetConfigured && !preview && !tourGuide && (
           <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
             Spreadsheet is not configured yet. Imports may not persist until Sheets is linked.
             Prefer finishing the Sheets step first.
@@ -597,8 +771,14 @@ function UploadStep({
         )}
         {preview && (
           <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
-            Preview: dropzone is interactive but <strong>will not upload</strong> to your
-            ledger.
+            {tourGuide
+              ? "Walkthrough: uploads are blocked here — sample imports appear after the final step."
+              : "Preview: dropzone is interactive but will not upload to your ledger."}
+          </p>
+        )}
+        {sandboxSetup && (
+          <p className="rounded-xl border border-brand/30 bg-brand/10 px-3 py-2 text-xs text-ink-muted">
+            Sandbox uploads are real (memory only) and wipe when you sign out.
           </p>
         )}
       </section>
@@ -686,7 +866,11 @@ function UploadStep({
         page after setup.
       </p>
 
-      <NavRow onBack={onBack} onContinue={onContinue} continueLabel="Continue to rules" />
+      <NavRow
+        onBack={onBack}
+        onContinue={onContinue}
+        continueLabel={tourGuide ? "Next: categories" : "Continue to rules"}
+      />
     </div>
   );
 }
@@ -696,11 +880,15 @@ function RulesStep({
   sheetConfigured,
   onBack,
   onContinue,
+  tourGuide,
+  sandboxSetup,
 }: {
   preview: boolean;
   sheetConfigured: boolean;
   onBack: () => void;
   onContinue: () => void;
+  tourGuide: boolean;
+  sandboxSetup: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -787,11 +975,14 @@ function RulesStep({
       <section className="card space-y-3 p-5">
         <div className="flex items-center gap-2 text-brand">
           <Tags className="h-5 w-5" />
-          <h2 className="text-lg font-semibold text-ink">Rules &amp; categorization</h2>
+          <h2 className="text-lg font-semibold text-ink">
+            {tourGuide ? "How categories & rules work" : "Rules & categorization"}
+          </h2>
         </div>
         <p className="text-sm text-ink-muted">
-          Seed default categories, install starter keyword rules, then scan blanks. Finish fine
-          work in the full Categorize workspace (merchant rules, bulk assign).
+          {tourGuide
+            ? "New users seed default categories, install starter keyword rules, then fill blanks. Internal transfers and crypto-pot moves stay out of spend totals. You will see this already applied in the sample account next."
+            : "Seed default categories, install starter keyword rules, then scan blanks. Finish fine work in the full Categorize workspace (merchant rules, bulk assign)."}
         </p>
         <ul className="list-disc space-y-1 pl-5 text-xs text-ink-muted">
           <li>Internal transfers are flagged on import and stay out of spend totals.</li>
@@ -800,11 +991,17 @@ function RulesStep({
         </ul>
         {preview && (
           <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
-            Preview: buttons show the flow but do not write categories or reclassify
-            transactions.
+            {tourGuide
+              ? "Walkthrough: rule buttons are for illustration only."
+              : "Preview: buttons show the flow but do not write categories or reclassify transactions."}
           </p>
         )}
-        {!sheetConfigured && !preview && (
+        {sandboxSetup && (
+          <p className="rounded-xl border border-brand/30 bg-brand/10 px-3 py-2 text-xs text-ink-muted">
+            Sandbox can run ensure / bootstrap / apply against the temporary memory ledger.
+          </p>
+        )}
+        {!sheetConfigured && !preview && !tourGuide && (
           <p className="text-xs text-amber-200">
             Sheet not configured — category writes need a linked ledger.
           </p>
@@ -836,39 +1033,41 @@ function RulesStep({
         </section>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="btn-secondary"
-          disabled={busy != null}
-          onClick={() => void runEnsure()}
-        >
-          {busy === "ensure" ? <Spinner /> : null}
-          1. Ensure default categories
-        </button>
-        <button
-          type="button"
-          className="btn-secondary"
-          disabled={busy != null}
-          onClick={() => void runBootstrap()}
-        >
-          {busy === "bootstrap" ? <Spinner /> : null}
-          2. Bootstrap starter rules
-        </button>
-        <button
-          type="button"
-          className="btn-secondary"
-          disabled={busy != null}
-          onClick={() => void runApply()}
-        >
-          {busy === "apply" ? <Spinner /> : null}
-          3. Apply rules to blanks
-        </button>
-        <Link to="/expenses/categorize" className="btn-primary inline-flex">
-          Open full Categorize
-          <ArrowRight className="h-4 w-4" />
-        </Link>
-      </div>
+      {!tourGuide && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={busy != null}
+            onClick={() => void runEnsure()}
+          >
+            {busy === "ensure" ? <Spinner /> : null}
+            1. Ensure default categories
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={busy != null}
+            onClick={() => void runBootstrap()}
+          >
+            {busy === "bootstrap" ? <Spinner /> : null}
+            2. Bootstrap starter rules
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={busy != null}
+            onClick={() => void runApply()}
+          >
+            {busy === "apply" ? <Spinner /> : null}
+            3. Apply rules to blanks
+          </button>
+          <Link to="/expenses/categorize" className="btn-primary inline-flex">
+            Open full Categorize
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+      )}
 
       {msg && <p className="text-sm text-ok">{msg}</p>}
       {error && <p className="text-sm text-rose-300">{error}</p>}
@@ -878,7 +1077,11 @@ function RulesStep({
         </p>
       )}
 
-      <NavRow onBack={onBack} onContinue={onContinue} continueLabel="Continue" />
+      <NavRow
+        onBack={onBack}
+        onContinue={onContinue}
+        continueLabel={tourGuide ? "Almost there" : "Continue"}
+      />
     </div>
   );
 }
@@ -889,12 +1092,14 @@ function ReadyStep({
   sheetsOk,
   onBack,
   onFinish,
+  sandboxSetup,
 }: {
   preview: boolean;
   sheetConfigured: boolean;
   sheetsOk: boolean;
   onBack: () => void;
   onFinish: () => void;
+  sandboxSetup?: boolean;
 }) {
   return (
     <div className="space-y-5">
@@ -902,13 +1107,15 @@ function ReadyStep({
         <div className="flex items-center gap-2 text-ok">
           <CheckCircle2 className="h-6 w-6" />
           <h2 className="text-lg font-semibold text-ink">
-            {preview ? "Preview complete" : "You're ready"}
+            {preview ? "Preview complete" : sandboxSetup ? "Sandbox ready" : "You're ready"}
           </h2>
         </div>
         <p className="text-sm text-ink-muted">
           {preview
             ? "You walked the full new-user path without changing your live connection or data."
-            : "Head to the executive Home for wealth and cash pulse. Upload more statements anytime; refine rules in Categorize."}
+            : sandboxSetup
+              ? "Open Home to explore your sandbox ledger. Upload more statements anytime; data clears when you sign out."
+              : "Head to the executive Home for wealth and cash pulse. Upload more statements anytime; refine rules in Categorize."}
         </p>
         <ul className="space-y-2 text-sm">
           <li className="flex gap-2">
@@ -936,7 +1143,67 @@ function ReadyStep({
           Back
         </button>
         <button type="button" className="btn-primary" onClick={onFinish}>
-          {preview ? "Close preview → Home" : "Open executive Home"}
+          {preview
+            ? "Close preview → Home"
+            : sandboxSetup
+              ? "Open sandbox Home"
+              : "Open executive Home"}
+          <ArrowRight className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RevealStep({
+  onBack,
+  onFinish,
+}: {
+  onBack: () => void;
+  onFinish: () => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <section className="card space-y-4 p-6">
+        <div className="flex items-center gap-2 text-brand">
+          <LayoutDashboard className="h-6 w-6" />
+          <h2 className="text-lg font-semibold text-ink">Setup is that straightforward</h2>
+        </div>
+        <p className="text-sm text-ink-muted">
+          You just walked the same path a new user takes: prepare a private ledger, import
+          statements from banks like Raiffeisen and Revolut, then grow categories and rules.
+          It only takes a few minutes in a real account.
+        </p>
+        <p className="text-sm text-ink-muted">
+          <strong className="text-ink">
+            Now that you have seen how easy initial setup is, let us open a sample account
+            already in use
+          </strong>{" "}
+          — multi-bank spending, investments (AAPL, MSFT, ETH, and more), tax runway, and
+          executive Home with market values. Everything is synthetic and read-only.
+        </p>
+        <ul className="space-y-2 text-sm text-ink-muted">
+          <li className="flex gap-2">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" />
+            Spending &amp; cash pulse across checking accounts
+          </li>
+          <li className="flex gap-2">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" />
+            Investments with live-friendly tickers and portfolio market value
+          </li>
+          <li className="flex gap-2">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" />
+            Categorize workspace with uncategorized merchants to explore
+          </li>
+        </ul>
+      </section>
+      <div className="flex flex-wrap justify-between gap-2">
+        <button type="button" className="btn-ghost" onClick={onBack}>
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </button>
+        <button type="button" className="btn-primary" onClick={onFinish}>
+          Explore sample portfolio
           <ArrowRight className="h-4 w-4" />
         </button>
       </div>

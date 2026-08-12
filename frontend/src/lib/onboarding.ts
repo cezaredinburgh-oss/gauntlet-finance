@@ -4,17 +4,22 @@
  * v1 is browser-local only (no multi-device sync). Existing installs with a
  * spreadsheet already linked are auto-marked complete so they never see a
  * first-run prompt after deploy.
+ *
+ * Public demos use separate keys so progress never collides with a real account.
  */
 
 export const ONBOARDING_STORAGE_KEY = "gauntlet.onboarding.v1";
 export const ONBOARDING_VERSION = 1;
+
+export type DemoOnboardingKind = "sandbox" | "tour";
 
 export type OnboardingStepId =
   | "welcome"
   | "sheets"
   | "upload"
   | "rules"
-  | "ready";
+  | "ready"
+  | "reveal";
 
 export const ONBOARDING_STEPS: ReadonlyArray<{
   id: OnboardingStepId;
@@ -27,6 +32,28 @@ export const ONBOARDING_STEPS: ReadonlyArray<{
   { id: "rules", label: "Rules & categories", short: "Rules" },
   { id: "ready", label: "You're ready", short: "Ready" },
 ];
+
+/** Sample-portfolio guided path (educational setup + reveal). */
+export const TOUR_ONBOARDING_STEPS: ReadonlyArray<{
+  id: OnboardingStepId;
+  label: string;
+  short: string;
+}> = [
+  { id: "welcome", label: "How setup starts", short: "Start" },
+  { id: "sheets", label: "How you connect a ledger", short: "Ledger" },
+  { id: "upload", label: "How bank imports work", short: "Import" },
+  { id: "rules", label: "How categories work", short: "Rules" },
+  { id: "reveal", label: "See an account in use", short: "In use" },
+];
+
+export function stepsForDemo(kind: DemoOnboardingKind | null | undefined) {
+  if (kind === "tour") return TOUR_ONBOARDING_STEPS;
+  return ONBOARDING_STEPS;
+}
+
+export function demoOnboardingStorageKey(kind: DemoOnboardingKind): string {
+  return `gauntlet.onboarding.demo.${kind}.v1`;
+}
 
 export type OnboardingState = {
   version: number;
@@ -82,31 +109,98 @@ export function isStepId(value: unknown): value is OnboardingStepId {
     value === "sheets" ||
     value === "upload" ||
     value === "rules" ||
-    value === "ready"
+    value === "ready" ||
+    value === "reveal"
   );
 }
 
-export function stepIndex(id: OnboardingStepId): number {
-  return ONBOARDING_STEPS.findIndex((s) => s.id === id);
+export function stepIndex(
+  id: OnboardingStepId,
+  steps: ReadonlyArray<{ id: OnboardingStepId }> = ONBOARDING_STEPS,
+): number {
+  return steps.findIndex((s) => s.id === id);
 }
 
-export function markOnboardingStep(step: OnboardingStepId): OnboardingState {
-  const cur = loadOnboardingState();
+function storageKeyFor(kind?: DemoOnboardingKind | null): string {
+  return kind ? demoOnboardingStorageKey(kind) : ONBOARDING_STORAGE_KEY;
+}
+
+export function loadOnboardingStateFor(
+  kind?: DemoOnboardingKind | null,
+): OnboardingState {
+  if (!kind) return loadOnboardingState();
+  try {
+    const raw = localStorage.getItem(demoOnboardingStorageKey(kind));
+    if (!raw) return defaultState();
+    const parsed = JSON.parse(raw) as Partial<OnboardingState>;
+    return {
+      ...defaultState(),
+      ...parsed,
+      version: ONBOARDING_VERSION,
+      lastStep: isStepId(parsed.lastStep) ? parsed.lastStep : "welcome",
+      completed: Boolean(parsed.completed),
+      dismissed: Boolean(parsed.dismissed),
+    };
+  } catch {
+    return defaultState();
+  }
+}
+
+export function saveOnboardingStateFor(
+  next: OnboardingState,
+  kind?: DemoOnboardingKind | null,
+): void {
+  try {
+    localStorage.setItem(storageKeyFor(kind), JSON.stringify(next));
+  } catch {
+    /* private mode */
+  }
+}
+
+export function markOnboardingStep(
+  step: OnboardingStepId,
+  kind?: DemoOnboardingKind | null,
+): OnboardingState {
+  const cur = loadOnboardingStateFor(kind);
   const next: OnboardingState = { ...cur, lastStep: step };
-  saveOnboardingState(next);
+  saveOnboardingStateFor(next, kind);
   return next;
 }
 
-export function markOnboardingComplete(): OnboardingState {
+export function markOnboardingComplete(
+  kind?: DemoOnboardingKind | null,
+  finalStep: OnboardingStepId = "ready",
+): OnboardingState {
   const next: OnboardingState = {
-    ...loadOnboardingState(),
+    ...loadOnboardingStateFor(kind),
     completed: true,
     dismissed: true,
-    lastStep: "ready",
+    lastStep: finalStep,
     completedAt: new Date().toISOString(),
   };
-  saveOnboardingState(next);
+  saveOnboardingStateFor(next, kind);
   return next;
+}
+
+/** Fresh demo walkthrough every time the visitor enters that demo. */
+export function resetDemoOnboarding(kind: DemoOnboardingKind): OnboardingState {
+  const next = defaultState();
+  saveOnboardingStateFor(next, kind);
+  return next;
+}
+
+export function shouldForceDemoOnboarding(opts: {
+  isDemo?: boolean | null;
+  demoKind?: string | null;
+}): boolean {
+  if (!opts.isDemo) return false;
+  const kind =
+    opts.demoKind === "tour" || opts.demoKind === "sandbox"
+      ? opts.demoKind
+      : null;
+  if (!kind) return false;
+  const state = loadOnboardingStateFor(kind);
+  return !state.completed;
 }
 
 export function dismissOnboardingPrompt(): OnboardingState {

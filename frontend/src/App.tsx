@@ -23,6 +23,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { ChartPopoutPage } from "./pages/ChartPopoutPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { LandingPage } from "./pages/LandingPage";
+import { shouldForceDemoOnboarding } from "./lib/onboarding";
 
 const SESSION_BOOT_KEY = "gauntlet.session_boot";
 
@@ -64,6 +65,16 @@ function Protected({ children }: { children: React.ReactNode }) {
         ? `?next=${encodeURIComponent(next)}`
         : "";
     return <Navigate to={`/login${q}`} replace />;
+  }
+  // Public demos must finish (or skip sandbox) onboarding before using the app.
+  const forceDemo = shouldForceDemoOnboarding({
+    isDemo: user.is_demo,
+    demoKind: user.demo_kind,
+  });
+  const onOnboarding = location.pathname === "/onboarding";
+  const onSettings = location.pathname === "/settings";
+  if (forceDemo && !onOnboarding && !onSettings) {
+    return <Navigate to="/onboarding" replace />;
   }
   return <>{children}</>;
 }

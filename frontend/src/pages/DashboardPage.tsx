@@ -111,7 +111,7 @@ export function DashboardPage() {
   }, [load]);
 
   useEffect(() => {
-    // Public demos never need the real-sheet setup wizard.
+    // Demos use forced /onboarding, not the Home setup modal.
     if (user?.is_demo) {
       setSetupPromptOpen(false);
       return;

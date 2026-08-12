@@ -293,12 +293,18 @@ def test_demos_have_no_personal_residue(dual_demo_env):
         assert "My business" not in blob
         assert "filament" not in blob.lower()
 
-        # bootstrap blocked
-        boot = client.post("/api/categories/bootstrap-rules", json={"also_apply": False})
-        assert boot.status_code == 403
+        # Sandbox may bootstrap; tour must not (owner keyword pack).
+        boot_sandbox = client.post(
+            "/api/categories/bootstrap-rules", json={"also_apply": False}
+        )
+        assert boot_sandbox.status_code == 200, boot_sandbox.text
 
         client.post("/api/auth/logout")
         assert client.post("/api/auth/demo/tour").status_code == 200
+        boot_tour = client.post(
+            "/api/categories/bootstrap-rules", json={"also_apply": False}
+        )
+        assert boot_tour.status_code == 403, boot_tour.text
         txs = client.get("/api/transactions")
         assert txs.status_code == 200
         assert "BIERNAT" not in txs.text.upper()

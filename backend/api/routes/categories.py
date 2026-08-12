@@ -254,12 +254,13 @@ async def bootstrap_rules(
     user: UserDep,
     body: BootstrapBody | None = None,
 ) -> dict[str, Any]:
-    if user.is_demo:
+    # Sample portfolio (tour) is educational read-only; sandbox may bootstrap.
+    if user.is_demo and user.demo_kind == "tour":
         raise HTTPException(
             status_code=403,
             detail=(
-                "Bootstrap rules are disabled in public demos "
-                "(owner keyword pack is personal). Use a real account."
+                "Bootstrap rules are disabled in the sample portfolio walkthrough. "
+                "Use the sandbox demo or a real account to try rules."
             ),
         )
     also = True if body is None else body.also_apply

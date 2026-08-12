@@ -4,6 +4,14 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Demo accounts start on setup onboarding
+
+- Both sandbox and tour enter → `/onboarding` (reset per-demo localStorage keys).
+- Force gate: incomplete demo onboarding cannot browse app (except Settings).
+- Tour: educational setup copy + final **reveal** step (“see account in use”) then full synthetic portfolio.
+- Sandbox: interactive setup (upload/bootstrap allowed); tour bootstrap stays 403.
+- Real-user onboarding key unchanged.
+
 ## 2026-08-12 — Tour showcase seed + market value fix
 
 - Tour had open lots but **empty Prices** → `portfolio_snapshot` set `total_market_value` null; soft refresh skipped for `isReadOnly` and middleware blocked `POST /prices/refresh`.
