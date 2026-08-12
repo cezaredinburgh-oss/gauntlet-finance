@@ -141,6 +141,7 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 - Alerts badge: v3 localStorage by stable id + 7d TTL + level escalate; Mark all seen; body drift no longer rebadges.
 - Price history: daily trade markers snap to series day on interior Yahoo gaps; crypto densify fills short holes (≤3d); 7d/1m X-axis shows every day label; FE trade attach nearest prior day.
 - Position detail: external research links (Google/Yahoo Finance, X cashtag, CoinGecko/TradingView by asset class).
+- Research links fix: stock/ETF Google Finance uses `tbm=fin` search (bare `/quote/TICKER` 404s on GF beta); crypto keeps `TICKER-USD` quote path; CoinGecko majors deep-link coin pages; crypto TradingView uses `TICKERUSD` (not `TICKER-USD`).
 
 ## 2026-08-12 — Analysis capital flows hero
 

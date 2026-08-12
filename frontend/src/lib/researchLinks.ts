@@ -1,6 +1,10 @@
 /**
  * External research URLs for a ticker / asset class.
  * Client-only; no PII. Open with target=_blank + rel=noopener noreferrer.
+ *
+ * Google Finance equities require SYMBOL:EXCHANGE; bare /quote/TICKER 404s.
+ * Stocks/ETFs therefore use Google Finance search (tbm=fin), which resolves
+ * the listing. Crypto quotes use Yahoo-style TICKER-USD on Google/Yahoo.
  */
 
 export type ResearchLink = {
@@ -8,6 +12,49 @@ export type ResearchLink = {
   label: string;
   href: string;
   description?: string;
+};
+
+/** CoinGecko coin ids for liquid majors (ticker → path slug). */
+const COINGECKO_IDS: Record<string, string> = {
+  BTC: "bitcoin",
+  ETH: "ethereum",
+  SOL: "solana",
+  ADA: "cardano",
+  XRP: "ripple",
+  DOGE: "dogecoin",
+  DOT: "polkadot",
+  AVAX: "avalanche-2",
+  MATIC: "matic-network",
+  POL: "polygon-ecosystem-token",
+  LINK: "chainlink",
+  UNI: "uniswap",
+  ATOM: "cosmos",
+  LTC: "litecoin",
+  BNB: "binancecoin",
+  BCH: "bitcoin-cash",
+  NEAR: "near",
+  APT: "aptos",
+  ARB: "arbitrum",
+  OP: "optimism",
+  SUI: "sui",
+  TON: "the-open-network",
+  TRX: "tron",
+  XLM: "stellar",
+  ALGO: "algorand",
+  FIL: "filecoin",
+  ICP: "internet-computer",
+  HBAR: "hedera-hashgraph",
+  SHIB: "shiba-inu",
+  PEPE: "pepe",
+  AAVE: "aave",
+  MKR: "maker",
+  CRV: "curve-dao-token",
+  RENDER: "render-token",
+  INJ: "injective-protocol",
+  SEI: "sei-network",
+  TIA: "celestia",
+  WIF: "dogwifcoin",
+  BONK: "bonk",
 };
 
 function isCrypto(assetClass?: string | null): boolean {
@@ -22,6 +69,43 @@ export function yahooSymbol(ticker: string, assetClass?: string | null): string 
   return t;
 }
 
+/** Google Finance: equities need exchange resolution; crypto uses Yahoo pair. */
+export function googleFinanceHref(
+  ticker: string,
+  assetClass?: string | null,
+): string {
+  const t = ticker.trim().toUpperCase();
+  if (!t) return "https://www.google.com/finance/";
+  if (isCrypto(assetClass)) {
+    const ysym = yahooSymbol(t, assetClass);
+    return `https://www.google.com/finance/quote/${encodeURIComponent(ysym)}`;
+  }
+  // tbm=fin resolves SYMBOL:EXCHANGE (bare /quote/TICKER is 404 on GF beta)
+  return `https://www.google.com/search?q=${encodeURIComponent(t)}&tbm=fin`;
+}
+
+export function coingeckoHref(ticker: string): string {
+  const t = ticker.trim().toUpperCase();
+  const id = COINGECKO_IDS[t];
+  if (id) return `https://www.coingecko.com/en/coins/${id}`;
+  return `https://www.coingecko.com/en/search?query=${encodeURIComponent(t)}`;
+}
+
+/** TradingView path symbol (no colon): equities bare; crypto TICKERUSD. */
+export function tradingViewSymbol(
+  ticker: string,
+  assetClass?: string | null,
+): string {
+  const t = ticker.trim().toUpperCase();
+  if (!t) return t;
+  if (isCrypto(assetClass)) {
+    // BTC-USD / BTC → BTCUSD (BTC-USD path 404s on TradingView)
+    const base = t.includes("-") ? t.split("-")[0]! : t;
+    return `${base}USD`;
+  }
+  return t;
+}
+
 export function buildResearchLinks(
   ticker: string,
   assetClass?: string | null,
@@ -32,13 +116,14 @@ export function buildResearchLinks(
   const crypto = isCrypto(assetClass);
   const q = encodeURIComponent(t);
   const yq = encodeURIComponent(ysym);
+  const tv = encodeURIComponent(tradingViewSymbol(t, assetClass));
 
   const links: ResearchLink[] = [
     {
       id: "google-finance",
       label: "Google Finance",
-      href: `https://www.google.com/finance/quote/${yq}`,
-      description: "Quotes and news",
+      href: googleFinanceHref(t, assetClass),
+      description: crypto ? "Quotes and news" : "Quotes and news (resolves exchange)",
     },
     {
       id: "yahoo-finance",
@@ -63,9 +148,15 @@ export function buildResearchLinks(
     });
     links.push({
       id: "coingecko",
-      label: "CoinGecko search",
-      href: `https://www.coingecko.com/en/search?query=${q}`,
+      label: COINGECKO_IDS[t] ? "CoinGecko" : "CoinGecko search",
+      href: coingeckoHref(t),
       description: "Market data",
+    });
+    links.push({
+      id: "tradingview",
+      label: "TradingView",
+      href: `https://www.tradingview.com/symbols/${tv}/`,
+      description: "Technical chart",
     });
   } else {
     links.push({
@@ -77,7 +168,7 @@ export function buildResearchLinks(
     links.push({
       id: "tradingview",
       label: "TradingView",
-      href: `https://www.tradingview.com/symbols/${yq}/`,
+      href: `https://www.tradingview.com/symbols/${tv}/`,
       description: "Technical chart",
     });
   }
