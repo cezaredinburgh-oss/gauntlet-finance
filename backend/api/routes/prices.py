@@ -10,7 +10,7 @@ from backend.api.deps import RepoDep, SettingsDep, UserDep
 from backend.api.schemas import PriceHistoryResponse, PriceRefreshResponse
 from backend.services.price_history import PriceHistoryService
 from backend.services.prices import PriceService
-from backend.services.response_cache import cache_invalidate
+from backend.services.response_cache import cache_invalidate, cached
 
 router = APIRouter(tags=["prices"])
 
@@ -34,41 +34,57 @@ async def price_history(
     """Google Finance–style history for open positions (yfinance daily / 5m)."""
     if not settings.yfinance_enabled:
         raise HTTPException(status_code=503, detail="yfinance disabled")
-    svc = PriceHistoryService(
-        repo,
-        cache_ttl_seconds=settings.price_history_cache_ttl_seconds,
-        intraday_cache_ttl_seconds=settings.price_history_intraday_cache_ttl_seconds,
-        enabled=True,
-    )
-    try:
-        result = svc.history(
-            scope=scope,
-            range_key=range_key,
-            ticker=ticker,
-            asset_class=asset_class,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=502, detail=f"Price history fetch failed: {exc}"
-        ) from exc
 
-    return PriceHistoryResponse(
-        scope=result.scope,
-        label=result.label,
-        range=result.range,
-        currency=result.currency,
-        series_kind=result.series_kind,
-        interval=result.interval,
-        as_of=result.as_of.isoformat(),
-        points=[{"date": p["date"], "value": p["value"]} for p in result.points],
-        meta=result.meta,
+    range_norm = (range_key or "1y").strip().lower()
+    # Short TTL for 1D (live); multi-day can sit longer — soft mark ticks no longer
+    # bust this unless quotes_updated.
+    ttl = 45.0 if range_norm == "1d" else 180.0
+    cache_key = (
+        f"phist:{scope}:{range_norm}:{(ticker or '').upper()}:"
+        f"{(asset_class or '').lower()}:{settings.holding_period_exemption_days}"
     )
+
+    def _build() -> PriceHistoryResponse:
+        svc = PriceHistoryService(
+            repo,
+            cache_ttl_seconds=settings.price_history_cache_ttl_seconds,
+            intraday_cache_ttl_seconds=settings.price_history_intraday_cache_ttl_seconds,
+            enabled=True,
+        )
+        try:
+            result = svc.history(
+                scope=scope,
+                range_key=range_key,
+                ticker=ticker,
+                asset_class=asset_class,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=502, detail=f"Price history fetch failed: {exc}"
+            ) from exc
+
+        return PriceHistoryResponse(
+            scope=result.scope,
+            label=result.label,
+            range=result.range,
+            currency=result.currency,
+            series_kind=result.series_kind,
+            interval=result.interval,
+            as_of=result.as_of.isoformat(),
+            points=[{"date": p["date"], "value": p["value"]} for p in result.points],
+            meta=result.meta,
+        )
+
+    try:
+        return cached(cache_key, ttl, _build)
+    except HTTPException:
+        raise
 
 
 @router.get("/prices/window-performance")
@@ -124,11 +140,15 @@ async def refresh_prices(
 
     # Portfolio MV charts use /prices/history (holdings as-of each day × market series).
     # No longer write PortfolioSnapshots on refresh.
-
-    cache_invalidate("snap:")
-    cache_invalidate("dash:")
-    # Digests include mark-to-market ROI; must not serve pre-refresh unpriced payloads
-    cache_invalidate("ticker-digests:")
+    #
+    # Soft ticks often re-hit yfinance TTL with identical marks — skip cache
+    # bust + client cascade so snapshot/history are not rebuilt every 60s.
+    if result.quotes_updated or force:
+        cache_invalidate("snap:")
+        cache_invalidate("dash:")
+        # Digests include mark-to-market ROI; must not serve pre-refresh unpriced payloads
+        cache_invalidate("ticker-digests:")
+        cache_invalidate("phist:")
 
     return PriceRefreshResponse(
         as_of=result.as_of.isoformat(),
@@ -150,4 +170,5 @@ async def refresh_prices(
         ],
         positions=result.positions,
         errors=result.errors,
+        quotes_updated=bool(result.quotes_updated or force),
     )

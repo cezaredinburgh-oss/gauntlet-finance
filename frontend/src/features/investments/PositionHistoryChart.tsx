@@ -247,7 +247,8 @@ export function PositionHistoryChart({
     };
   }, [fetchHistory, refreshTick]);
 
-  // Per-ticker performance for selected range (strip under chart)
+  // Per-ticker performance for selected range (strip under chart).
+  // Tied to range only — not soft price ticks (window-perf is Yahoo-heavy).
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -271,19 +272,27 @@ export function PositionHistoryChart({
     return () => {
       cancelled = true;
     };
-  }, [range, refreshTick]);
+  }, [range]);
 
-  // Soft refetch when Layout (price coordinator) refreshes marks — no second 60s poll
+  // Soft mark updates: only rebuild path for 1D (live). Multi-day Yahoo history
+  // does not need a full refetch every soft tick (was causing thrash + load fails).
   useEffect(() => {
-    const onPrices = () => setRefreshTick((n) => n + 1);
+    const onPrices = (ev: Event) => {
+      const soft =
+        typeof CustomEvent !== "undefined" &&
+        ev instanceof CustomEvent &&
+        Boolean((ev.detail as { soft?: boolean } | undefined)?.soft);
+      if (soft && range !== "1d") return;
+      setRefreshTick((n) => n + 1);
+    };
     window.addEventListener("prices-updated", onPrices);
     return () => window.removeEventListener("prices-updated", onPrices);
-  }, []);
+  }, [range]);
 
   // Pop-out has no Layout coordinator; keep light 1D watch poll there only
   useEffect(() => {
     if (variant !== "popout" || range !== "1d") return;
-    const id = window.setInterval(() => setRefreshTick((n) => n + 1), 60_000);
+    const id = window.setInterval(() => setRefreshTick((n) => n + 1), 90_000);
     return () => window.clearInterval(id);
   }, [range, variant]);
 

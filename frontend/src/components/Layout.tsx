@@ -402,6 +402,8 @@ export function Layout() {
       busy = true;
       try {
         const r = await api.refreshPrices(false);
+        // Skip fan-out when marks did not move — avoids snapshot/history thrash.
+        if (r.quotes_updated === false) return;
         window.dispatchEvent(
           new CustomEvent("prices-updated", {
             detail: { quote_count: r.quote_count, as_of: r.as_of, soft: true },
@@ -414,7 +416,8 @@ export function Layout() {
       }
     };
 
-    const id = window.setInterval(() => void tick(), 60_000);
+    // Soft desk marks; full force of Yahoo history is no longer every tick.
+    const id = window.setInterval(() => void tick(), 90_000);
     const onVis = () => {
       if (document.visibilityState === "visible") void tick();
     };

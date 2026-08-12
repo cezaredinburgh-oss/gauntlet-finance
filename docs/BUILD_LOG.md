@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Perf: quiet soft-refresh thrash + cheaper history
+
+- Soft price refresh: skip Sheets write / cache invalidate / client fan-out when marks did not move (`quotes_updated`).
+- Chart: multi-day history no longer refetches on soft `prices-updated`; window-performance only on range change.
+- History: one Prices read for book meta; day-change from series (no extra 5m book download); no per-ticker yfinance fallback when batch frame exists; short response cache (`phist:`).
+- Soft interval 90s.
+
 ## 2026-08-12 — 1D chart: honest path + desk book secondary
 
 - Reversed 1D tip-pin (no rewriting last Yahoo bar → no fake cliff).

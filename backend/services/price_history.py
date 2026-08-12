@@ -522,7 +522,10 @@ def _yfinance_history_batch(
         try:
             close = _extract_close_series(data, ysym)
             series = _series_from_close(close, intraday=intraday)
-            if not series:
+            # Per-ticker fallback only when the whole batch frame is empty.
+            # Sequential Ticker.history for every missing name was a major
+            # latency/timeout source under soft-refresh thrash.
+            if not series and data is None:
                 t = yf.Ticker(ysym)
                 hist = t.history(period=period, interval=interval, auto_adjust=True)
                 if hist is not None and not hist.empty:
@@ -1680,7 +1683,7 @@ class PriceHistoryService:
         return qty, cost, ac_map
 
     def _book_prices_usd(self) -> dict[str, Decimal]:
-        """Latest Prices-tab USD marks keyed by ticker."""
+        """Latest Prices-tab USD marks keyed by ticker (one Sheets list per call)."""
         from backend.schema.models import Price
 
         out: dict[str, Decimal] = {}
@@ -1693,17 +1696,24 @@ class PriceHistoryService:
             out[t] = row.price if isinstance(row.price, Decimal) else Decimal(str(row.price))
         return out
 
-    def _book_price_usd(self, ticker: str) -> Decimal | None:
-        return self._book_prices_usd().get(ticker.strip().upper())
+    def _book_price_usd(
+        self, ticker: str, prices: dict[str, Decimal] | None = None
+    ) -> Decimal | None:
+        m = prices if prices is not None else self._book_prices_usd()
+        return m.get(ticker.strip().upper())
 
-    def _book_mv_from_qty(self, qty_map: dict[str, Decimal]) -> Decimal | None:
-        prices = self._book_prices_usd()
-        if not qty_map or not prices:
+    def _book_mv_from_qty(
+        self,
+        qty_map: dict[str, Decimal],
+        prices: dict[str, Decimal] | None = None,
+    ) -> Decimal | None:
+        px_map = prices if prices is not None else self._book_prices_usd()
+        if not qty_map or not px_map:
             return None
         total = Decimal("0")
         any_priced = False
         for t, qty in qty_map.items():
-            px = prices.get(t.upper())
+            px = px_map.get(t.upper())
             if px is None or qty <= 0:
                 continue
             total += qty * px
@@ -1715,9 +1725,10 @@ class PriceHistoryService:
         open_lots: list[InvestmentLot],
         *,
         asset_class: AssetClass | None = None,
+        prices: dict[str, Decimal] | None = None,
     ) -> Decimal | None:
-        prices = self._book_prices_usd()
-        if not prices:
+        px_map = prices if prices is not None else self._book_prices_usd()
+        if not px_map:
             return None
         total = Decimal("0")
         any_priced = False
@@ -1726,7 +1737,7 @@ class PriceHistoryService:
             if asset_class is not None:
                 if lot.asset_class is None or lot.asset_class != asset_class:
                     continue
-            px = prices.get(t)
+            px = px_map.get(t)
             if px is None:
                 continue
             total += lot.quantity_remaining * px
@@ -1795,10 +1806,16 @@ class PriceHistoryService:
         try:
             if main_range == "1d" and main_series is not None:
                 return _day_change_from_series(main_series, places=places)
+            # Prefer last two points of the daily series already on the chart
+            # (avoids a second full Yahoo 5m download for every 7d/1y request).
+            if main_series is not None and len(main_series) >= 2:
+                # Daily series: approximate "day" as last bar vs prior bar
+                return _day_change_from_series(main_series[-2:], places=places)
             tickers = sorted(qty_map.keys())
             if not tickers:
                 return _day_change_from_series([], places=places)
-            closes = self._fetch_closes(tickers, ac_map, "1d", "5m")
+            # Cheap daily closes only — not 5m for the whole book
+            closes = self._fetch_closes(tickers, ac_map, "5d", "1d")
             if series_kind == "price":
                 t = tickers[0]
                 return _day_change_from_series(closes.get(t, []), places=places)
@@ -1850,9 +1867,10 @@ class PriceHistoryService:
             missing = [] if series else [t]
             qty = qty_map[t]
             avg_cost = (cost / qty) if qty > 0 else None
+            book_prices = self._book_prices_usd()
             # Desk quote for UI parity (never rewrite 1D path — that fakes a cliff).
             # Daily ranges only: pin tip to book so multi-day "last" matches desk.
-            book_px = self._book_price_usd(t)
+            book_px = self._book_price_usd(t, book_prices)
             if (
                 not is_intraday
                 and book_px is not None
@@ -1872,7 +1890,7 @@ class PriceHistoryService:
                 ac_map,
                 series_kind="price",
                 main_range=range_norm,
-                main_series=series if range_norm == "1d" else None,
+                main_series=series,
                 places=places,
             )
             ysym = _normalize_yahoo_symbol(t, ac_map.get(t))
@@ -2062,11 +2080,12 @@ class PriceHistoryService:
         # Desk book MV (same formula as executive snapshot). Exposed in meta for UI.
         # Daily only: pin series tip to book so multi-day last matches desk.
         # 1D: never rewrite the path tip — that fakes a cliff vs Yahoo 5m bars.
+        book_prices = self._book_prices_usd()
         book_mv: Decimal | None = self._book_market_value_usd(
-            lots, asset_class=ac_filter
+            lots, asset_class=ac_filter, prices=book_prices
         )
         if book_mv is None and qty_map:
-            book_mv = self._book_mv_from_qty(qty_map)
+            book_mv = self._book_mv_from_qty(qty_map, book_prices)
         if not is_intraday and mv_series and book_mv is not None:
             mv_series = list(mv_series)
             last_ts = mv_series[-1][0]
@@ -2133,7 +2152,7 @@ class PriceHistoryService:
                 ac_map,
                 series_kind="market_value",
                 main_range=range_norm,
-                main_series=mv_series if range_norm == "1d" else None,
+                main_series=mv_series,
                 places=2,
             )
         else:
@@ -2142,7 +2161,7 @@ class PriceHistoryService:
                 ac_map,
                 series_kind="market_value",
                 main_range=range_norm,
-                main_series=mv_series if range_norm == "1d" else None,
+                main_series=mv_series,
                 places=2,
             )
         short = agg_meta.get("short_history_tickers") or []

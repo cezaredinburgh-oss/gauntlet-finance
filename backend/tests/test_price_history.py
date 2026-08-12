@@ -185,7 +185,8 @@ def test_history_ticker_mocked():
     assert len(result.points) == 2
     assert result.meta["change_pct"] == 100.0
     assert result.meta["avg_cost_usd"] == "0.1000"
-    assert result.meta["day_change_pct"] == pytest.approx(6.67, abs=0.02)
+    # Day change uses last two bars of the displayed series (no extra 5m Yahoo hop)
+    assert result.meta["day_change_pct"] == pytest.approx(100.0, abs=0.02)
     assert result.meta["missing_tickers"] == []
 
 

@@ -31,11 +31,18 @@ class PriceQuote:
 
 @dataclass
 class PortfolioValuation:
+    """Result of refresh_and_store.
+
+    ``quotes_updated`` is True when Prices tab was written (material change)
+    or force refresh — API/clients should invalidate and refetch.
+    """
+
     as_of: datetime
     quotes: list[PriceQuote]
     positions: list[dict[str, Any]] = field(default_factory=list)
     total_market_value_usd: Decimal | None = None
     errors: list[str] = field(default_factory=list)
+    quotes_updated: bool = True
 
 
 def _normalize_yahoo_symbol(ticker: str, asset_class: str | None = None) -> str:
@@ -207,15 +214,39 @@ class PriceService:
         if missing:
             errors.append(f"No price for: {', '.join(sorted(missing)[:20])}")
 
-        # Persist Prices tab (upsert by ticker: replace previous row for ticker)
+        # Persist Prices tab only when marks moved (or force). Soft ticks that
+        # re-use the process cache used to rewrite Sheets + invalidate every 60s.
         existing = [
             r for r in self.repo.list_rows("Prices") if isinstance(r, Price)
         ]
         by_ticker = {p.ticker.upper(): p for p in existing if not p.archived}
         ts = utc_now()
         to_write: list[Price] = []
+        material_change = force or not by_ticker
         for q in quotes:
             prev = by_ticker.get(q.ticker.upper())
+            if prev is None:
+                material_change = True
+            else:
+                try:
+                    if prev.price != q.price:
+                        # Ignore pure noise: relative move under 1 bp and abs < $0.0001
+                        prev_p = (
+                            prev.price
+                            if isinstance(prev.price, Decimal)
+                            else Decimal(str(prev.price))
+                        )
+                        diff = abs(prev_p - q.price)
+                        if prev_p != 0:
+                            rel = diff / abs(prev_p)
+                        else:
+                            rel = diff
+                        if diff >= Decimal("0.0001") and rel >= Decimal("0.0001"):
+                            material_change = True
+                        elif force:
+                            material_change = True
+                except Exception:  # noqa: BLE001
+                    material_change = True
             to_write.append(
                 Price(
                     id=prev.id if prev else uuid4(),
@@ -228,8 +259,14 @@ class PriceService:
                     updated_at=ts,
                 )
             )
-        if to_write:
+        quotes_updated = False
+        if to_write and material_change:
             self.repo.upsert_rows("Prices", to_write)
+            quotes_updated = True
+        elif force and to_write:
+            # force with identical marks still refreshes as_of timestamps
+            self.repo.upsert_rows("Prices", to_write)
+            quotes_updated = True
 
         # Build positions
         positions: list[dict[str, Any]] = []
@@ -265,4 +302,5 @@ class PriceService:
             positions=positions,
             total_market_value_usd=total if quotes else None,
             errors=errors,
+            quotes_updated=quotes_updated or force,
         )

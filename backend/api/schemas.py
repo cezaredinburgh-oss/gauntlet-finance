@@ -75,6 +75,8 @@ class PriceRefreshResponse(BaseModel):
     quotes: list[dict[str, Any]]
     positions: list[dict[str, Any]]
     errors: list[str] = Field(default_factory=list)
+    # False when soft refresh found no material mark change (skip client cascade).
+    quotes_updated: bool = True
 
 
 class PriceHistoryPoint(BaseModel):

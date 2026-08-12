@@ -683,6 +683,8 @@ export type PriceRefresh = {
   }>;
   positions: Array<Record<string, string | null>>;
   errors: string[];
+  /** False when soft refresh found no material mark change. */
+  quotes_updated?: boolean;
 };
 
 export type TaxDisposal = {
