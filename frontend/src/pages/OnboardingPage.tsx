@@ -777,9 +777,20 @@ function UploadStep({
           </p>
         )}
         {sandboxSetup && (
-          <p className="rounded-xl border border-brand/30 bg-brand/10 px-3 py-2 text-xs text-ink-muted">
-            Sandbox uploads are real (memory only) and wipe when you sign out.
-          </p>
+          <div className="space-y-2 rounded-xl border border-brand/30 bg-brand/10 px-3 py-2 text-xs text-ink-muted">
+            <p>
+              Sandbox uploads are real (memory only) and wipe when you sign out.
+            </p>
+            <p>
+              <strong className="text-ink">Grok assist:</strong> if a CSV is not a known
+              bank format, open the full{" "}
+              <Link to="/upload" className="text-brand hover:underline">
+                Upload
+              </Link>{" "}
+              page and use <strong className="text-ink">Map with Grok</strong> (preview →
+              import). Works in this demo even without an API key (local demo mapper).
+            </p>
+          </div>
         )}
       </section>
 
@@ -990,9 +1001,22 @@ function RulesStep({
           <li>Rules fill blanks only; manual overrides are preserved.</li>
           <li>
             Optional: after import, use <strong className="text-ink-muted">Suggest with Grok</strong>{" "}
-            on Categorize for remaining merchants (server key; you still confirm each apply).
+            on Categorize for remaining merchants (you still confirm each apply).
+            {sandboxSetup
+              ? " Sandbox includes a demo AI path without a Grok key."
+              : " Production uses your server XAI_API_KEY when enabled."}
           </li>
         </ul>
+        {sandboxSetup && !preview && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Link to="/expenses/categorize" className="btn-secondary text-xs">
+              Open Categorize · Grok suggest
+            </Link>
+            <Link to="/upload" className="btn-secondary text-xs">
+              Open Upload · Map with Grok
+            </Link>
+          </div>
+        )}
         {preview && (
           <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
             {tourGuide

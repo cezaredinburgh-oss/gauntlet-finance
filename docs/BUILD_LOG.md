@@ -159,6 +159,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 - `POST /api/ai/import-mapped` → soft parse cash txs → same SHA/dedupe/categorize/transfer path (`parser_key=ai_cash_map`).
 - Upload UI: Map with Grok → preview → Import. XLSX/investment formats out of scope.
 
+## 2026-08-12 — Grok on writable sandbox demo
+
+- Sandbox (`demo_kind=sandbox`) gets categorize-suggest + cash map even without `XAI_API_KEY` via `AI_SANDBOX_FALLBACK` heuristics (mode `sandbox_demo`).
+- Real Grok still used when platform key is configured.
+- Tour remains read-only / AI-blocked. Onboarding sandbox copy + deep links to Categorize/Upload AI.
+
 ## 2026-08-12 — Analysis capital flows hero
 
 - Analysis: removed HealthBand; order is buy/sell cashflow → combined living-draw + fees + staking hero → FX chart.

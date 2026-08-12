@@ -428,11 +428,15 @@ def map_statement_bytes(
     settings: Settings | None = None,
     transport: ChatTransport | None = None,
     chat_fn: Callable[..., ChatResult] | None = None,
+    sandbox: bool = False,
 ) -> MapResult:
     s = settings or get_settings()
     content_hash = sha256_hex(file_bytes)
+    use_sandbox_fallback = (
+        sandbox and s.ai_sandbox_fallback and not s.ai_configured
+    )
 
-    if not s.ai_enabled:
+    if not s.ai_enabled and not use_sandbox_fallback:
         return MapResult(
             enabled=False,
             configured=False,
@@ -450,7 +454,7 @@ def map_statement_bytes(
             quota_cap=s.ai_daily_token_cap,
             message="AI assist is disabled (set AI_ENABLED=true).",
         )
-    if not s.ai_configured:
+    if not s.ai_configured and not use_sandbox_fallback:
         return MapResult(
             enabled=True,
             configured=False,
@@ -491,6 +495,54 @@ def map_statement_bytes(
             quota_used=snap.used,
             quota_cap=snap.cap,
             message=str(exc),
+        )
+
+    if use_sandbox_fallback:
+        from backend.services.ai_sandbox_fallback import map_headers_heuristic
+
+        try:
+            mapping = map_headers_heuristic(table.headers)
+            preview = preview_from_mapping(file_bytes, mapping)
+        except Exception as exc:
+            snap = ai_quota.snapshot(
+                principal, cap=s.ai_daily_token_cap, global_cap=s.ai_global_daily_token_cap
+            )
+            return MapResult(
+                enabled=True,
+                configured=True,
+                model="sandbox-heuristic",
+                content_sha256=content_hash,
+                eligible=True,
+                headers=table.headers,
+                delimiter=table.delimiter,
+                sample_row_count=len(table.rows),
+                total_data_rows=table.row_count,
+                mapping=None,
+                preview=[],
+                tokens_used=0,
+                quota_used=snap.used,
+                quota_cap=snap.cap,
+                message=str(exc),
+            )
+        snap = ai_quota.snapshot(
+            principal, cap=s.ai_daily_token_cap, global_cap=s.ai_global_daily_token_cap
+        )
+        return MapResult(
+            enabled=True,
+            configured=True,
+            model="sandbox-heuristic",
+            content_sha256=content_hash,
+            eligible=True,
+            headers=table.headers,
+            delimiter=table.delimiter,
+            sample_row_count=len(table.rows),
+            total_data_rows=table.row_count,
+            mapping=mapping,
+            preview=preview,
+            tokens_used=0,
+            quota_used=snap.used,
+            quota_cap=snap.cap,
+            message=None,
         )
 
     user_payload = _build_user_payload(table)

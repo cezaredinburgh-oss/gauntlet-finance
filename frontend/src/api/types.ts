@@ -1011,6 +1011,8 @@ export type AiStatus = {
   max_merchants_per_request: number;
   byok: boolean;
   mode: string;
+  /** True when sandbox uses local heuristics (no XAI key). */
+  sandbox_fallback?: boolean;
   quota_used: number;
   quota_cap: number;
   quota_remaining: number;

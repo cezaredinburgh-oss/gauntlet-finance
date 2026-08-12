@@ -256,16 +256,33 @@ def _validate_suggestions(
     return out
 
 
-def status_payload(settings: Settings | None = None) -> dict[str, Any]:
+def status_payload(
+    settings: Settings | None = None,
+    *,
+    sandbox: bool = False,
+) -> dict[str, Any]:
     s = settings or get_settings()
+    if s.ai_configured:
+        mode = "platform"
+        configured = True
+        model = s.ai_model
+    elif sandbox and s.ai_sandbox_fallback:
+        mode = "sandbox_demo"
+        configured = True
+        model = "sandbox-heuristic"
+    else:
+        mode = "off"
+        configured = False
+        model = None
     return {
-        "enabled": bool(s.ai_enabled),
-        "configured": s.ai_configured,
-        "model": s.ai_model if s.ai_configured else None,
+        "enabled": bool(s.ai_enabled) or (sandbox and s.ai_sandbox_fallback),
+        "configured": configured,
+        "model": model,
         "daily_token_cap": s.ai_daily_token_cap,
         "max_merchants_per_request": s.ai_max_merchants_per_request,
         "byok": False,
-        "mode": "platform" if s.ai_configured else "off",
+        "mode": mode,
+        "sandbox_fallback": bool(sandbox and s.ai_sandbox_fallback and not s.ai_configured),
     }
 
 
@@ -278,12 +295,18 @@ def suggest_categories(
     limit: int | None = None,
     transport: ChatTransport | None = None,
     chat_fn: Callable[..., ChatResult] | None = None,
+    sandbox: bool = False,
 ) -> SuggestResult:
     """
     Build merchant clusters from blank txs and ask Grok for category ids.
+
+    Writable sandbox demos may use local heuristics when no XAI key is set.
     """
     s = settings or get_settings()
-    if not s.ai_enabled:
+    use_sandbox_fallback = (
+        sandbox and s.ai_sandbox_fallback and not s.ai_configured
+    )
+    if not s.ai_enabled and not use_sandbox_fallback:
         return SuggestResult(
             enabled=False,
             configured=False,
@@ -296,7 +319,7 @@ def suggest_categories(
             quota_cap=s.ai_daily_token_cap,
             message="AI assist is disabled (set AI_ENABLED=true).",
         )
-    if not s.ai_configured:
+    if not s.ai_configured and not use_sandbox_fallback:
         return SuggestResult(
             enabled=True,
             configured=False,
@@ -327,7 +350,7 @@ def suggest_categories(
         return SuggestResult(
             enabled=True,
             configured=True,
-            model=s.ai_model,
+            model="sandbox-heuristic" if use_sandbox_fallback else s.ai_model,
             suggestions=[],
             merchants_considered=0,
             merchants_suggested=0,
@@ -335,6 +358,30 @@ def suggest_categories(
             quota_used=snap.used,
             quota_cap=snap.cap,
             message="No uncategorized merchants to suggest.",
+        )
+
+    if use_sandbox_fallback:
+        from backend.services.ai_sandbox_fallback import suggest_merchants_heuristic
+
+        suggestions = suggest_merchants_heuristic(clusters, categories)
+        snap = ai_quota.snapshot(
+            principal, cap=s.ai_daily_token_cap, global_cap=s.ai_global_daily_token_cap
+        )
+        return SuggestResult(
+            enabled=True,
+            configured=True,
+            model="sandbox-heuristic",
+            suggestions=suggestions,
+            merchants_considered=len(clusters),
+            merchants_suggested=len(suggestions),
+            tokens_used=0,
+            quota_used=snap.used,
+            quota_cap=snap.cap,
+            message=(
+                None
+                if suggestions
+                else "Sandbox demo found no merchant suggestions."
+            ),
         )
 
     catalog = _category_catalog(categories)

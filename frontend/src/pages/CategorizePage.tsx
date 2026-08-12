@@ -88,7 +88,8 @@ type RuleDraft = {
 };
 
 export function CategorizePage() {
-  const { isReadOnly } = useAuth();
+  const { isReadOnly, user } = useAuth();
+  const isSandboxDemo = Boolean(user?.is_demo && user?.demo_kind === "sandbox");
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<Transaction[]>([]);
   const [total, setTotal] = useState(0);
@@ -1011,7 +1012,9 @@ export function CategorizePage() {
               title={
                 isReadOnly
                   ? "Read-only demo — AI suggest is disabled"
-                  : "Grok suggests categories for uncategorized merchants (you confirm apply)"
+                  : isSandboxDemo
+                    ? "Sandbox demo: Grok or local demo AI for uncategorized merchants (you confirm apply)"
+                    : "Grok suggests categories for uncategorized merchants (you confirm apply)"
               }
               onClick={() =>
                 void runTool("ai", async () => {
@@ -1028,8 +1031,10 @@ export function CategorizePage() {
                   if (r.message && !(r.suggestions || []).length) {
                     return r.message;
                   }
+                  const engine =
+                    r.model === "sandbox-heuristic" ? "Demo AI" : "Grok";
                   return (
-                    `Grok · ${r.merchants_suggested}/${r.merchants_considered} merchants` +
+                    `${engine} · ${r.merchants_suggested}/${r.merchants_considered} merchants` +
                     (r.tokens_used ? ` · ~${r.tokens_used} tokens` : "") +
                     ` · quota ${r.quota_used}/${r.quota_cap}`
                   );
@@ -1037,7 +1042,11 @@ export function CategorizePage() {
               }
             >
               <Sparkles className="h-3 w-3" />
-              {toolsBusy === "ai" ? "Grok…" : "Suggest with Grok"}
+              {toolsBusy === "ai"
+                ? "Suggesting…"
+                : isSandboxDemo
+                  ? "Suggest with Grok"
+                  : "Suggest with Grok"}
             </button>
           </div>
           {toolsMsg && <p className="text-xs text-ink-muted">{toolsMsg}</p>}

@@ -203,9 +203,9 @@ export function SettingsPage() {
       <section className="card space-y-3 p-5">
         <h2 className="text-sm font-semibold">Grok AI assist</h2>
         <p className="text-xs text-ink-muted">
-          Platform testing mode: server-side xAI key only. Suggestions appear on
-          Categorize; nothing is applied until you confirm. BYOK and paid tiers
-          come later.
+          Categorize + unknown cash CSV mapping. Platform uses a server xAI key;
+          the writable sandbox demo also works offline with a local heuristic when
+          no key is set. Nothing is applied until you confirm.
         </p>
         {aiStatusError && (
           <p className="text-xs text-danger">{aiStatusError}</p>
@@ -234,11 +234,20 @@ export function SettingsPage() {
             </div>
           </dl>
         )}
+        {aiStatus?.sandbox_fallback && (
+          <p className="rounded-lg border border-brand/25 bg-brand/10 px-2.5 py-1.5 text-[11px] text-ink-muted">
+            Sandbox demo AI is active (local heuristics, no Grok API key). Real Grok
+            needs <code className="text-ink-muted">AI_ENABLED=true</code> and{" "}
+            <code className="text-ink-muted">XAI_API_KEY</code>.
+          </p>
+        )}
         {!aiStatus?.configured && !aiStatusError && (
           <p className="text-[11px] text-ink-faint">
-            To enable: set <code className="text-ink-muted">AI_ENABLED=true</code>{" "}
+            To enable real Grok: set <code className="text-ink-muted">AI_ENABLED=true</code>{" "}
             and <code className="text-ink-muted">XAI_API_KEY</code> in the API{" "}
-            <code className="text-ink-muted">.env</code>, then restart.
+            <code className="text-ink-muted">.env</code>, then restart. Sandbox demos
+            still get Map/Suggest via fallback when{" "}
+            <code className="text-ink-muted">AI_SANDBOX_FALLBACK</code> is on (default).
           </p>
         )}
       </section>

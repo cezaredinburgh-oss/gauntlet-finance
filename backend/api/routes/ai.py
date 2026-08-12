@@ -26,6 +26,7 @@ class AiStatusResponse(BaseModel):
     max_merchants_per_request: int = 0
     byok: bool = False
     mode: str = "off"
+    sandbox_fallback: bool = False
     quota_used: int = 0
     quota_cap: int = 0
     quota_remaining: int = 0
@@ -62,9 +63,15 @@ class CategorizeSuggestResponse(BaseModel):
     message: str | None = None
 
 
+def _is_writable_sandbox(user) -> bool:
+    return bool(user.is_demo and getattr(user, "demo_kind", "") == "sandbox")
+
+
 @router.get("/status", response_model=AiStatusResponse)
 def ai_status(user: UserDep, settings: SettingsDep) -> AiStatusResponse:
-    base = ai_categorize.status_payload(settings)
+    base = ai_categorize.status_payload(
+        settings, sandbox=_is_writable_sandbox(user)
+    )
     principal = ai_quota.principal_key(user.user_id, user.email)
     snap = ai_quota.snapshot(
         principal,
@@ -98,6 +105,7 @@ def categorize_suggest(
         settings=settings,
         source_file_ids=body.source_file_ids or None,
         limit=body.limit,
+        sandbox=_is_writable_sandbox(user),
     )
     return CategorizeSuggestResponse(
         enabled=result.enabled,
@@ -241,6 +249,7 @@ async def map_statement(
         content,
         principal=principal,
         settings=settings,
+        sandbox=_is_writable_sandbox(user),
     )
     return _map_result_to_response(result)
 

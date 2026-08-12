@@ -113,6 +113,8 @@ class Settings(BaseSettings):
     ai_global_daily_token_cap: int = 2_000_000  # env AI_GLOBAL_DAILY_TOKEN_CAP
     ai_max_merchants_per_request: int = 40  # env AI_MAX_MERCHANTS_PER_REQUEST
     ai_request_timeout_seconds: float = 60.0  # env AI_REQUEST_TIMEOUT_SECONDS
+    # Writable public sandbox: if no XAI key, use deterministic heuristics so demos work.
+    ai_sandbox_fallback: bool = True  # env AI_SANDBOX_FALLBACK
 
     @field_validator("spreadsheet_id", mode="before")
     @classmethod
@@ -181,6 +183,12 @@ class Settings(BaseSettings):
     def ai_configured(self) -> bool:
         """Kill switch + platform key present (testing / platform-paid path)."""
         return bool(self.ai_enabled and (self.xai_api_key or "").strip())
+
+    def ai_available_for_sandbox(self) -> bool:
+        """Sandbox may use real Grok or local fallback heuristics."""
+        if self.ai_configured:
+            return True
+        return bool(self.ai_sandbox_fallback)
 
 
 def validate_settings_for_boot(settings: Settings | None = None) -> None:
