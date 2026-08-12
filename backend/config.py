@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     # Cron / background jobs (optional)
     cron_secret: str = ""
 
+    # Multi-tenant SaaS (invite-only OAuth + one Google Sheet per user)
+    multi_tenant: bool = False  # env MULTI_TENANT
+    control_db_path: str = ""  # env CONTROL_DB_PATH — default data/gauntlet_control.db
+    platform_admin_emails: str = ""  # env PLATFORM_ADMIN_EMAILS — comma-separated
+    # When multi_tenant and no real Sheets: assign memory spreadsheet ids (tests / local)
+    multi_tenant_memory_sheets: bool = False  # env MULTI_TENANT_MEMORY_SHEETS
+
     @field_validator("spreadsheet_id", mode="before")
     @classmethod
     def strip_spreadsheet_id(cls, v: object) -> object:
@@ -105,7 +112,11 @@ class Settings(BaseSettings):
         - auth_mode is not open (e.g. oauth), or
         - ALLOW_OPEN_AUTH=true, or
         - APP_ENV is development/test (local and pytest).
+
+        Multi-tenant production never permits open auth (AC1).
         """
+        if self.multi_tenant and self.is_production:
+            return False
         if self.auth_mode not in {"dev", "disabled"}:
             return True
         if self.allow_open_auth:

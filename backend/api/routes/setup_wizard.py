@@ -53,6 +53,14 @@ def _wizard_allowed(
     - When SETUP_TOKEN is configured, write endpoints require matching X-Setup-Token.
     """
     settings = get_settings()
+    if settings.multi_tenant:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Setup wizard is disabled in multi-tenant mode. "
+                "Use invites + POST /api/tenant/provision (per-user sheet binding)."
+            ),
+        )
     if (
         settings.app_env == "production"
         and settings.spreadsheet_id

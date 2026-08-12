@@ -27,10 +27,12 @@ from backend.api.routes import (
     exports as exports_routes,
     fx as fx_routes,
     investments,
+    invites,
     prices,
     setup_wizard,
     sheets_status,
     tax,
+    tenant,
     transactions,
     upload,
 )
@@ -96,11 +98,17 @@ async def lifespan(app: FastAPI):
             settings.auth_mode,
         )
     logger.info(
-        "Starting %s (auth_mode=%s, spreadsheet=%s)",
+        "Starting %s (auth_mode=%s, spreadsheet=%s, multi_tenant=%s)",
         settings.app_name,
         settings.auth_mode,
         settings.spreadsheet_configured,
+        settings.multi_tenant,
     )
+    if settings.multi_tenant:
+        # Ensure control DB + platform admins exist at boot
+        from backend.tenancy.store import get_control_store
+
+        get_control_store(settings)
     yield
 
 
@@ -161,6 +169,8 @@ def create_app() -> FastAPI:
     api.include_router(tax.router)
     api.include_router(exports_routes.router)
     api.include_router(admin.router)
+    api.include_router(invites.router)
+    api.include_router(tenant.router)
     api.include_router(fx_routes.router)
 
     app.include_router(api)

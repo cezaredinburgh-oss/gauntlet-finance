@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
 import { api, setupWizardUrl } from "../api/client";
 import type { AlertItem, DashboardSummary, Health, PortfolioSnapshot } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
+import { SetupPromptModal } from "../components/SetupPromptModal";
 import {
   canGoNextMonth,
   loadStoredSpendingTimeframe,
@@ -10,6 +12,12 @@ import {
   shiftCalendarMonth,
   type TimeframeValue,
 } from "../lib/timeframe";
+import {
+  dismissOnboardingPrompt,
+  migrateLegacyOnboardingIfNeeded,
+  onboardingPath,
+  shouldShowSetupPrompt,
+} from "../lib/onboarding";
 import { d } from "../lib/money";
 import {
   ExecutiveHero,
@@ -24,6 +32,7 @@ import type { TickerDigest } from "../api/types";
  * Detail lives on Investments / Spending / Alerts.
  */
 export function DashboardPage() {
+  const navigate = useNavigate();
   const [cashTf, setCashTf] = useState<TimeframeValue>(() => loadStoredSpendingTimeframe());
   const [dash, setDash] = useState<DashboardSummary | null>(null);
   const [snap, setSnap] = useState<PortfolioSnapshot | null>(null);
@@ -33,6 +42,7 @@ export function DashboardPage() {
   const [wealthRefreshing, setWealthRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
+  const [setupPromptOpen, setSetupPromptOpen] = useState(false);
   const loadGen = useRef(0);
 
   const load = useCallback(
@@ -98,6 +108,16 @@ export function DashboardPage() {
     return () => window.removeEventListener("prices-updated", onPrices);
   }, [load]);
 
+  useEffect(() => {
+    if (health == null) return;
+    migrateLegacyOnboardingIfNeeded(health.spreadsheet_configured);
+    setSetupPromptOpen(
+      shouldShowSetupPrompt({
+        spreadsheetConfigured: health.spreadsheet_configured,
+      }),
+    );
+  }, [health]);
+
   function shiftCashMonth(delta: number) {
     const next = shiftCalendarMonth(cashTf, delta);
     setCashTf(next);
@@ -121,28 +141,20 @@ export function DashboardPage() {
   if (error && !dash) {
     return (
       <div className="space-y-4">
-        {needsSheet && (
-          <SetupSheetsBanner />
-        )}
+        {needsSheet && <SetupSheetsBanner />}
         <EmptyState
           title="Couldn’t load dashboard"
           description={
             needsSheet
-              ? "Google Sheets is not linked yet. Use the setup wizard, then retry."
+              ? "Google Sheets is not linked yet. Complete setup, then retry."
               : error
           }
           action={
             <div className="flex flex-wrap gap-2">
               {needsSheet && (
-                <a
-                  className="btn-primary inline-flex"
-                  href={setupWizardUrl()}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Connect Google Sheets
-                  <ExternalLink className="h-4 w-4" />
-                </a>
+                <Link className="btn-primary inline-flex" to={onboardingPath()}>
+                  Start setup
+                </Link>
               )}
               <button type="button" className="btn-secondary" onClick={() => void load()}>
                 Retry
@@ -161,6 +173,17 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      <SetupPromptModal
+        open={setupPromptOpen}
+        onDismiss={() => {
+          dismissOnboardingPrompt();
+          setSetupPromptOpen(false);
+        }}
+        onContinue={() => {
+          setSetupPromptOpen(false);
+          navigate(onboardingPath());
+        }}
+      />
       {needsSheet && <SetupSheetsBanner />}
       {snap ? (
         <ExecutiveHero
@@ -192,21 +215,26 @@ function SetupSheetsBanner() {
     <div className="rounded-2xl border border-brand/35 bg-brand/10 px-4 py-4 sm:px-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="text-sm font-semibold text-brand">Connect Google Sheets</div>
+          <div className="text-sm font-semibold text-brand">Finish setup</div>
           <p className="mt-1 max-w-xl text-xs text-ink-muted sm:text-sm">
-            New here? Link a private spreadsheet so Gauntlet can store your ledger. A short
-            guided wizard walks you through Cloud, key, sheet, and ledger tabs — no coding.
+            New here? Guided path: welcome, connect your private Google Sheet, upload bank
+            statements, and set spending rules — about 10–15 minutes.
           </p>
         </div>
-        <a
-          className="btn-primary inline-flex shrink-0"
-          href={setupWizardUrl()}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Start setup
-          <ExternalLink className="h-4 w-4" />
-        </a>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Link className="btn-primary inline-flex" to={onboardingPath()}>
+            Start setup
+          </Link>
+          <a
+            className="btn-secondary inline-flex text-sm"
+            href={setupWizardUrl()}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Sheets only
+            <ExternalLink className="h-4 w-4" />
+          </a>
+        </div>
       </div>
     </div>
   );

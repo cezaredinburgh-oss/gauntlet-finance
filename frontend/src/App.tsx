@@ -22,6 +22,7 @@ import { AlertsPage } from "./pages/AlertsPage";
 import { UploadPage } from "./pages/UploadPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ChartPopoutPage } from "./pages/ChartPopoutPage";
+import { OnboardingPage } from "./pages/OnboardingPage";
 
 const SESSION_BOOT_KEY = "gauntlet.session_boot";
 
@@ -127,6 +128,7 @@ export default function App() {
             <Route path="investments/dca" element={<InvestmentsDcaPage />} />
             <Route path="investments/tax" element={<TaxPage />} />
             <Route path="upload" element={<UploadPage />} />
+            <Route path="onboarding" element={<OnboardingPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="transactions" element={<RedirectPreserveSearch to="/expenses/categorize" />} />
             <Route

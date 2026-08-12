@@ -3,6 +3,11 @@ export type AuthMe = {
   name: string | null;
   picture: string | null;
   auth_mode: "dev" | "oauth" | "disabled" | string;
+  multi_tenant?: boolean;
+  user_id?: string | null;
+  role?: string | null;
+  tenant_ready?: boolean;
+  spreadsheet_bound?: boolean;
 };
 
 export type Health = {

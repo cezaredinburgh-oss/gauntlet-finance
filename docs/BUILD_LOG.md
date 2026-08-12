@@ -4,6 +4,28 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Multi-tenant foundation (W1–W5)
+
+- Control plane SQLite: users + invites (`backend/tenancy/`).
+- Config: `MULTI_TENANT`, `CONTROL_DB_PATH`, `PLATFORM_ADMIN_EMAILS`, `MULTI_TENANT_MEMORY_SHEETS`.
+- OAuth invite-only when multi-tenant; uninvited → no session.
+- `get_repository` binds **only** user-mapped spreadsheet (no env sheet fallback).
+- Tenant-scoped response cache, upload store, import locks.
+- APIs: `/api/admin/invites`, `/api/tenant/provision|status|bind`.
+- Setup wizard disabled in multi-tenant mode.
+- Multi-tenant production never permits open auth (even with `ALLOW_OPEN_AUTH`).
+- Isolation tests: `test_tenant_isolation.py`. Docs: `docs/MULTI_TENANT.md`.
+- Single-tenant default unchanged.
+
+## 2026-08-12 — New-user path (SPA onboarding)
+
+- SPA `/onboarding`: Welcome (USPs) → Google Sheets (status + link to existing `/setup`) → Upload statements → Rules & categories → Ready.
+- Soft incomplete-setup **popup** on Home when sheet not configured and onboarding not dismissed; never hard-gates the app.
+- **Preview mode** (`?preview=1` / Settings → Preview): full UI walkthrough; blocks upload, bootstrap, apply-rules, ensure-defaults writes so live connection/ledger stay intact.
+- Legacy users with `spreadsheet_configured` auto-migrated to completed (no popup after deploy).
+- Settings: New-user setup path, Preview, Sheets wizard only. Home banner points at full path + Sheets-only link.
+- Progress: `localStorage` `gauntlet.onboarding.v1` (client-only).
+
 ## 2026-08-12 — Sheets onboarding wizard (non-technical)
 
 - Upgraded `/setup` Google Sheets wizard: Sheets-first path (Welcome → Cloud → Key → Sheet → Share → Ledger → App ready → Done).

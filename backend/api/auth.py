@@ -36,6 +36,10 @@ class SessionUser:
     access_token: str
     refresh_token: str | None
     token_expiry: float | None  # unix ts
+    # Multi-tenant control-plane fields (optional in single-tenant)
+    user_id: str | None = None
+    role: str = "user"
+    spreadsheet_id: str | None = None
 
 
 def _serializer(settings: Settings) -> URLSafeTimedSerializer:
@@ -50,6 +54,9 @@ def create_session_token(settings: Settings, user: SessionUser) -> str:
         "access_token": user.access_token,
         "refresh_token": user.refresh_token,
         "token_expiry": user.token_expiry,
+        "user_id": user.user_id,
+        "role": user.role,
+        "spreadsheet_id": user.spreadsheet_id,
     }
     return _serializer(settings).dumps(payload)
 
@@ -69,9 +76,12 @@ def load_session_token(
         email=data["email"],
         name=data.get("name"),
         picture=data.get("picture"),
-        access_token=data["access_token"],
+        access_token=data.get("access_token") or "",
         refresh_token=data.get("refresh_token"),
         token_expiry=data.get("token_expiry"),
+        user_id=data.get("user_id"),
+        role=data.get("role") or "user",
+        spreadsheet_id=data.get("spreadsheet_id"),
     )
 
 
@@ -133,6 +143,10 @@ async def refresh_access_token(settings: Settings, refresh_token: str) -> dict[s
 def session_from_token_response(
     tokens: dict[str, Any],
     userinfo: dict[str, Any],
+    *,
+    user_id: str | None = None,
+    role: str = "user",
+    spreadsheet_id: str | None = None,
 ) -> SessionUser:
     expires_in = tokens.get("expires_in")
     expiry = time.time() + int(expires_in) if expires_in else None
@@ -143,6 +157,9 @@ def session_from_token_response(
         access_token=tokens["access_token"],
         refresh_token=tokens.get("refresh_token"),
         token_expiry=expiry,
+        user_id=user_id,
+        role=role,
+        spreadsheet_id=spreadsheet_id,
     )
 
 

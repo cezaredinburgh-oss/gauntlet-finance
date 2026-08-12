@@ -10,6 +10,20 @@ from backend.config import get_settings
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _tenant_subdir() -> str | None:
+    try:
+        from backend.tenancy.context import get_tenant_id
+
+        tid = get_tenant_id()
+    except Exception:  # noqa: BLE001
+        tid = None
+    if not tid:
+        return None
+    # filesystem-safe
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in tid)
+    return safe or None
+
+
 def uploads_dir() -> Path:
     raw = (os.environ.get("UPLOAD_STORE_DIR") or "").strip()
     if raw:
@@ -21,6 +35,9 @@ def uploads_dir() -> Path:
             p = data
         else:
             p = _PROJECT_ROOT / "data" / "uploads"
+    sub = _tenant_subdir()
+    if sub:
+        p = p / sub
     p.mkdir(parents=True, exist_ok=True)
     return p
 

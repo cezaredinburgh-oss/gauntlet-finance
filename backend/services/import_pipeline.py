@@ -37,7 +37,27 @@ from backend.services.lot_rebuild import (
 from backend.sheets.repository import SheetsRepository
 
 # Process-level serialize: concurrent uploads wait (do not reject).
+# Multi-tenant: one lock per tenant id so tenants do not block each other.
 _IMPORT_LOCK = threading.Lock()
+_TENANT_IMPORT_LOCKS: dict[str, threading.Lock] = {}
+_TENANT_LOCKS_GUARD = threading.Lock()
+
+
+def _import_lock() -> threading.Lock:
+    try:
+        from backend.tenancy.context import get_tenant_id
+
+        tid = get_tenant_id()
+    except Exception:  # noqa: BLE001
+        tid = None
+    if not tid:
+        return _IMPORT_LOCK
+    with _TENANT_LOCKS_GUARD:
+        lock = _TENANT_IMPORT_LOCKS.get(tid)
+        if lock is None:
+            lock = threading.Lock()
+            _TENANT_IMPORT_LOCKS[tid] = lock
+        return lock
 
 
 @dataclass
@@ -161,7 +181,7 @@ class ImportPipeline:
         now: datetime | None = None,
     ) -> UploadSummary:
         # Serialize concurrent imports process-wide (wait, do not reject).
-        with _IMPORT_LOCK:
+        with _import_lock():
             return self._upload_unlocked(
                 filename=filename,
                 content=content,

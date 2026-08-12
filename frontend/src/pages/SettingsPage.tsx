@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { ExternalLink, Save, Trash2 } from "lucide-react";
 import { api, setupWizardUrl } from "../api/client";
 import type {
@@ -10,6 +11,7 @@ import type {
 } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { EmptyState, PageLoader, Spinner } from "../components/Spinner";
+import { onboardingPath } from "../lib/onboarding";
 
 const STORAGE_KEY = "cf_ui_settings";
 
@@ -283,17 +285,31 @@ export function SettingsPage() {
                 Open in Google Sheets <ExternalLink className="h-4 w-4" />
               </a>
             )}
-            <a
-              className="btn-primary inline-flex text-sm"
-              href={setupWizardUrl()}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Connect Google Sheets wizard
-              <ExternalLink className="h-4 w-4" />
-            </a>
+            <div className="flex flex-wrap gap-2">
+              <Link className="btn-primary inline-flex text-sm" to={onboardingPath()}>
+                New-user setup path
+              </Link>
+              <Link
+                className="btn-secondary inline-flex text-sm"
+                to={onboardingPath({ preview: true })}
+              >
+                Preview new-user path
+              </Link>
+              <a
+                className="btn-secondary inline-flex text-sm"
+                href={setupWizardUrl()}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Sheets wizard only
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            </div>
             <p className="text-xs text-ink-faint">
-              Guided steps for new users: Cloud project, access key, spreadsheet, and ledger tabs.
+              Full path: welcome, Sheets, statements, rules.{" "}
+              <strong className="font-medium text-ink-muted">Preview</strong> walks the UI
+              without changing your live connection or ledger. Sheets-only opens the API-hosted
+              Cloud/key/sheet wizard.
             </p>
           </>
         ) : (

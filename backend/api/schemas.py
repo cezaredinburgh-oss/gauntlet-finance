@@ -101,6 +101,11 @@ class AuthMeResponse(BaseModel):
     name: str | None = None
     picture: str | None = None
     auth_mode: str
+    multi_tenant: bool = False
+    user_id: str | None = None
+    role: str | None = None
+    tenant_ready: bool = False
+    spreadsheet_bound: bool = False
 
 
 class ErrorResponse(BaseModel):
