@@ -21,6 +21,12 @@ from backend.api.schemas import (
     PasswordLoginRequest,
     PasswordLoginResponse,
 )
+from backend.api.session_cookies import (
+    clear_guest_cookie,
+    clear_session_cookie,
+    set_guest_cookie,
+    set_session_cookie,
+)
 from backend.services.demo_auth import DemoAuthError, authenticate_demo_password
 from backend.tenancy.store import get_control_store, normalize_email
 
@@ -116,15 +122,8 @@ async def callback(
     token = create_session_token(settings, session_user)
     dest = f"{origin}/" if origin else "/"
     resp = RedirectResponse(url=dest, status_code=302)
-    resp.set_cookie(
-        settings.session_cookie_name,
-        token,
-        httponly=True,
-        max_age=settings.session_max_age_seconds,
-        samesite="lax",
-        secure=settings.app_env == "production",
-    )
-    resp.delete_cookie("gf_oauth_state")
+    set_session_cookie(resp, settings, token)
+    resp.delete_cookie("gf_oauth_state", path="/", samesite="lax")
     return resp
 
 
@@ -160,14 +159,7 @@ async def password_login(
         role=session_user.role,
     )
     resp = JSONResponse(payload.model_dump())
-    resp.set_cookie(
-        settings.session_cookie_name,
-        token,
-        httponly=True,
-        max_age=settings.session_max_age_seconds,
-        samesite="lax",
-        secure=settings.app_env == "production",
-    )
+    set_session_cookie(resp, settings, token)
     return resp
 
 
@@ -219,6 +211,29 @@ async def public_auth_config(settings: SettingsDep) -> dict:
 
 @router.post("/logout")
 async def logout(settings: SettingsDep) -> JSONResponse:
-    resp = JSONResponse({"status": "logged_out"})
-    resp.delete_cookie(settings.session_cookie_name)
+    """
+    Clear session cookie and enter guest mode.
+
+    Guest mode suppresses AUTH_MODE=dev synthetic auto-login so the landing
+    page can show demo/Google forms after Sign out.
+    """
+    resp = JSONResponse({"status": "logged_out", "guest": True})
+    clear_session_cookie(resp, settings)
+    set_guest_cookie(resp, settings)
+    return resp
+
+
+@router.post("/local-dev")
+async def resume_local_dev(settings: SettingsDep) -> JSONResponse:
+    """
+    Exit guest mode under open auth (dev/disabled) so synthetic local user returns.
+    """
+    if settings.auth_mode not in {"dev", "disabled"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Local dev resume only applies when AUTH_MODE is dev or disabled.",
+        )
+    resp = JSONResponse({"status": "ok", "auth_mode": settings.auth_mode})
+    clear_guest_cookie(resp, settings)
+    clear_session_cookie(resp, settings)
     return resp

@@ -195,7 +195,11 @@ export const api = {
 
   me: () => request<AuthMe>("/auth/me"),
 
-  logout: () => request<{ status: string }>("/auth/logout", { method: "POST" }),
+  logout: () => request<{ status: string; guest?: boolean }>("/auth/logout", { method: "POST" }),
+
+  /** Clear guest flag under AUTH_MODE=dev so synthetic local user returns. */
+  resumeLocalDev: () =>
+    request<{ status: string; auth_mode: string }>("/auth/local-dev", { method: "POST" }),
 
   publicAuthConfig: () => request<PublicAuthConfig>("/auth/public-config"),
 

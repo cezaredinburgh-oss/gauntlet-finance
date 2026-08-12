@@ -114,3 +114,80 @@ def test_demo_cannot_be_admin_role(demo_env):
             json={"email": "x@example.com"},
         )
         assert inv.status_code == 403
+
+
+def test_logout_allows_demo_login_after_session(demo_env):
+    """Sign out must clear session + guest mode so demo form can take over."""
+    from backend.api.auth import SessionUser, create_session_token
+    from backend.tenancy.store import get_control_store
+
+    store = get_control_store()
+    admin = store.upsert_user_from_oauth(
+        email="admin@example.com",
+        google_sub="admin",
+        name="Admin",
+        picture=None,
+        role="platform_admin",
+    )
+    store.set_spreadsheet_id(admin.id, f"mem-{admin.id}")
+    settings = get_settings()
+    token = create_session_token(
+        settings,
+        SessionUser(
+            email=admin.email,
+            name="Admin",
+            picture=None,
+            access_token="x",
+            refresh_token=None,
+            token_expiry=None,
+            user_id=admin.id,
+            role="platform_admin",
+            spreadsheet_id=admin.spreadsheet_id,
+            is_demo=False,
+        ),
+    )
+    with _client() as client:
+        client.cookies.set("gf_session", token)
+        me = client.get("/api/auth/me")
+        assert me.status_code == 200
+        assert me.json()["email"] == "admin@example.com"
+
+        lo = client.post("/api/auth/logout")
+        assert lo.status_code == 200
+        assert lo.json().get("guest") is True
+
+        # Guest: no open re-auth as previous admin
+        me2 = client.get("/api/auth/me")
+        assert me2.status_code == 401, me2.text
+
+        # Demo login works after logout
+        demo = client.post(
+            "/api/auth/password",
+            json={"email": "demo@gauntlet.local", "password": "demo"},
+        )
+        assert demo.status_code == 200, demo.text
+        me3 = client.get("/api/auth/me")
+        assert me3.status_code == 200
+        assert me3.json()["is_demo"] is True
+        assert me3.json()["email"] == "demo@gauntlet.local"
+
+
+def test_open_auth_logout_stays_guest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("AUTH_MODE", "dev")
+    monkeypatch.setenv("SECRET_KEY", "test-guest-logout-secret")
+    monkeypatch.setenv("SPREADSHEET_ID", "")
+    monkeypatch.setenv("REPO_BACKEND", "memory")
+    monkeypatch.setenv("MULTI_TENANT", "false")
+    monkeypatch.setenv("DEMO_LOGIN_ENABLED", "false")
+    get_settings.cache_clear()
+    clear_repo_cache()
+    with _client() as client:
+        # Open auth: me works without cookie
+        assert client.get("/api/auth/me").status_code == 200
+        assert client.post("/api/auth/logout").status_code == 200
+        # Guest cookie blocks synthetic user
+        assert client.get("/api/auth/me").status_code == 401
+        # Resume local dev
+        assert client.post("/api/auth/local-dev").status_code == 200
+        assert client.get("/api/auth/me").status_code == 200

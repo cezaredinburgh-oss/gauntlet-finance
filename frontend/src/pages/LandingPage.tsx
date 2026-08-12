@@ -230,18 +230,21 @@ export function LandingPage() {
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={() => void logout()}
+                  onClick={() => {
+                    void (async () => {
+                      await logout();
+                      // Stay on landing; show login forms after guest cookie is set
+                    })();
+                  }}
                 >
                   Sign out
                 </button>
               </div>
-              {isDevAuth && (
-                <p className="text-xs text-ink-faint">
-                  To exercise real login (demo password / Google), set{" "}
-                  <code className="text-ink-muted">AUTH_MODE=oauth</code> (and demo env vars)
-                  then restart the API. Dev mode always has a session.
-                </p>
-              )}
+              <p className="text-xs text-ink-faint">
+                Sign out clears your session so you can use the demo account or Google. Under{" "}
+                <code className="text-ink-muted">AUTH_MODE=dev</code>, sign-out also enters guest
+                mode so the app does not auto-login again.
+              </p>
             </div>
           )}
 
@@ -350,23 +353,33 @@ export function LandingPage() {
 
           {!signedIn && !demoOn && !googleOn && (
             <p className="text-sm text-ink-muted">
-              {isDevAuth ? (
-                <>
-                  This host uses <code className="text-ink">AUTH_MODE=dev</code>, so the API
-                  auto-authenticates without a login form. Use{" "}
-                  <Link to="/" className="text-brand hover:underline">
-                    Open app
-                  </Link>{" "}
-                  above after refresh, or enable demo/oauth (see below).
-                </>
-              ) : (
-                <>
-                  No login methods are enabled. Set{" "}
-                  <code className="text-ink">DEMO_LOGIN_ENABLED=true</code> or{" "}
-                  <code className="text-ink">AUTH_MODE=oauth</code>.
-                </>
-              )}
+              No login methods are enabled. Set{" "}
+              <code className="text-ink">DEMO_LOGIN_ENABLED=true</code> (with{" "}
+              <code className="text-ink">DEMO_PASSWORD</code>) or{" "}
+              <code className="text-ink">AUTH_MODE=oauth</code>.
             </p>
+          )}
+
+          {!signedIn && isDevAuth && (
+            <button
+              type="button"
+              className="btn-secondary w-full text-sm"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await api.resumeLocalDev();
+                    await refresh();
+                    navigate("/", { replace: true });
+                  } catch (err) {
+                    setFormError(
+                      err instanceof Error ? err.message : "Could not resume local dev",
+                    );
+                  }
+                })();
+              }}
+            >
+              Continue as local dev user
+            </button>
           )}
 
           {!signedIn && (

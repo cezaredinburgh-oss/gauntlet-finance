@@ -75,7 +75,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       /* ignore */
     }
+    // Stay signed out even if a later remount races; guest cookie blocks open-auth me().
     setUser(null);
+    setLoading(false);
+    setError(null);
   }, []);
 
   const value = useMemo<AuthState>(

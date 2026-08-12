@@ -52,53 +52,55 @@ def _reject_unpermitted_open_auth(settings: Settings) -> None:
         )
 
 
+def _session_token_from_request(
+    request: Request,
+    settings: Settings,
+    authorization: str | None,
+    gf_session: str | None,
+) -> str | None:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1].strip() or None
+    if gf_session:
+        return gf_session
+    return request.cookies.get(settings.session_cookie_name) or request.cookies.get(
+        "gf_session"
+    )
+
+
 def get_session_user(
     request: Request,
     settings: SettingsDep,
     authorization: Annotated[str | None, Header()] = None,
     gf_session: Annotated[str | None, Cookie(alias="gf_session")] = None,
 ) -> SessionUser | None:
+    from backend.api.session_cookies import is_guest_request
+
+    token = _session_token_from_request(request, settings, authorization, gf_session)
+    guest = is_guest_request(request.cookies)
+
+    # Explicit Sign out: ignore leftover session cookies until the next login.
+    # (Login clears gf_guest via set_session_cookie.)
+    if guest:
+        return None
+
     if settings.auth_mode in {"dev", "disabled"}:
         _reject_unpermitted_open_auth(settings)
-        if settings.multi_tenant:
-            # Multi-tenant open modes only allowed in non-production (tests/dev).
-            # Prefer signed session / Bearer so isolation tests can use real users.
-            token = None
-            if authorization and authorization.lower().startswith("bearer "):
-                token = authorization.split(" ", 1)[1].strip()
-            elif gf_session:
-                token = gf_session
-            if not token:
-                token = request.cookies.get(settings.session_cookie_name)
-            if token:
-                user = load_session_token(settings, token)
-                if user is not None:
+        # Prefer real session cookie (demo / explicit login) over open-auth synthetic.
+        if token:
+            user = load_session_token(settings, token)
+            if user is not None:
+                if settings.multi_tenant:
                     return _hydrate_tenant_user(settings, user)
-            # Fall back to synthetic single principal (not usable for multi-user isolation)
-            return SessionUser(
-                email="dev@localhost",
-                name="Dev User",
-                picture=None,
-                access_token="",
-                refresh_token=None,
-                token_expiry=None,
-            )
+                return user
+        # Open-auth fallback (local single-user convenience)
         return SessionUser(
-            email="dev@localhost",
-            name="Dev User",
+            email="dev@localhost" if settings.auth_mode == "dev" else "anonymous@localhost",
+            name="Dev User" if settings.auth_mode == "dev" else "Anonymous",
             picture=None,
             access_token="",
             refresh_token=None,
             token_expiry=None,
         )
-
-    token = None
-    if authorization and authorization.lower().startswith("bearer "):
-        token = authorization.split(" ", 1)[1].strip()
-    elif gf_session:
-        token = gf_session
-    if not token:
-        token = request.cookies.get(settings.session_cookie_name)
 
     if not token:
         return None
@@ -145,19 +147,13 @@ def require_user(
     settings: SettingsDep,
 ) -> SessionUser:
     _reject_unpermitted_open_auth(settings)
-    if settings.auth_mode == "disabled" and not settings.multi_tenant:
-        return SessionUser(
-            email="anonymous@localhost",
-            name="Anonymous",
-            picture=None,
-            access_token="",
-            refresh_token=None,
-            token_expiry=None,
-        )
+    # Note: open-auth synthetic user is produced in get_session_user unless
+    # gf_guest cookie is set (explicit logout). Do not re-create anonymous here
+    # when user is None — that would break sign-out → demo login.
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated. Visit /api/auth/login",
+            detail="Not authenticated. Visit /login",
         )
     if settings.multi_tenant:
         if not user.user_id:
