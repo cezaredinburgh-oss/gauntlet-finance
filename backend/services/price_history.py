@@ -1850,10 +1850,14 @@ class PriceHistoryService:
             missing = [] if series else [t]
             qty = qty_map[t]
             avg_cost = (cost / qty) if qty > 0 else None
-            # Align last bar to Prices-tab book mark when available (daily + 1D).
-            # Yahoo keeps the path; tip matches desk quote used by holdings/snapshot.
+            # Desk quote for UI parity (never rewrite 1D path — that fakes a cliff).
+            # Daily ranges only: pin tip to book so multi-day "last" matches desk.
             book_px = self._book_price_usd(t)
-            if book_px is not None and series:
+            if (
+                not is_intraday
+                and book_px is not None
+                and series
+            ):
                 series = list(series)
                 last_ts = series[-1][0]
                 series[-1] = (last_ts, book_px)
@@ -1873,7 +1877,7 @@ class PriceHistoryService:
             )
             ysym = _normalize_yahoo_symbol(t, ac_map.get(t))
             note = (
-                "Intraday (5m) USD. Avg cost from open lots · buy/sell markers."
+                "Intraday (5m) USD path from Yahoo · desk mark is separate (Prices tab)."
                 if point_kind == "intraday"
                 else "Daily close (USD). Avg cost from open lots · buy/sell markers."
             )
@@ -1888,6 +1892,25 @@ class PriceHistoryService:
                 points,
                 ticker=t,
             )
+            meta_ticker: dict[str, Any] = {
+                "tickers": [t],
+                "missing_tickers": missing,
+                "yahoo_symbol": ysym,
+                "cost_basis_usd": _str_dec(cost),
+                "avg_cost_usd": _str_dec(avg_cost, 4) if avg_cost is not None else None,
+                "quantity": str(_q4(qty)),
+                "quantity_basis": "current_open_lots",
+                "trades": trades,
+                "session_status": session_status if is_intraday else None,
+                "note": note,
+                "point_kind": point_kind,
+                **ch,
+                **day,
+            }
+            if book_px is not None:
+                meta_ticker["book_price_usd"] = _str_dec(book_px, places)
+                if last is not None:
+                    meta_ticker["book_vs_path_abs"] = _str_dec(last - book_px, places)
             return HistoryResult(
                 scope="ticker",
                 label=t,
@@ -1897,21 +1920,7 @@ class PriceHistoryService:
                 interval=interval,
                 as_of=ts,
                 points=points,
-                meta={
-                    "tickers": [t],
-                    "missing_tickers": missing,
-                    "yahoo_symbol": ysym,
-                    "cost_basis_usd": _str_dec(cost),
-                    "avg_cost_usd": _str_dec(avg_cost, 4) if avg_cost is not None else None,
-                    "quantity": str(_q4(qty)),
-                    "quantity_basis": "current_open_lots",
-                    "trades": trades,
-                    "session_status": session_status if is_intraday else None,
-                    "note": note,
-                    "point_kind": point_kind,
-                    **ch,
-                    **day,
-                },
+                meta=meta_ticker,
             )
 
         # asset_class or all — time-aware holdings (events as-of each date)
@@ -2050,23 +2059,23 @@ class PriceHistoryService:
                 if q > 0
             }
 
-        # Align last MV bar to Prices-tab book mark (open lots × desk quotes)
-        # so chart "Market value" matches executive snapshot marked MV.
-        # Applies to daily *and* 1D intraday: Yahoo supplies the path shape;
-        # the tip is always desk book (fixes ~$400+ 1D vs snapshot drift).
-        if mv_series:
-            book_mv = self._book_market_value_usd(lots, asset_class=ac_filter)
-            if book_mv is None and qty_map:
-                book_mv = self._book_mv_from_qty(qty_map)
-            if book_mv is not None:
-                mv_series = list(mv_series)
-                last_ts = mv_series[-1][0]
-                mv_series[-1] = (last_ts, _q2(book_mv))
-                if is_intraday:
-                    note = (
-                        "Last Market value = desk book mark (Prices tab); "
-                        "path from Yahoo 5m. "
-                    ) + note
+        # Desk book MV (same formula as executive snapshot). Exposed in meta for UI.
+        # Daily only: pin series tip to book so multi-day last matches desk.
+        # 1D: never rewrite the path tip — that fakes a cliff vs Yahoo 5m bars.
+        book_mv: Decimal | None = self._book_market_value_usd(
+            lots, asset_class=ac_filter
+        )
+        if book_mv is None and qty_map:
+            book_mv = self._book_mv_from_qty(qty_map)
+        if not is_intraday and mv_series and book_mv is not None:
+            mv_series = list(mv_series)
+            last_ts = mv_series[-1][0]
+            mv_series[-1] = (last_ts, _q2(book_mv))
+        if is_intraday and book_mv is not None:
+            note = (
+                "Path from Yahoo 5m · desk book mark is the executive snapshot total "
+                "(shown separately; not forced onto the last bar). "
+            ) + note
         points = [{"date": d_ts, "value": _str_dec(v)} for d_ts, v in mv_series]
         first = mv_series[0][1] if mv_series else None
         last = mv_series[-1][1] if mv_series else None
@@ -2176,6 +2185,10 @@ class PriceHistoryService:
             **ch,
             **day,
         }
+        if book_mv is not None:
+            meta_out["book_market_value_usd"] = _str_dec(book_mv)
+            if last is not None:
+                meta_out["book_vs_path_abs"] = _str_dec(last - book_mv)
         if window_components is not None:
             meta_out["window_components"] = window_components
         return HistoryResult(

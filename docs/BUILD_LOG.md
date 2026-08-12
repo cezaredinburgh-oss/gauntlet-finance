@@ -4,10 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
-## 2026-08-12 — 1D chart tip = desk book mark
+## 2026-08-12 — 1D chart: honest path + desk book secondary
 
-- Portfolio / asset-class 1D “Market value” last bar pins to Prices-tab book MV (same as dashboard snapshot); Yahoo 5m keeps the path shape only.
-- Ticker 1D last price also pins to Prices-tab quote for the same tip/book parity.
+- Reversed 1D tip-pin (no rewriting last Yahoo bar → no fake cliff).
+- API meta: `book_market_value_usd` / `book_price_usd` + `book_vs_path_abs` for UI.
+- 1D chrome: label “Chart MV” / “Chart last”; desk book + path Δ under headline; subtitle clarifies Yahoo path vs executive desk book.
+- Daily ranges still pin tip to book (unchanged).
 
 ## 2026-08-12 — UX polish: chrome, alerts, charts, spending, research
 

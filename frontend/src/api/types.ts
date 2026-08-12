@@ -601,6 +601,15 @@ export type PriceHistory = {
     short_history_tickers?: Array<{ ticker: string; first_bar: string }>;
     trades?: PriceHistoryTrade[];
     session_status?: string | null;
+    /**
+     * Desk book mark (Prices tab × open lots) — same idea as executive snapshot.
+     * Not forced onto the 1D path tip; UI shows it next to Chart MV / path last.
+     */
+    book_market_value_usd?: string | null;
+    /** Ticker scope: desk mark for this name. */
+    book_price_usd?: string | null;
+    /** Path tip − desk book (signed). */
+    book_vs_path_abs?: string | null;
     /** Portfolio only: performance split into Stocks + Crypto (ex-flows, additive). */
     window_components?: {
       stocks?: {

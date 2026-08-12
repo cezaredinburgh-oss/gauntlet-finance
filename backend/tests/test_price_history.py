@@ -840,8 +840,8 @@ def _price_row(ticker: str, price: str) -> Price:
     )
 
 
-def test_history_1d_portfolio_last_point_is_book_mv():
-    """1D Market value tip = Prices-tab book; Yahoo only shapes earlier bars."""
+def test_history_1d_portfolio_path_not_pinned_exposes_book_meta():
+    """1D path tip stays Yahoo; desk book exposed in meta (no cliff rewrite)."""
     repo = InMemorySheetsRepository()
     repo.upsert_rows(
         "InvestmentLots",
@@ -866,7 +866,7 @@ def test_history_1d_portfolio_last_point_is_book_mv():
                 ts = (now - timedelta(minutes=5 * (11 - i))).replace(
                     microsecond=0
                 ).isoformat()
-                # Yahoo inflated vs book (would sum to 500 if constant qty)
+                # Yahoo inflated vs book (constant qty → path tip 500)
                 if our == "PLTR":
                     series.append((ts, Decimal("40")))
                 else:
@@ -879,16 +879,16 @@ def test_history_1d_portfolio_last_point_is_book_mv():
     assert result.series_kind == "market_value"
     assert result.meta["point_kind"] == "intraday"
     assert len(result.points) >= 2
-    # Tip pinned to desk book mark
-    assert result.points[-1]["value"] == "350.00"
-    # Path not flattened: at least one earlier bar still reflects Yahoo path
-    earlier = [Decimal(p["value"]) for p in result.points[:-1]]
-    assert any(v != Decimal("350.00") for v in earlier)
-    assert "desk book mark" in (result.meta.get("note") or "").lower()
+    # Pure Yahoo tip (not rewritten to book)
+    assert result.points[-1]["value"] != "350.00"
+    assert result.meta.get("book_market_value_usd") == "350.00"
+    path_last = Decimal(result.points[-1]["value"])
+    assert Decimal(result.meta["book_vs_path_abs"]) == path_last - Decimal("350.00")
+    assert "yahoo" in (result.meta.get("note") or "").lower()
 
 
-def test_history_1d_ticker_last_point_is_book_price():
-    """1D last price tip matches Prices tab; path remains Yahoo 5m."""
+def test_history_1d_ticker_path_not_pinned_exposes_book_meta():
+    """1D last price stays Yahoo; book_price_usd in meta for desk comparison."""
     repo = InMemorySheetsRepository()
     repo.upsert_rows(
         "InvestmentLots",
@@ -908,8 +908,9 @@ def test_history_1d_ticker_last_point_is_book_price():
 
     svc = PriceHistoryService(repo, fetcher=fake_fetch, cache_ttl_seconds=0)
     result = svc.history(scope="ticker", range_key="1d", ticker="PLTR")
-    assert result.points[-1]["value"] == "25.5000"
-    assert any(p["value"] == "22.0000" for p in result.points[:-1])
+    assert result.points[-1]["value"] == "22.0000"
+    assert result.meta.get("book_price_usd") == "25.5000"
+    assert result.meta.get("book_vs_path_abs") == "-3.5000"
 
 
 def test_portfolio_1d_aligned_grid_full_book_and_additive():

@@ -493,19 +493,19 @@ export function PositionHistoryChart({
             {scope.kind === "ticker"
               ? intraday
                 ? data?.meta?.session_status === "prior_session"
-                  ? "Prior session · waiting for today’s open · 5m"
+                  ? "Prior session · waiting for today’s open · Yahoo 5m path"
                   : data?.meta?.session_status === "last_24h"
-                    ? "Last 24h · 5m bars (USD)"
-                    : "US regular session · 5m bars (USD)"
+                    ? "Last 24h · Yahoo 5m path (not desk book)"
+                    : "US regular session · Yahoo 5m path (not desk book)"
                 : "Daily close (USD) · avg cost from open lots"
               : data?.meta?.session_status === "prior_session"
-                ? "Prior session · waiting for today’s open"
+                ? "Prior session · waiting for today’s open · Yahoo path"
                 : data?.meta?.session_status === "last_24h"
                   ? scope.kind === "all"
-                    ? "Last 24h · equities flat overnight at prior close · free Yahoo"
-                    : "Last 24h · holdings as-of × market prices"
+                    ? "Last 24h · Yahoo 5m path · desk book is the executive total"
+                    : "Last 24h · Yahoo path · desk book shown separately"
                   : data?.meta?.session_status === "regular"
-                    ? "US regular session · holdings as-of × market prices"
+                    ? "US regular session · Yahoo path · desk book shown separately"
                     : "Holdings as of each day × market prices · free Yahoo data"}
             {showTrades ? " · buy/sell markers" : ""}
             {range === "1d" && " · auto-refresh 60s"}
@@ -516,7 +516,13 @@ export function PositionHistoryChart({
             <div className="flex items-start justify-end gap-2 text-right">
               <div className="min-w-0">
                 <div className="text-[11px] uppercase tracking-wide text-ink-faint">
-                  {isPrice ? "Last price" : "Market value"}
+                  {range === "1d"
+                    ? isPrice
+                      ? "Chart last"
+                      : "Chart MV"
+                    : isPrice
+                      ? "Last price"
+                      : "Market value"}
                 </div>
                 <div
                   className={cn(
@@ -526,6 +532,43 @@ export function PositionHistoryChart({
                 >
                   {fmt(last.value)}
                 </div>
+                {range === "1d" &&
+                  (() => {
+                    const bookRaw = isPrice
+                      ? data?.meta?.book_price_usd
+                      : data?.meta?.book_market_value_usd;
+                    if (bookRaw == null || bookRaw === "") return null;
+                    const bookN = d(bookRaw);
+                    const pathN = last.value;
+                    const delta =
+                      data?.meta?.book_vs_path_abs != null
+                        ? d(data.meta.book_vs_path_abs)
+                        : pathN - bookN;
+                    return (
+                      <div
+                        className="mt-0.5 max-w-[16rem] text-[11px] leading-snug text-ink-faint"
+                        title="Desk book uses Prices-tab marks × open lots (same as Home portfolio). Chart tip is the last Yahoo 5m bar on the path — they can differ without either being wrong."
+                      >
+                        <span className="text-ink-muted">Desk book </span>
+                        <span className="tabular-nums text-ink-muted">
+                          {isPrice ? formatPrice(bookN) : formatUsd(bookN)}
+                        </span>
+                        <span className="text-ink-faint">
+                          {" "}
+                          · path Δ{" "}
+                          <span
+                            className={cn(
+                              "tabular-nums",
+                              delta >= 0 ? "text-ok/80" : "text-danger/80",
+                            )}
+                          >
+                            {delta >= 0 ? "+" : ""}
+                            {isPrice ? formatPrice(delta) : formatUsd(delta)}
+                          </span>
+                        </span>
+                      </div>
+                    );
+                  })()}
                 {primaryAbs != null && (
                   <div
                     className={cn(
