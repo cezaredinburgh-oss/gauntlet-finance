@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { FileUp, CheckCircle2, AlertCircle, Copy, RefreshCw } from "lucide-react";
+import {
+  FileUp,
+  CheckCircle2,
+  AlertCircle,
+  Copy,
+  RefreshCw,
+  Sparkles,
+} from "lucide-react";
 import { api } from "../api/client";
-import type { StatementFileRow, UploadResult } from "../api/types";
+import type {
+  AiMapStatementResult,
+  StatementFileRow,
+  UploadResult,
+} from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { cn } from "../lib/cn";
 import { Spinner } from "../components/Spinner";
@@ -15,6 +26,12 @@ type FileOutcome = {
   fileName: string;
   result?: UploadResult;
   error?: string;
+  /** SHA for AI map after detect failure (or re-upload path) */
+  mapSha?: string;
+  mapPreview?: AiMapStatementResult | null;
+  mapError?: string;
+  mapBusy?: boolean;
+  importBusy?: boolean;
 };
 
 type BatchProgress = {
@@ -108,7 +125,11 @@ export function UploadPage() {
                 pct: Math.round(((i + filePct / 100) / files.length) * 100),
               });
             });
-            next.push({ fileName: file.name, result });
+            next.push({
+              fileName: file.name,
+              result,
+              mapSha: result.content_sha256,
+            });
           } catch (e) {
             next.push({
               fileName: file.name,
@@ -143,6 +164,99 @@ export function UploadPage() {
       ]);
     } finally {
       setRetryingId(null);
+    }
+  }
+
+  async function runAiMap(index: number) {
+    const o = outcomes[index];
+    if (!o) return;
+    const sha = o.mapSha || o.result?.content_sha256;
+    if (!sha) {
+      setOutcomes((prev) =>
+        prev.map((x, i) =>
+          i === index
+            ? { ...x, mapError: "No file fingerprint — re-upload the CSV first." }
+            : x,
+        ),
+      );
+      return;
+    }
+    setOutcomes((prev) =>
+      prev.map((x, i) =>
+        i === index ? { ...x, mapBusy: true, mapError: undefined } : x,
+      ),
+    );
+    try {
+      const map = await api.aiMapStatement({ content_sha256: sha });
+      setOutcomes((prev) =>
+        prev.map((x, i) =>
+          i === index
+            ? {
+                ...x,
+                mapBusy: false,
+                mapPreview: map,
+                mapSha: map.content_sha256 || sha,
+                mapError: map.message || undefined,
+              }
+            : x,
+        ),
+      );
+    } catch (e) {
+      setOutcomes((prev) =>
+        prev.map((x, i) =>
+          i === index
+            ? {
+                ...x,
+                mapBusy: false,
+                mapError: e instanceof Error ? e.message : "Map failed",
+              }
+            : x,
+        ),
+      );
+    }
+  }
+
+  async function runAiImport(index: number) {
+    const o = outcomes[index];
+    const map = o?.mapPreview;
+    if (!o || !map?.mapping || !map.content_sha256) return;
+    setOutcomes((prev) =>
+      prev.map((x, i) => (i === index ? { ...x, importBusy: true } : x)),
+    );
+    try {
+      const result = await api.aiImportMapped({
+        content_sha256: map.content_sha256,
+        filename: o.fileName,
+        mapping: map.mapping,
+        headers: map.headers,
+      });
+      setOutcomes((prev) =>
+        prev.map((x, i) =>
+          i === index
+            ? {
+                ...x,
+                importBusy: false,
+                result,
+                error: undefined,
+                mapPreview: null,
+                mapError: undefined,
+              }
+            : x,
+        ),
+      );
+      await loadHistory();
+    } catch (e) {
+      setOutcomes((prev) =>
+        prev.map((x, i) =>
+          i === index
+            ? {
+                ...x,
+                importBusy: false,
+                mapError: e instanceof Error ? e.message : "Import failed",
+              }
+            : x,
+        ),
+      );
     }
   }
 
@@ -265,7 +379,19 @@ export function UploadPage() {
             </div>
           )}
           {outcomes.map((o, i) => (
-            <OutcomeCard key={`${i}-${o.fileName}`} outcome={o} />
+            <OutcomeCard
+              key={`${i}-${o.fileName}`}
+              outcome={o}
+              onMap={() => void runAiMap(i)}
+              onImportMapped={() => void runAiImport(i)}
+              onDismissMap={() =>
+                setOutcomes((prev) =>
+                  prev.map((x, j) =>
+                    j === i ? { ...x, mapPreview: null, mapError: undefined } : x,
+                  ),
+                )
+              }
+            />
           ))}
         </div>
       )}
@@ -357,8 +483,11 @@ export function UploadPage() {
       </section>
 
       <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 text-xs text-ink-muted">
-        Supported: Raiffeisen CZ, Revolut expenses, Revolut stocks, Revolut crypto, eToro activity.
-        Multi-select up to {MAX_BATCH_FILES} files; imports run one after another so dedupe stays correct.
+        Supported natively: Raiffeisen CZ, Revolut expenses, Revolut stocks, Revolut crypto, eToro
+        activity. Unknown <strong className="text-ink-muted">cash CSV</strong> formats can use{" "}
+        <strong className="text-ink-muted">Map with Grok</strong> (confirm preview before import).
+        Multi-select up to {MAX_BATCH_FILES} files; imports run one after another so dedupe stays
+        correct.
       </div>
     </div>
   );
@@ -396,8 +525,19 @@ function summarizeOutcomes(outcomes: FileOutcome[]): { headline: string; detail:
   return { headline: parts.join(" · "), detail: detailParts.join(" · ") };
 }
 
-function OutcomeCard({ outcome }: { outcome: FileOutcome }) {
-  const { fileName, result, error } = outcome;
+function OutcomeCard({
+  outcome,
+  onMap,
+  onImportMapped,
+  onDismissMap,
+}: {
+  outcome: FileOutcome;
+  onMap?: () => void;
+  onImportMapped?: () => void;
+  onDismissMap?: () => void;
+}) {
+  const { fileName, result, error, mapPreview, mapError, mapBusy, importBusy } =
+    outcome;
 
   if (error || !result) {
     return (
@@ -414,6 +554,10 @@ function OutcomeCard({ outcome }: { outcome: FileOutcome }) {
   const ok =
     result.status === "imported" || result.status === "already_imported";
   const warn = result.status === "already_imported";
+  const canMap =
+    !ok &&
+    (result.ai_map_eligible ||
+      /unrecognized statement|header scores/i.test(result.message || ""));
 
   return (
     <div
@@ -434,7 +578,7 @@ function OutcomeCard({ outcome }: { outcome: FileOutcome }) {
         ) : (
           <AlertCircle className="h-6 w-6 shrink-0 text-danger" />
         )}
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium text-ink">{fileName}</div>
           <div className="text-lg font-semibold capitalize">
             {result.status.replaceAll("_", " ")}
@@ -466,6 +610,96 @@ function OutcomeCard({ outcome }: { outcome: FileOutcome }) {
             <li key={e}>{e}</li>
           ))}
         </ul>
+      )}
+
+      {canMap && (
+        <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn-secondary inline-flex items-center gap-1 text-xs"
+              disabled={mapBusy || importBusy}
+              onClick={onMap}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {mapBusy ? "Mapping…" : "Map with Grok"}
+            </button>
+            <span className="text-[11px] text-ink-faint">
+              Cash CSV only · preview before import · no account numbers sent
+            </span>
+          </div>
+          {mapError && (
+            <p className="text-xs text-danger">{mapError}</p>
+          )}
+          {mapPreview?.mapping && (
+            <div className="space-y-2 rounded-xl border border-brand/25 bg-brand/5 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-brand">
+                  Proposed map · {mapPreview.mapping.institution} ·{" "}
+                  {(mapPreview.mapping.confidence * 100).toFixed(0)}%
+                </h3>
+                <button
+                  type="button"
+                  className="text-[11px] text-ink-faint hover:text-ink"
+                  onClick={onDismissMap}
+                >
+                  Dismiss
+                </button>
+              </div>
+              {mapPreview.mapping.notes && (
+                <p className="text-[11px] text-ink-muted">{mapPreview.mapping.notes}</p>
+              )}
+              <div className="flex flex-wrap gap-1.5 text-[10px] text-ink-faint">
+                {Object.entries(mapPreview.mapping.columns)
+                  .filter(([, role]) => role !== "ignore")
+                  .map(([h, role]) => (
+                    <span
+                      key={h}
+                      className="rounded-md border border-white/10 bg-white/[0.03] px-1.5 py-0.5"
+                    >
+                      {h} → {role}
+                    </span>
+                  ))}
+              </div>
+              {mapPreview.preview.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-[11px]">
+                    <thead className="text-ink-faint">
+                      <tr>
+                        <th className="py-1 pr-2 font-medium">Date</th>
+                        <th className="py-1 pr-2 font-medium">Amount</th>
+                        <th className="py-1 pr-2 font-medium">Ccy</th>
+                        <th className="py-1 font-medium">Merchant</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mapPreview.preview.map((row, idx) => (
+                        <tr key={idx} className="border-t border-white/5">
+                          <td className="py-1 pr-2 tabular-nums">{row.booking_date}</td>
+                          <td className="py-1 pr-2 tabular-nums">{row.amount}</td>
+                          <td className="py-1 pr-2">{row.currency}</td>
+                          <td className="py-1 truncate max-w-[12rem]">
+                            {row.merchant || row.description || "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <button
+                type="button"
+                className="btn-primary text-xs"
+                disabled={importBusy}
+                onClick={onImportMapped}
+              >
+                {importBusy
+                  ? "Importing…"
+                  : `Import ${mapPreview.total_data_rows || "mapped"} cash rows`}
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

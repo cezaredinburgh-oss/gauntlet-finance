@@ -143,6 +143,22 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 - Position detail: external research links (Google/Yahoo Finance, X cashtag, CoinGecko/TradingView by asset class).
 - Research links fix: stock/ETF Google Finance uses `tbm=fin` search (bare `/quote/TICKER` 404s on GF beta); crypto keeps `TICKER-USD` quote path; CoinGecko majors deep-link coin pages; crypto TradingView uses `TICKERUSD` (not `TICKER-USD`).
 
+## 2026-08-12 — Grok categorize assist (Option A / testing)
+
+- Platform SpaceXAI/xAI via `AI_ENABLED` + `XAI_API_KEY` (server-only).
+- `POST /api/ai/categorize-suggest` + `GET /api/ai/status`: merchant-batch suggestions for blank/Other/Uncategorized only; validate category UUIDs; no auto-write.
+- Per-principal + global daily token caps (`AI_DAILY_TOKEN_CAP`, `AI_GLOBAL_DAILY_TOKEN_CAP`).
+- Payload minimized: merchant label, amount_sign, currency (no account numbers).
+- UI: Categorize Tools “Suggest with Grok” + confirm Apply; Settings status card; onboarding rules note.
+- Deferred: BYOK, paid entitlements.
+
+## 2026-08-12 — Grok cash statement map (Option B)
+
+- Unknown cash CSV after detect fail: `ai_map_eligible` on upload error.
+- `POST /api/ai/map-statement` (preview column map + sample rows; redacted samples).
+- `POST /api/ai/import-mapped` → soft parse cash txs → same SHA/dedupe/categorize/transfer path (`parser_key=ai_cash_map`).
+- Upload UI: Map with Grok → preview → Import. XLSX/investment formats out of scope.
+
 ## 2026-08-12 — Analysis capital flows hero
 
 - Analysis: removed HealthBand; order is buy/sell cashflow → combined living-draw + fees + staking hero → FX chart.

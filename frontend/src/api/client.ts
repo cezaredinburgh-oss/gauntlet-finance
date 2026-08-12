@@ -1,4 +1,8 @@
 import type {
+  AiCategorizeSuggestResult,
+  AiColumnMap,
+  AiMapStatementResult,
+  AiStatus,
   AlertsResponse,
   ApplyRulesResult,
   AuthMe,
@@ -552,6 +556,42 @@ export const api = {
 
   applyRules: () =>
     request<ApplyRulesResult>("/categories/apply-rules", { method: "POST" }),
+
+  aiStatus: () => request<AiStatus>("/ai/status"),
+
+  aiCategorizeSuggest: (body: {
+    source_file_ids?: string[];
+    limit?: number;
+  } = {}) =>
+    request<AiCategorizeSuggestResult>("/ai/categorize-suggest", {
+      method: "POST",
+      body: JSON.stringify({
+        source_file_ids: body.source_file_ids || [],
+        limit: body.limit ?? null,
+      }),
+    }),
+
+  /** Map unknown cash CSV via Grok (preview). Prefer content_sha256 from failed upload. */
+  aiMapStatement: (opts: { content_sha256?: string; file?: File }) => {
+    const fd = new FormData();
+    if (opts.content_sha256) fd.append("content_sha256", opts.content_sha256);
+    if (opts.file) fd.append("file", opts.file);
+    return request<AiMapStatementResult>("/ai/map-statement", {
+      method: "POST",
+      body: fd,
+    });
+  },
+
+  aiImportMapped: (body: {
+    content_sha256: string;
+    filename: string;
+    mapping: AiColumnMap;
+    headers?: string[];
+  }) =>
+    request<UploadResult>("/ai/import-mapped", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   /** Global match apply — all ledger txs, not limited to current UI filter. */
   applyMatch: (body: {

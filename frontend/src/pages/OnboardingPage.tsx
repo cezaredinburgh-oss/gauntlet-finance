@@ -988,6 +988,10 @@ function RulesStep({
           <li>Internal transfers are flagged on import and stay out of spend totals.</li>
           <li>Stable category IDs — we do not renumber categories by name.</li>
           <li>Rules fill blanks only; manual overrides are preserved.</li>
+          <li>
+            Optional: after import, use <strong className="text-ink-muted">Suggest with Grok</strong>{" "}
+            on Categorize for remaining merchants (server key; you still confirm each apply).
+          </li>
         </ul>
         {preview && (
           <p className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">

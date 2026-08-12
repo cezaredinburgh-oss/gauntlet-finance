@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { api } from "../api/client";
 import type {
+  AiCategorySuggestion,
   ApplyRulesResult,
   BootstrapRulesResult,
   Category,
@@ -19,6 +20,7 @@ import type {
   CategoryRule,
   Transaction,
 } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
 import { Money } from "../components/Money";
 import { EmptyState, PageLoader, Spinner } from "../components/Spinner";
 import {
@@ -86,6 +88,7 @@ type RuleDraft = {
 };
 
 export function CategorizePage() {
+  const { isReadOnly } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<Transaction[]>([]);
   const [total, setTotal] = useState(0);
@@ -103,6 +106,8 @@ export function CategorizePage() {
   const [ruleMsg, setRuleMsg] = useState<string | null>(null);
   const [toolsBusy, setToolsBusy] = useState<string | null>(null);
   const [toolsMsg, setToolsMsg] = useState<string | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<AiCategorySuggestion[]>([]);
+  const [aiApplyBusy, setAiApplyBusy] = useState<string | null>(null);
   const [showRules, setShowRules] = useState(
     () => searchParams.get("panel") === "rules",
   );
@@ -999,8 +1004,129 @@ export function CategorizePage() {
             >
               {toolsBusy === "apply" ? "Working…" : "Apply blanks"}
             </button>
+            <button
+              type="button"
+              className="btn-secondary text-xs inline-flex items-center gap-1"
+              disabled={!!toolsBusy || isReadOnly}
+              title={
+                isReadOnly
+                  ? "Read-only demo — AI suggest is disabled"
+                  : "Grok suggests categories for uncategorized merchants (you confirm apply)"
+              }
+              onClick={() =>
+                void runTool("ai", async () => {
+                  if (isReadOnly) return "Read-only demo — skipped";
+                  // Scans blank merchants across the ledger (capped server-side).
+                  const r = await api.aiCategorizeSuggest({});
+                  setAiSuggestions(r.suggestions || []);
+                  if (!r.configured) {
+                    return (
+                      r.message ||
+                      "Grok not configured — set AI_ENABLED=true and XAI_API_KEY on the server."
+                    );
+                  }
+                  if (r.message && !(r.suggestions || []).length) {
+                    return r.message;
+                  }
+                  return (
+                    `Grok · ${r.merchants_suggested}/${r.merchants_considered} merchants` +
+                    (r.tokens_used ? ` · ~${r.tokens_used} tokens` : "") +
+                    ` · quota ${r.quota_used}/${r.quota_cap}`
+                  );
+                })
+              }
+            >
+              <Sparkles className="h-3 w-3" />
+              {toolsBusy === "ai" ? "Grok…" : "Suggest with Grok"}
+            </button>
           </div>
           {toolsMsg && <p className="text-xs text-ink-muted">{toolsMsg}</p>}
+          {aiSuggestions.length > 0 && (
+            <div className="mt-3 space-y-2 rounded-xl border border-brand/25 bg-brand/5 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-brand">
+                  Grok suggestions ({aiSuggestions.length})
+                </h3>
+                <button
+                  type="button"
+                  className="text-[11px] text-ink-faint hover:text-ink"
+                  onClick={() => setAiSuggestions([])}
+                >
+                  Dismiss
+                </button>
+              </div>
+              <p className="text-[11px] text-ink-faint">
+                Suggest-only — nothing is saved until you apply. Payload is merchant
+                labels only (no account numbers).
+              </p>
+              <ul className="max-h-64 space-y-2 overflow-y-auto">
+                {aiSuggestions.map((s) => (
+                  <li
+                    key={s.merchant_key}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-2.5 py-2 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium text-ink">{s.label}</div>
+                      <div className="text-ink-muted">
+                        → {s.category_name}{" "}
+                        <span className="text-ink-faint">
+                          · {(s.confidence * 100).toFixed(0)}% · {s.sample_count} tx
+                          {s.reason ? ` · ${s.reason}` : ""}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-primary shrink-0 text-[11px]"
+                      disabled={!!aiApplyBusy || isReadOnly}
+                      onClick={() => {
+                        void (async () => {
+                          setAiApplyBusy(s.merchant_key);
+                          try {
+                            const r = await api.bulkOverrideCategory(
+                              s.category_id,
+                              s.transaction_ids,
+                            );
+                            const idSet = new Set(r.transaction_ids);
+                            const forceInternal = categoryImpliesInternal(s.category_id);
+                            const patch = {
+                              category_id: s.category_id,
+                              category_override: true as const,
+                              ...(forceInternal ? { is_internal_transfer: true } : {}),
+                            };
+                            setItems((prev) =>
+                              prev.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t)),
+                            );
+                            const affected = items.filter((t) => idSet.has(t.id));
+                            if (affected.length) {
+                              openRuleProposal(
+                                affected.map((t) => ({ ...t, ...patch })),
+                                s.category_id,
+                              );
+                            }
+                            setAiSuggestions((prev) =>
+                              prev.filter((x) => x.merchant_key !== s.merchant_key),
+                            );
+                            setToolsMsg(
+                              `Applied ${r.updated} tx for ${s.label} → ${s.category_name}`,
+                            );
+                          } catch (e) {
+                            setToolsMsg(
+                              e instanceof Error ? e.message : "Apply suggestion failed",
+                            );
+                          } finally {
+                            setAiApplyBusy(null);
+                          }
+                        })();
+                      }}
+                    >
+                      {aiApplyBusy === s.merchant_key ? "…" : "Apply"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
 

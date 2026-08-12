@@ -33,6 +33,7 @@ def _summary_to_response(summary) -> UploadResponse:
         events_deduped=summary.events_deduped,
         message=summary.message,
         errors=summary.errors,
+        ai_map_eligible=bool(getattr(summary, "ai_map_eligible", False)),
     )
 
 

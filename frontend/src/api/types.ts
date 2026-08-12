@@ -692,6 +692,43 @@ export type UploadResult = {
   events_deduped: number;
   message: string;
   errors: string[];
+  /** Unknown cash CSV may be mapped with Grok */
+  ai_map_eligible?: boolean;
+};
+
+export type AiColumnMap = {
+  institution: string;
+  default_currency?: string | null;
+  amount_sign: string;
+  columns: Record<string, string>;
+  confidence: number;
+  notes: string;
+};
+
+export type AiMapPreviewRow = {
+  booking_date: string;
+  amount: string;
+  currency: string;
+  merchant: string;
+  description: string;
+};
+
+export type AiMapStatementResult = {
+  enabled: boolean;
+  configured: boolean;
+  model?: string | null;
+  content_sha256: string;
+  eligible: boolean;
+  headers: string[];
+  delimiter: string;
+  sample_row_count: number;
+  total_data_rows: number;
+  mapping?: AiColumnMap | null;
+  preview: AiMapPreviewRow[];
+  tokens_used: number;
+  quota_used: number;
+  quota_cap: number;
+  message?: string | null;
 };
 
 export type PriceRefresh = {
@@ -963,4 +1000,42 @@ export type BootstrapRulesResult = {
   merchants_mapped: number;
   top_merchants_scanned: number;
   apply: ApplyRulesResult | null;
+};
+
+/** Grok / SpaceXAI platform assist (suggest-only). */
+export type AiStatus = {
+  enabled: boolean;
+  configured: boolean;
+  model?: string | null;
+  daily_token_cap: number;
+  max_merchants_per_request: number;
+  byok: boolean;
+  mode: string;
+  quota_used: number;
+  quota_cap: number;
+  quota_remaining: number;
+};
+
+export type AiCategorySuggestion = {
+  merchant_key: string;
+  label: string;
+  category_id: string;
+  category_name: string;
+  confidence: number;
+  reason: string;
+  transaction_ids: string[];
+  sample_count: number;
+};
+
+export type AiCategorizeSuggestResult = {
+  enabled: boolean;
+  configured: boolean;
+  model?: string | null;
+  suggestions: AiCategorySuggestion[];
+  merchants_considered: number;
+  merchants_suggested: number;
+  tokens_used: number;
+  quota_used: number;
+  quota_cap: number;
+  message?: string | null;
 };

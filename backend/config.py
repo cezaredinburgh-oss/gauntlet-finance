@@ -103,6 +103,17 @@ class Settings(BaseSettings):
     owner_email: str = ""  # env OWNER_EMAIL — shown on landing; must match login email
     owner_password: str = ""  # env OWNER_PASSWORD — long secret; never commit
 
+    # Grok / SpaceXAI (server-side only; never expose to browser)
+    # AI_ENABLED must be true AND XAI_API_KEY set for platform suggestions.
+    ai_enabled: bool = False  # env AI_ENABLED
+    xai_api_key: str = ""  # env XAI_API_KEY
+    xai_base_url: str = "https://api.x.ai/v1"  # env XAI_BASE_URL
+    ai_model: str = "grok-4.3"  # env AI_MODEL
+    ai_daily_token_cap: int = 200_000  # env AI_DAILY_TOKEN_CAP — per principal
+    ai_global_daily_token_cap: int = 2_000_000  # env AI_GLOBAL_DAILY_TOKEN_CAP
+    ai_max_merchants_per_request: int = 40  # env AI_MAX_MERCHANTS_PER_REQUEST
+    ai_request_timeout_seconds: float = 60.0  # env AI_REQUEST_TIMEOUT_SECONDS
+
     @field_validator("spreadsheet_id", mode="before")
     @classmethod
     def strip_spreadsheet_id(cls, v: object) -> object:
@@ -165,6 +176,11 @@ class Settings(BaseSettings):
         if self.is_production:
             return False
         return self.debug
+
+    @property
+    def ai_configured(self) -> bool:
+        """Kill switch + platform key present (testing / platform-paid path)."""
+        return bool(self.ai_enabled and (self.xai_api_key or "").strip())
 
 
 def validate_settings_for_boot(settings: Settings | None = None) -> None:

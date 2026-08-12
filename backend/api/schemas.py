@@ -32,6 +32,7 @@ class UploadResponse(BaseModel):
     events_deduped: int = 0
     message: str = ""
     errors: list[str] = Field(default_factory=list)
+    ai_map_eligible: bool = False
 
 
 class CategoryOverrideRequest(BaseModel):

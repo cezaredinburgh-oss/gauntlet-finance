@@ -228,6 +228,9 @@ def create_app() -> FastAPI:
     api.include_router(invites.router)
     api.include_router(tenant.router)
     api.include_router(fx_routes.router)
+    from backend.api.routes import ai as ai_routes
+
+    api.include_router(ai_routes.router)
 
     app.include_router(api)
 

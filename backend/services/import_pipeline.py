@@ -16,6 +16,7 @@ from backend.engines.lots import FifoResult, LotEngine
 from backend.engines.statements import StatementService
 from backend.engines.transfer_match import match_internal_transfers
 from backend.parsers import parse_statement_bytes
+from backend.parsers.base import ImportGateResult
 from backend.schema.models import (
     Account,
     Category,
@@ -76,6 +77,8 @@ class UploadSummary:
     events_deduped: int = 0
     message: str = ""
     errors: list[str] = field(default_factory=list)
+    # True when native detect failed and cash AI map may help (CSV).
+    ai_map_eligible: bool = False
 
 
 def _filename_parser_hint(filename: str, parser_key: str | None) -> str | None:
@@ -304,16 +307,179 @@ class ImportPipeline:
             except Exception:  # noqa: BLE001
                 # Do not hide the original import failure if ERROR write fails.
                 pass
+            from backend.services.ai_statement_map import is_unknown_format_error
+
+            msg = str(exc)
+            eligible = is_unknown_format_error(msg) and not filename.lower().endswith(
+                ".xlsx"
+            )
+            hint = (
+                " Try Map with Grok for cash CSV column mapping."
+                if eligible
+                else ""
+            )
             return UploadSummary(
                 status="error",
                 content_sha256=h,
                 statement_file_id=str(reg.statement.id),
                 message=(
                     f"{exc}. File marked as failed — you can re-upload the same "
-                    "file to resume (already-written rows are skipped)."
+                    f"file to resume (already-written rows are skipped).{hint}"
                 ),
                 errors=[str(exc)],
+                ai_map_eligible=eligible,
             )
+
+    def import_ai_mapped_cash(
+        self,
+        *,
+        filename: str,
+        content: bytes,
+        mapping: object,
+        now: datetime | None = None,
+    ) -> UploadSummary:
+        """
+        Import cash rows produced by a confirmed AI column map.
+
+        Reuses the same SHA gate / StatementFiles / categorize / transfer path
+        as normal upload; skips fingerprint detect.
+        """
+        from backend.services.ai_statement_map import (
+            AI_CASH_PARSER_KEY,
+            ColumnMap,
+            apply_mapping_to_bytes,
+        )
+
+        if not isinstance(mapping, ColumnMap):
+            raise TypeError("mapping must be ColumnMap")
+
+        with _import_lock():
+            ts = now or utc_now()
+            h = self.statements.content_hash(content)
+            try:
+                from backend.services.upload_store import store_upload
+
+                store_upload(h, content)
+            except Exception:  # noqa: BLE001
+                pass
+
+            if self.statements.is_duplicate(h):
+                existing = self.statements.find_by_hash(h)
+                if existing and existing.status == StatementFileStatus.IMPORTED:
+                    return UploadSummary(
+                        status="already_imported",
+                        content_sha256=h,
+                        statement_file_id=str(existing.id) if existing else None,
+                        message="File already imported (same SHA-256)",
+                    )
+
+            accounts = [
+                a for a in self.repo.list_rows("Accounts") if isinstance(a, Account)
+            ]
+            if not accounts:
+                try:
+                    from backend.scripts.seed_dev_repo import seed_minimal
+
+                    seed_minimal(self.repo, public_demo=True)
+                    accounts = [
+                        a
+                        for a in self.repo.list_rows("Accounts")
+                        if isinstance(a, Account)
+                    ]
+                except Exception:  # noqa: BLE001
+                    pass
+            acc_map = _account_map(accounts)
+            if not acc_map:
+                from backend.schema.models import AccountType, Institution
+                from backend.common.timeutil import utc_now as _now
+
+                ts0 = _now()
+                default_id = uuid4()
+                bootstrap = Account(
+                    id=default_id,
+                    name="Default",
+                    institution=Institution.OTHER,
+                    account_type=AccountType.CHECKING,
+                    currency="USD",
+                    is_active=True,
+                    created_at=ts0,
+                    updated_at=ts0,
+                )
+                self.repo.upsert_rows("Accounts", [bootstrap])
+                acc_map = {"default": default_id, "USD": default_id, "CZK": default_id}
+            for ccy in (
+                "CZK", "USD", "EUR", "GBP", "INR", "PLN", "CHF", "RON", "HUF",
+                "SEK", "DKK", "NOK", "AUD", "CAD", "JPY", "SGD", "HKD",
+            ):
+                acc_map.setdefault(ccy, acc_map["default"])
+
+            reg = self.statements.register_statement(
+                filename=filename,
+                file_bytes=content,
+                institution=mapping.institution or "Other",
+                row_count=0,
+                parser_key=AI_CASH_PARSER_KEY,
+                status=StatementFileStatus.PENDING,
+                now=ts,
+            )
+            if reg.status == "duplicate":
+                return UploadSummary(
+                    status="already_imported",
+                    content_sha256=h,
+                    statement_file_id=str(reg.statement.id),
+                    message="File already imported",
+                )
+            reg_statement = reg.statement
+
+            try:
+                parse_result = apply_mapping_to_bytes(
+                    content,
+                    mapping,
+                    account_ids=acc_map,
+                    source_file_id=reg_statement.id,
+                    file_hash=h,
+                    now=ts,
+                )
+                if not parse_result.transactions:
+                    raise ValueError(
+                        "AI map produced zero cash rows — check date/amount columns"
+                    )
+                gate = ImportGateResult(
+                    status="parsed",
+                    content_sha256=h,
+                    parser_key=parse_result.parser_key,
+                    institution=parse_result.institution,
+                    row_count=parse_result.row_count,
+                    transactions=parse_result.transactions,
+                    message="ai_cash_map",
+                )
+                return self._import_registered(
+                    reg_statement=reg_statement,
+                    content=content,
+                    filename=filename,
+                    acc_map=acc_map,
+                    content_sha256=h,
+                    ts=ts,
+                    parsed_override=gate,
+                )
+            except Exception as exc:  # noqa: BLE001
+                try:
+                    self.statements.mark_status(
+                        reg_statement.id,
+                        StatementFileStatus.ERROR,
+                        notes=str(exc)[:1500],
+                        now=utc_now(),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                return UploadSummary(
+                    status="error",
+                    content_sha256=h,
+                    statement_file_id=str(reg_statement.id),
+                    message=str(exc),
+                    errors=[str(exc)],
+                    ai_map_eligible=True,
+                )
 
     def _import_registered(
         self,
@@ -324,16 +490,20 @@ class ImportPipeline:
         acc_map: dict[str, UUID],
         content_sha256: str,
         ts: datetime,
+        parsed_override: ImportGateResult | None = None,
     ) -> UploadSummary:
         """Parse + persist for a StatementFiles row already registered as PENDING."""
-        parsed = parse_statement_bytes(
-            content,
-            account_ids=acc_map,
-            existing_hashes=set(),  # already gated
-            filename=filename,
-            source_file_id=reg_statement.id,
-            now=ts,
-        )
+        if parsed_override is not None:
+            parsed = parsed_override
+        else:
+            parsed = parse_statement_bytes(
+                content,
+                account_ids=acc_map,
+                existing_hashes=set(),  # already gated
+                filename=filename,
+                source_file_id=reg_statement.id,
+                now=ts,
+            )
 
         # Update statement metadata (still PENDING until writes finish)
         self.repo.upsert_rows(

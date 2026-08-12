@@ -4,6 +4,7 @@ import { ExternalLink, Save, Trash2 } from "lucide-react";
 import { api, setupWizardUrl } from "../api/client";
 import type {
   AdminJob,
+  AiStatus,
   CleanupPreview,
   CleanupResult,
   Health,
@@ -50,6 +51,8 @@ export function SettingsPage() {
   const [jobError, setJobError] = useState<string | null>(null);
   const [jobMsg, setJobMsg] = useState<string | null>(null);
   const [exportYear, setExportYear] = useState(() => new Date().getFullYear());
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
+  const [aiStatusError, setAiStatusError] = useState<string | null>(null);
 
   const refreshCleanupPreview = useCallback(async () => {
     try {
@@ -96,6 +99,20 @@ export function SettingsPage() {
           }
         } catch {
           /* optional */
+        }
+        try {
+          const a = await api.aiStatus();
+          if (!cancelled) {
+            setAiStatus(a);
+            setAiStatusError(null);
+          }
+        } catch (e) {
+          if (!cancelled) {
+            setAiStatus(null);
+            setAiStatusError(
+              e instanceof Error ? e.message : "AI status unavailable",
+            );
+          }
         }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed");
@@ -182,6 +199,49 @@ export function SettingsPage() {
           {error}
         </div>
       )}
+
+      <section className="card space-y-3 p-5">
+        <h2 className="text-sm font-semibold">Grok AI assist</h2>
+        <p className="text-xs text-ink-muted">
+          Platform testing mode: server-side xAI key only. Suggestions appear on
+          Categorize; nothing is applied until you confirm. BYOK and paid tiers
+          come later.
+        </p>
+        {aiStatusError && (
+          <p className="text-xs text-danger">{aiStatusError}</p>
+        )}
+        {aiStatus && (
+          <dl className="grid grid-cols-2 gap-2 text-xs">
+            <div>
+              <dt className="text-ink-faint">Mode</dt>
+              <dd className="font-medium text-ink">{aiStatus.mode}</dd>
+            </div>
+            <div>
+              <dt className="text-ink-faint">Configured</dt>
+              <dd className="font-medium text-ink">
+                {aiStatus.configured ? "Yes" : "No"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-ink-faint">Model</dt>
+              <dd className="font-medium text-ink">{aiStatus.model || "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-ink-faint">Daily quota</dt>
+              <dd className="font-medium tabular-nums text-ink">
+                {aiStatus.quota_used}/{aiStatus.quota_cap} tokens
+              </dd>
+            </div>
+          </dl>
+        )}
+        {!aiStatus?.configured && !aiStatusError && (
+          <p className="text-[11px] text-ink-faint">
+            To enable: set <code className="text-ink-muted">AI_ENABLED=true</code>{" "}
+            and <code className="text-ink-muted">XAI_API_KEY</code> in the API{" "}
+            <code className="text-ink-muted">.env</code>, then restart.
+          </p>
+        )}
+      </section>
 
       <section className="card space-y-4 p-5">
         <h2 className="text-sm font-semibold">Account</h2>
