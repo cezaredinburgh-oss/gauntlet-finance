@@ -14,6 +14,7 @@ from backend.schema.models import (
     InvestmentEventType,
     InvestmentLot,
     LotStatus,
+    Price,
     TradeSide,
 )
 from backend.services.holdings_timeline import build_holdings_timeline
@@ -824,6 +825,91 @@ def test_densify_daily_closes_fills_gap():
     assert days == ["2026-08-10", "2026-08-11", "2026-08-12"]
     assert filled[1][1] == Decimal("1.00")  # forward-fill
     assert filled[2][1] == Decimal("1.20")
+
+
+def _price_row(ticker: str, price: str) -> Price:
+    return Price(
+        id=uuid4(),
+        ticker=ticker,
+        price=Decimal(price),
+        currency="USD",
+        as_of=TS,
+        source="yfinance",
+        created_at=TS,
+        updated_at=TS,
+    )
+
+
+def test_history_1d_portfolio_last_point_is_book_mv():
+    """1D Market value tip = Prices-tab book; Yahoo only shapes earlier bars."""
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [
+            _lot(ticker="PLTR", asset_class=AssetClass.STOCK, qty="10", cost_usd="200"),
+            _lot(ticker="DOGE", asset_class=AssetClass.CRYPTO, qty="100", cost_usd="10"),
+        ],
+    )
+    # Desk book: 10*30 + 100*0.50 = 350
+    repo.upsert_rows(
+        "Prices",
+        [_price_row("PLTR", "30"), _price_row("DOGE", "0.50")],
+    )
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        assert interval == "5m"
+        now = datetime.now(timezone.utc)
+        out: dict[str, list[tuple[str, Decimal]]] = {}
+        for _ysym, our in yahoo_map.items():
+            series: list[tuple[str, Decimal]] = []
+            for i in range(12):
+                ts = (now - timedelta(minutes=5 * (11 - i))).replace(
+                    microsecond=0
+                ).isoformat()
+                # Yahoo inflated vs book (would sum to 500 if constant qty)
+                if our == "PLTR":
+                    series.append((ts, Decimal("40")))
+                else:
+                    series.append((ts, Decimal("1.00")))
+            out[our] = series
+        return out
+
+    svc = PriceHistoryService(repo, fetcher=fake_fetch, cache_ttl_seconds=0)
+    result = svc.history(scope="all", range_key="1d")
+    assert result.series_kind == "market_value"
+    assert result.meta["point_kind"] == "intraday"
+    assert len(result.points) >= 2
+    # Tip pinned to desk book mark
+    assert result.points[-1]["value"] == "350.00"
+    # Path not flattened: at least one earlier bar still reflects Yahoo path
+    earlier = [Decimal(p["value"]) for p in result.points[:-1]]
+    assert any(v != Decimal("350.00") for v in earlier)
+    assert "desk book mark" in (result.meta.get("note") or "").lower()
+
+
+def test_history_1d_ticker_last_point_is_book_price():
+    """1D last price tip matches Prices tab; path remains Yahoo 5m."""
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [_lot(ticker="PLTR", asset_class=AssetClass.STOCK, qty="10", cost_usd="200")],
+    )
+    repo.upsert_rows("Prices", [_price_row("PLTR", "25.50")])
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        assert interval == "5m"
+        now = datetime.now(timezone.utc)
+        our = yahoo_map[yahoo_symbols[0]]
+        series = []
+        for i in range(8):
+            ts = (now - timedelta(minutes=5 * (7 - i))).replace(microsecond=0).isoformat()
+            series.append((ts, Decimal("22.00")))
+        return {our: series}
+
+    svc = PriceHistoryService(repo, fetcher=fake_fetch, cache_ttl_seconds=0)
+    result = svc.history(scope="ticker", range_key="1d", ticker="PLTR")
+    assert result.points[-1]["value"] == "25.5000"
+    assert any(p["value"] == "22.0000" for p in result.points[:-1])
 
 
 def test_portfolio_1d_aligned_grid_full_book_and_additive():

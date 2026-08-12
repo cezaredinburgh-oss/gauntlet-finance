@@ -1850,13 +1850,10 @@ class PriceHistoryService:
             missing = [] if series else [t]
             qty = qty_map[t]
             avg_cost = (cost / qty) if qty > 0 else None
-            # Align last daily bar to Prices-tab book mark when available
+            # Align last bar to Prices-tab book mark when available (daily + 1D).
+            # Yahoo keeps the path; tip matches desk quote used by holdings/snapshot.
             book_px = self._book_price_usd(t)
-            if (
-                not is_intraday
-                and book_px is not None
-                and series
-            ):
+            if book_px is not None and series:
                 series = list(series)
                 last_ts = series[-1][0]
                 series[-1] = (last_ts, book_px)
@@ -2055,7 +2052,9 @@ class PriceHistoryService:
 
         # Align last MV bar to Prices-tab book mark (open lots × desk quotes)
         # so chart "Market value" matches executive snapshot marked MV.
-        if not is_intraday and mv_series:
+        # Applies to daily *and* 1D intraday: Yahoo supplies the path shape;
+        # the tip is always desk book (fixes ~$400+ 1D vs snapshot drift).
+        if mv_series:
             book_mv = self._book_market_value_usd(lots, asset_class=ac_filter)
             if book_mv is None and qty_map:
                 book_mv = self._book_mv_from_qty(qty_map)
@@ -2063,6 +2062,11 @@ class PriceHistoryService:
                 mv_series = list(mv_series)
                 last_ts = mv_series[-1][0]
                 mv_series[-1] = (last_ts, _q2(book_mv))
+                if is_intraday:
+                    note = (
+                        "Last Market value = desk book mark (Prices tab); "
+                        "path from Yahoo 5m. "
+                    ) + note
         points = [{"date": d_ts, "value": _str_dec(v)} for d_ts, v in mv_series]
         first = mv_series[0][1] if mv_series else None
         last = mv_series[-1][1] if mv_series else None

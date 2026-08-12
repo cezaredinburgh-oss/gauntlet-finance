@@ -4,6 +4,11 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — 1D chart tip = desk book mark
+
+- Portfolio / asset-class 1D “Market value” last bar pins to Prices-tab book MV (same as dashboard snapshot); Yahoo 5m keeps the path shape only.
+- Ticker 1D last price also pins to Prices-tab quote for the same tip/book parity.
+
 ## 2026-08-12 — UX polish: chrome, alerts, charts, spending, research
 
 - Header: removed manual **Update prices** button and desktop sticky price bar; soft ~60s refresh remains on Home/Investments.
