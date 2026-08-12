@@ -69,7 +69,18 @@ Or use wizard step **Deploy → Generate env vars**.
 | `ALLOW_OPEN_AUTH` | `true` only with `AUTH_MODE=dev` on a private/trusted host. Omit (or `false`) with `oauth` |
 | `REQUIRE_SHEETS` | `true` |
 
-**Auth note:** Production refuses open API access when `AUTH_MODE` is `dev` or `disabled` unless `ALLOW_OPEN_AUTH=true`. Without that flag unauthenticated domain routes return **401** (login required). Prefer owner/demo password or `AUTH_MODE=oauth` on public domains — never leave `ALLOW_OPEN_AUTH=true` on a shared URL.
+**Auth note:** Production refuses open API access when `AUTH_MODE` is `dev` or `disabled` unless `ALLOW_OPEN_AUTH=true`. Without that flag unauthenticated domain routes return **401** (login required). Prefer owner password, OAuth, or one-click demos on public domains — never leave `ALLOW_OPEN_AUTH=true` on a shared URL.
+
+### Public demos (marketing)
+
+| Variable | Effect |
+|----------|--------|
+| `DEMO_TOUR_ENABLED=true` | Landing **Explore sample portfolio** — synthetic data, read-only |
+| `DEMO_SANDBOX_ENABLED=true` | Landing **Try with your statements** — empty session ledger, wiped on sign-out |
+| `DEMO_SANDBOX_MAX_ACTIVE` | Optional cap on concurrent sandboxes (default 50) |
+| Legacy `DEMO_LOGIN_*` | Optional password form; prefer one-click flags above |
+
+Neither demo path uses the production Google Sheet.
 
 ### Multi-tenant production (personal account + invites)
 

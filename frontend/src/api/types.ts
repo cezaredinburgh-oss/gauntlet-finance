@@ -10,6 +10,10 @@ export type AuthMe = {
   spreadsheet_bound?: boolean;
   is_demo?: boolean;
   demo_login_enabled?: boolean;
+  /** "sandbox" | "tour" when is_demo */
+  demo_kind?: string | null;
+  /** True for tour demo — mutations blocked server-side */
+  read_only?: boolean;
 };
 
 export type PublicAuthConfig = {
@@ -17,6 +21,8 @@ export type PublicAuthConfig = {
   multi_tenant: boolean;
   demo_login_enabled: boolean;
   demo_email: string | null;
+  demo_sandbox_enabled?: boolean;
+  demo_tour_enabled?: boolean;
   owner_login_enabled?: boolean;
   google_login_available: boolean;
   open_auth?: boolean;

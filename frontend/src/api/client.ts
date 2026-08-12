@@ -212,6 +212,26 @@ export const api = {
       },
     ),
 
+  /** One-click empty ephemeral sandbox (no email/password). */
+  enterDemoSandbox: () =>
+    request<{
+      status: string;
+      email: string;
+      is_demo: boolean;
+      demo_kind: string;
+      read_only: boolean;
+    }>("/auth/demo/sandbox", { method: "POST" }),
+
+  /** One-click synthetic read-only sample portfolio. */
+  enterDemoTour: () =>
+    request<{
+      status: string;
+      email: string;
+      is_demo: boolean;
+      demo_kind: string;
+      read_only: boolean;
+    }>("/auth/demo/tour", { method: "POST" }),
+
   /** Full URL for browser redirect to Google OAuth */
   loginUrl: () => `${API_BASE}/auth/login`,
 

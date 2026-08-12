@@ -31,7 +31,7 @@ function loadUi(): UiSettings {
 }
 
 export function SettingsPage() {
-  const { user, isDevMode, logout, refresh } = useAuth();
+  const { user, isDevMode, logout, refresh, isReadOnly } = useAuth();
   const [ui, setUi] = useState<UiSettings>(loadUi);
   const [saved, setSaved] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
@@ -445,6 +445,7 @@ export function SettingsPage() {
         )}
       </section>
 
+      {!isReadOnly && (
       <section className="card space-y-4 border border-danger/25 p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -548,6 +549,7 @@ export function SettingsPage() {
           </>
         )}
       </section>
+      )}
     </div>
   );
 }

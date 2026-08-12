@@ -84,6 +84,10 @@ def get_session_user(
     user = load_session_token(settings, token)
     if user is None:
         return None
+    # Public demos use isolated memory keys in the JWT — never control-plane hydrate
+    # (sandbox ids are not control users; tour is a fixed principal).
+    if user.is_demo:
+        return user
     if settings.multi_tenant:
         return _hydrate_tenant_user(settings, user)
     return user
@@ -103,12 +107,16 @@ def _hydrate_tenant_user(settings: Settings, user: SessionUser) -> SessionUser |
     if record.disabled_at:
         return None
     is_demo = user.is_demo
+    demo_kind = user.demo_kind
     user.user_id = record.id
     # Demo principal must never become platform_admin via env promote
     if is_demo:
         user.role = "user"
+        # Preserve sandbox/tour kind from the session cookie
+        user.demo_kind = demo_kind or "sandbox"
     else:
         user.role = record.role
+        user.demo_kind = ""
     user.spreadsheet_id = record.spreadsheet_id
     user.email = record.email
     user.is_demo = is_demo
@@ -190,6 +198,26 @@ def get_memory_repo_for_tenant(tenant_key: str) -> InMemorySheetsRepository:
         repo = InMemorySheetsRepository()
         _TENANT_MEMORY_REPOS[key] = repo
     return repo
+
+
+def drop_memory_repo_key(tenant_key: str) -> None:
+    """Remove one in-memory ledger (sandbox logout)."""
+    key = (tenant_key or "").strip()
+    if key:
+        _TENANT_MEMORY_REPOS.pop(key, None)
+
+
+def require_writable(user: UserDep) -> SessionUser:
+    """Block mutations for the public tour (sample portfolio) principal."""
+    if user.is_demo and user.demo_kind == "tour":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sample portfolio is read-only. Use Try with your statements to upload.",
+        )
+    return user
+
+
+WritableUserDep = Annotated[SessionUser, Depends(require_writable)]
 
 
 def get_repository(

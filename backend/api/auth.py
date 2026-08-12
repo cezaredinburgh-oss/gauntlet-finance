@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlencode
 
 import httpx
@@ -27,6 +27,8 @@ OAUTH_SCOPES = " ".join(
     ]
 )
 
+DemoKind = Literal["sandbox", "tour", ""]
+
 
 @dataclass
 class SessionUser:
@@ -41,6 +43,13 @@ class SessionUser:
     role: str = "user"
     spreadsheet_id: str | None = None
     is_demo: bool = False
+    # Public demos: "sandbox" (writable ephemeral) | "tour" (read-only seed) | ""
+    demo_kind: DemoKind = ""
+
+    @property
+    def read_only(self) -> bool:
+        """Tour demo is server-enforced read-only."""
+        return bool(self.is_demo and self.demo_kind == "tour")
 
 
 def _serializer(settings: Settings) -> URLSafeTimedSerializer:
@@ -59,6 +68,7 @@ def create_session_token(settings: Settings, user: SessionUser) -> str:
         "role": user.role,
         "spreadsheet_id": user.spreadsheet_id,
         "is_demo": user.is_demo,
+        "demo_kind": user.demo_kind or "",
     }
     return _serializer(settings).dumps(payload)
 
@@ -74,6 +84,14 @@ def load_session_token(
         )
     except (BadSignature, SignatureExpired):
         return None
+    raw_kind = (data.get("demo_kind") or "").strip().lower()
+    kind: DemoKind = (
+        "sandbox" if raw_kind == "sandbox" else "tour" if raw_kind == "tour" else ""
+    )
+    # Legacy password-demo sessions: is_demo without kind → treat as sandbox (writable).
+    is_demo = bool(data.get("is_demo"))
+    if is_demo and not kind:
+        kind = "sandbox"
     return SessionUser(
         email=data["email"],
         name=data.get("name"),
@@ -84,7 +102,8 @@ def load_session_token(
         user_id=data.get("user_id"),
         role=data.get("role") or "user",
         spreadsheet_id=data.get("spreadsheet_id"),
-        is_demo=bool(data.get("is_demo")),
+        is_demo=is_demo,
+        demo_kind=kind if is_demo else "",
     )
 
 

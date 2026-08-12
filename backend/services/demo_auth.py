@@ -101,6 +101,7 @@ def ensure_demo_tenant(settings: Settings) -> SessionUser:
         role="user",
         spreadsheet_id=user.spreadsheet_id,
         is_demo=True,
+        demo_kind="sandbox",
     )
 
 
@@ -183,7 +184,9 @@ def authenticate_password_login(
         raise DemoAuthError("Invalid email or password.")
 
     if settings.multi_tenant:
-        return ensure_demo_tenant(settings)
+        user = ensure_demo_tenant(settings)
+        user.demo_kind = "sandbox"
+        return user
 
     return SessionUser(
         email=expected_email,
@@ -196,6 +199,7 @@ def authenticate_password_login(
         role="user",
         spreadsheet_id="demo-public",
         is_demo=True,
+        demo_kind="sandbox",
     )
 
 

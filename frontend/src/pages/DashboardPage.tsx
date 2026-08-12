@@ -111,6 +111,11 @@ export function DashboardPage() {
   }, [load]);
 
   useEffect(() => {
+    // Public demos never need the real-sheet setup wizard.
+    if (user?.is_demo) {
+      setSetupPromptOpen(false);
+      return;
+    }
     const multiTenant = Boolean(user?.multi_tenant ?? health?.multi_tenant);
     if (multiTenant) {
       setSetupPromptOpen(
@@ -130,7 +135,7 @@ export function DashboardPage() {
         multiTenant: false,
       }),
     );
-  }, [health, user?.multi_tenant, user?.tenant_ready]);
+  }, [health, user?.multi_tenant, user?.tenant_ready, user?.is_demo]);
 
   function shiftCashMonth(delta: number) {
     const next = shiftCalendarMonth(cashTf, delta);

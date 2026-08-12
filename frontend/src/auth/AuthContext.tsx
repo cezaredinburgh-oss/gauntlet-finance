@@ -17,8 +17,12 @@ type AuthState = {
   refresh: () => Promise<void>;
   login: () => void;
   loginWithPassword: (email: string, password: string) => Promise<void>;
+  enterSandbox: () => Promise<void>;
+  enterTour: () => Promise<void>;
   logout: () => Promise<void>;
   isDevMode: boolean;
+  /** Tour demo: UI should hide write actions (server also 403s). */
+  isReadOnly: boolean;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -69,6 +73,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me);
   }, []);
 
+  const enterSandbox = useCallback(async () => {
+    await api.enterDemoSandbox();
+    const me = await api.me();
+    setUser(me);
+  }, []);
+
+  const enterTour = useCallback(async () => {
+    await api.enterDemoTour();
+    const me = await api.me();
+    setUser(me);
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await api.logout();
@@ -89,10 +105,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refresh,
       login,
       loginWithPassword,
+      enterSandbox,
+      enterTour,
       logout,
       isDevMode: user?.auth_mode === "dev" || user?.auth_mode === "disabled",
+      isReadOnly: Boolean(user?.read_only || user?.demo_kind === "tour"),
     }),
-    [user, loading, error, refresh, login, loginWithPassword, logout],
+    [user, loading, error, refresh, login, loginWithPassword, enterSandbox, enterTour, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

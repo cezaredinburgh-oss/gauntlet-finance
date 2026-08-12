@@ -13,6 +13,7 @@ from backend.api.auth import (
     exchange_code,
     fetch_userinfo,
     google_authorize_url,
+    load_session_token,
     session_from_token_response,
 )
 from backend.api.deps import SettingsDep, UserDep
@@ -24,10 +25,16 @@ from backend.api.schemas import (
 from backend.api.session_cookies import (
     clear_guest_cookie,
     clear_session_cookie,
+    is_guest_request,
     set_guest_cookie,
     set_session_cookie,
 )
 from backend.services.demo_auth import DemoAuthError, authenticate_password_login
+from backend.services.demo_sessions import (
+    destroy_sandbox_session,
+    enter_sandbox,
+    enter_tour,
+)
 from backend.tenancy.store import get_control_store, normalize_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -157,10 +164,49 @@ async def password_login(
         email=session_user.email,
         is_demo=session_user.is_demo,
         role=session_user.role,
+        demo_kind=session_user.demo_kind or None,
+        read_only=session_user.read_only,
     )
     resp = JSONResponse(payload.model_dump())
     set_session_cookie(resp, settings, token)
     return resp
+
+
+def _demo_enter_response(settings, session_user) -> JSONResponse:
+    token = create_session_token(settings, session_user)
+    payload = {
+        "status": "ok",
+        "email": session_user.email,
+        "is_demo": True,
+        "demo_kind": session_user.demo_kind,
+        "read_only": session_user.read_only,
+        "role": session_user.role,
+    }
+    resp = JSONResponse(payload)
+    set_session_cookie(resp, settings, token)
+    return resp
+
+
+@router.post("/demo/sandbox")
+async def demo_enter_sandbox(request: Request, settings: SettingsDep) -> JSONResponse:
+    """One-click empty ephemeral sandbox (writable, wiped on logout)."""
+    client_ip = request.client.host if request.client else ""
+    try:
+        session_user = enter_sandbox(settings, client_ip=client_ip or "")
+    except DemoAuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return _demo_enter_response(settings, session_user)
+
+
+@router.post("/demo/tour")
+async def demo_enter_tour(request: Request, settings: SettingsDep) -> JSONResponse:
+    """One-click synthetic sample portfolio (read-only)."""
+    client_ip = request.client.host if request.client else ""
+    try:
+        session_user = enter_tour(settings, client_ip=client_ip or "")
+    except DemoAuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return _demo_enter_response(settings, session_user)
 
 
 @router.get("/me", response_model=AuthMeResponse)
@@ -168,9 +214,21 @@ async def me(
     settings: SettingsDep,
     user: UserDep,
 ) -> AuthMeResponse:
-    ready = bool(user.spreadsheet_id) if settings.multi_tenant else settings.spreadsheet_configured
-    if user.is_demo and settings.multi_tenant:
-        ready = bool(user.spreadsheet_id)
+    # Demos are always "ready" (isolated memory ledger, no provision wizard).
+    if user.is_demo:
+        ready = True
+        bound = True
+    else:
+        ready = (
+            bool(user.spreadsheet_id)
+            if settings.multi_tenant
+            else settings.spreadsheet_configured
+        )
+        bound = (
+            bool(user.spreadsheet_id)
+            if settings.multi_tenant
+            else settings.spreadsheet_configured
+        )
     return AuthMeResponse(
         email=user.email,
         name=user.name,
@@ -179,10 +237,12 @@ async def me(
         multi_tenant=settings.multi_tenant,
         user_id=user.user_id,
         role=user.role if (settings.multi_tenant or user.is_demo) else None,
-        tenant_ready=ready if not user.is_demo else bool(user.spreadsheet_id or not settings.multi_tenant),
-        spreadsheet_bound=bool(user.spreadsheet_id) if settings.multi_tenant else settings.spreadsheet_configured,
+        tenant_ready=ready,
+        spreadsheet_bound=bound,
         is_demo=user.is_demo,
         demo_login_enabled=settings.demo_login_enabled,
+        demo_kind=user.demo_kind or None if user.is_demo else None,
+        read_only=user.read_only,
     )
 
 
@@ -201,6 +261,8 @@ async def public_auth_config(settings: SettingsDep) -> dict:
             if settings.demo_login_enabled
             else None
         ),
+        "demo_sandbox_enabled": bool(settings.demo_sandbox_enabled),
+        "demo_tour_enabled": bool(settings.demo_tour_enabled),
         # Owner password is single-tenant only (blocked under MULTI_TENANT).
         # Do not expose owner_email publicly (reduces targeted guessing).
         "owner_login_enabled": bool(
@@ -219,13 +281,24 @@ async def public_auth_config(settings: SettingsDep) -> dict:
 
 
 @router.post("/logout")
-async def logout(settings: SettingsDep) -> JSONResponse:
+async def logout(request: Request, settings: SettingsDep) -> JSONResponse:
     """
     Clear session cookie and enter guest mode.
 
     Guest mode suppresses AUTH_MODE=dev synthetic auto-login so the landing
     page can show demo/Google forms after Sign out.
+
+    Sandbox demos: wipe in-memory ledger + upload blobs for that session.
     """
+    if not is_guest_request(request.cookies):
+        token = request.cookies.get(settings.session_cookie_name) or request.cookies.get(
+            "gf_session"
+        )
+        if token:
+            user = load_session_token(settings, token)
+            if user is not None:
+                destroy_sandbox_session(user)
+
     resp = JSONResponse({"status": "logged_out", "guest": True})
     clear_session_cookie(resp, settings)
     set_guest_cookie(resp, settings)

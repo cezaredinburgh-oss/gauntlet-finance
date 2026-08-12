@@ -4,6 +4,17 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Dual public demos (sandbox + tour)
+
+- Replace shared password demo as primary path with **two one-click entries**:
+  - `POST /api/auth/demo/tour` — synthetic seed (`seed_full_demo`), `demo_kind=tour`, **server read-only** (middleware + WritableUserDep).
+  - `POST /api/auth/demo/sandbox` — per-session empty memory ledger, writable; **wiped on logout**.
+- Session: `demo_kind`, `read_only` on `/me`; JWT carries `demo_kind`.
+- Landing: “Explore sample portfolio” / “Try with your statements” (no email/password).
+- Demo banner variants; Upload/Settings cleanup gated for tour; setup wizard suppressed for demos.
+- Env: `DEMO_TOUR_ENABLED`, `DEMO_SANDBOX_ENABLED`, `DEMO_SANDBOX_MAX_ACTIVE`. Legacy password demo optional.
+- Tests: `test_dual_demo.py` (isolation, wipe, 403, no Google).
+
 ## 2026-08-12 — Admin → personal tenant migration tooling
 
 - Goal: real finances on multi-tenant personal principal (bound sheet); keep platform admin + demo for testing.

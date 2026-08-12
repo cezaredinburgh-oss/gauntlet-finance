@@ -155,6 +155,35 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def block_tour_demo_writes(request: Request, call_next):
+        """Safety net: tour demo cannot mutate domain APIs (allow /api/auth/*)."""
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            path = request.url.path or ""
+            if path.startswith("/api/") and not path.startswith("/api/auth/"):
+                from backend.api.auth import load_session_token
+                from backend.api.session_cookies import is_guest_request
+                from backend.config import get_settings as _gs
+
+                if not is_guest_request(request.cookies):
+                    s = _gs()
+                    tok = request.cookies.get(s.session_cookie_name) or request.cookies.get(
+                        "gf_session"
+                    )
+                    if tok:
+                        u = load_session_token(s, tok)
+                        if u is not None and u.is_demo and u.demo_kind == "tour":
+                            return JSONResponse(
+                                status_code=403,
+                                content={
+                                    "detail": (
+                                        "Sample portfolio is read-only. "
+                                        "Use Try with your statements to upload."
+                                    )
+                                },
+                            )
+        return await call_next(request)
+
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
         logger.exception("Unhandled error on %s", request.url.path)

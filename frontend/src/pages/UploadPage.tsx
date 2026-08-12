@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { FileUp, CheckCircle2, AlertCircle, Copy, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import type { StatementFileRow, UploadResult } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
 import { cn } from "../lib/cn";
 import { Spinner } from "../components/Spinner";
 
@@ -29,6 +31,7 @@ function isStatementFile(file: File): boolean {
 }
 
 export function UploadPage() {
+  const { isReadOnly } = useAuth();
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState(false);
   const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
@@ -151,6 +154,29 @@ export function UploadPage() {
   }
 
   const summary = summarizeOutcomes(outcomes);
+
+  if (isReadOnly) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Upload</h1>
+          <p className="text-sm text-ink-muted">
+            Sample portfolio is read-only — statement uploads are disabled.
+          </p>
+        </div>
+        <div className="card space-y-3 p-6 text-sm text-ink-muted">
+          <p>
+            You are exploring the synthetic sample portfolio. To try importing real bank
+            statements, sign out and choose <strong className="text-ink">Try with your statements</strong>{" "}
+            on the landing page.
+          </p>
+          <Link to="/login" className="btn-secondary inline-flex">
+            Back to landing
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

@@ -109,6 +109,8 @@ class AuthMeResponse(BaseModel):
     spreadsheet_bound: bool = False
     is_demo: bool = False
     demo_login_enabled: bool = False
+    demo_kind: str | None = None  # "sandbox" | "tour" | null
+    read_only: bool = False
 
 
 class PasswordLoginRequest(BaseModel):
@@ -121,6 +123,8 @@ class PasswordLoginResponse(BaseModel):
     email: str
     is_demo: bool = False
     role: str | None = None
+    demo_kind: str | None = None
+    read_only: bool = False
 
 
 class ErrorResponse(BaseModel):

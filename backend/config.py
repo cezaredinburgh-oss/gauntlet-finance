@@ -89,10 +89,15 @@ class Settings(BaseSettings):
     # When multi_tenant and no real Sheets: assign memory spreadsheet ids (tests / local)
     multi_tenant_memory_sheets: bool = False  # env MULTI_TENANT_MEMORY_SHEETS
 
-    # Demo password login (landing page). Off by default — enable explicitly for demos.
+    # Demo password login (legacy landing form). Prefer one-click sandbox/tour.
     demo_login_enabled: bool = False  # env DEMO_LOGIN_ENABLED
     demo_email: str = "demo@gauntlet.local"  # env DEMO_EMAIL
     demo_password: str = ""  # env DEMO_PASSWORD — e.g. "demo"; never commit real secrets
+
+    # Public one-click demos (no email/password). Off by default.
+    demo_sandbox_enabled: bool = False  # env DEMO_SANDBOX_ENABLED — empty ephemeral ledger
+    demo_tour_enabled: bool = False  # env DEMO_TOUR_ENABLED — synthetic read-only sample
+    demo_sandbox_max_active: int = 50  # env DEMO_SANDBOX_MAX_ACTIVE
 
     # Owner password login (real ledger). Use when ALLOW_OPEN_AUTH=false on public hosts.
     owner_email: str = ""  # env OWNER_EMAIL — shown on landing; must match login email

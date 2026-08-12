@@ -51,6 +51,8 @@ type PublicConfig = {
   multi_tenant: boolean;
   demo_login_enabled: boolean;
   demo_email: string | null;
+  demo_sandbox_enabled?: boolean;
+  demo_tour_enabled?: boolean;
   owner_login_enabled?: boolean;
   google_login_available: boolean;
   open_auth?: boolean;
@@ -67,7 +69,8 @@ function readAuthError(params: URLSearchParams): {
 }
 
 export function LandingPage() {
-  const { user, loading, login, loginWithPassword, logout, refresh } = useAuth();
+  const { user, loading, login, loginWithPassword, enterSandbox, enterTour, logout, refresh } =
+    useAuth();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const initialErr = useMemo(() => readAuthError(params), [params]);
@@ -108,6 +111,8 @@ export function LandingPage() {
             multi_tenant: false,
             demo_login_enabled: false,
             demo_email: null,
+            demo_sandbox_enabled: false,
+            demo_tour_enabled: false,
             google_login_available: false,
           });
         }
@@ -117,6 +122,29 @@ export function LandingPage() {
       cancelled = true;
     };
   }, []);
+
+  const onOneClick = useCallback(
+    async (kind: "tour" | "sandbox") => {
+      setBusy(true);
+      setFormError(null);
+      try {
+        if (kind === "tour") await enterTour();
+        else await enterSandbox();
+        navigate("/", { replace: true });
+      } catch (err) {
+        const msg =
+          err instanceof ApiError
+            ? err.detail
+            : err instanceof Error
+              ? err.message
+              : "Could not start demo";
+        setFormError(msg);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [enterTour, enterSandbox, navigate],
+  );
 
   const onDemoSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -150,6 +178,9 @@ export function LandingPage() {
   }
 
   const demoOn = publicCfg?.demo_login_enabled === true;
+  const tourOn = publicCfg?.demo_tour_enabled === true;
+  const sandboxOn = publicCfg?.demo_sandbox_enabled === true;
+  const oneClickOn = tourOn || sandboxOn;
   const ownerOn = publicCfg?.owner_login_enabled === true;
   const passwordOn = demoOn || ownerOn;
   const googleOn = publicCfg?.google_login_available === true;
@@ -202,10 +233,10 @@ export function LandingPage() {
             </h2>
             <p className="mt-1 text-sm text-ink-muted">
               {signedIn
-                ? "This is the public landing page. Open the app, or sign out to use demo / Google login."
+                ? "This is the public landing page. Open the app, or sign out to try demos or sign in again."
                 : publicCfg?.multi_tenant
-                  ? "Invite-only for Google accounts. Or try the shared demo when enabled."
-                  : "Sign in with Google, or use the demo account when enabled on this host."}
+                  ? "Invite-only for Google accounts. Or explore a sample portfolio / try a sandbox."
+                  : "Explore a sample portfolio, try a sandbox with your statements, or sign in."}
             </p>
           </div>
 
@@ -215,7 +246,11 @@ export function LandingPage() {
                 <div className="font-medium text-ink">{user?.name || "Signed in"}</div>
                 <div className="text-ink-muted">{user?.email}</div>
                 {user?.is_demo && (
-                  <div className="mt-1 text-xs text-amber-200">Demo session</div>
+                  <div className="mt-1 text-xs text-amber-200">
+                    {user.demo_kind === "tour"
+                      ? "Sample portfolio (read-only)"
+                      : "Sandbox session"}
+                  </div>
                 )}
                 {openAuth && !user?.is_demo && (
                   <div className="mt-1 text-xs text-amber-200">
@@ -275,6 +310,58 @@ export function LandingPage() {
           {formError && (
             <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
               {formError}
+            </div>
+          )}
+
+          {!signedIn && oneClickOn && (
+            <div className="space-y-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-brand">
+                Try without an account
+              </div>
+              {tourOn && (
+                <button
+                  type="button"
+                  className="btn-primary w-full"
+                  disabled={busy}
+                  onClick={() => void onOneClick("tour")}
+                >
+                  {busy ? <Spinner className="border-t-slate-900" /> : null}
+                  Explore sample portfolio
+                </button>
+              )}
+              {sandboxOn && (
+                <button
+                  type="button"
+                  className={cn("w-full", tourOn ? "btn-secondary" : "btn-primary")}
+                  disabled={busy}
+                  onClick={() => void onOneClick("sandbox")}
+                >
+                  {busy ? <Spinner /> : null}
+                  Try with your statements
+                </button>
+              )}
+              <ul className="space-y-1 text-xs text-ink-faint">
+                {tourOn && (
+                  <li>
+                    <strong className="text-ink-muted">Sample:</strong> synthetic data, read-only
+                    — play with the UI without sharing bank files.
+                  </li>
+                )}
+                {sandboxOn && (
+                  <li>
+                    <strong className="text-ink-muted">Sandbox:</strong> empty private session —
+                    upload statements; wiped when you sign out.
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+
+          {!signedIn && oneClickOn && (passwordOn || googleOn) && (
+            <div className="flex items-center gap-3 text-xs text-ink-faint">
+              <div className="h-px flex-1 bg-white/10" />
+              or sign in
+              <div className="h-px flex-1 bg-white/10" />
             </div>
           )}
 
