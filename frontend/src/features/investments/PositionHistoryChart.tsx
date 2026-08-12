@@ -299,7 +299,11 @@ export function PositionHistoryChart({
           : undefined;
     const trades = data.meta.trades ?? [];
     const isIntra = !!intraday;
-    const byKey = indexTradesByPoint(trades, isIntra);
+    const byKey = indexTradesByPoint(
+      trades,
+      isIntra,
+      data.points.map((p) => p.date),
+    );
     return data.points.map((p) => {
       const pointTrades = tradesForPoint(byKey, p.date, isIntra);
       const y = d(p.value);
@@ -899,8 +903,19 @@ export function PositionHistoryChart({
                 tick={{ fill: "#64748b", fontSize: 11 }}
                 tickLine={false}
                 axisLine={{ stroke: "rgba(148,163,184,0.2)" }}
-                interval="preserveStartEnd"
-                minTickGap={intraday ? 36 : 28}
+                /* Short daily windows: show every day label (avoid skipping mid dates). */
+                interval={
+                  !intraday && (range === "7d" || range === "1m")
+                    ? 0
+                    : "preserveStartEnd"
+                }
+                minTickGap={
+                  !intraday && (range === "7d" || range === "1m")
+                    ? 0
+                    : intraday
+                      ? 36
+                      : 28
+                }
               />
               <YAxis
                 domain={["auto", "auto"]}

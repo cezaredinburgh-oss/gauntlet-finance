@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "../lib/cn";
 
 type Props = {
@@ -9,18 +9,34 @@ type Props = {
 };
 
 const CLOSE_DELAY_MS = 220;
+const EDGE_PAD = 8;
+
+type Placement = {
+  /** Prefer below; flip above when insufficient space */
+  placeAbove: boolean;
+  /** Horizontal shift so panel stays in viewport */
+  shiftX: number;
+};
 
 /**
  * Desktop: show panel on hover (with delay so cursor can enter the panel).
  * Mobile/touch: toggle on click.
+ *
+ * Flips above the trigger when near the bottom of the viewport (tablet tax runway).
+ * Horizontal clamp near left/right edges.
  *
  * Important: no dead gap between trigger and panel — leave closes only after
  * a short delay so the user can move the pointer onto the popup.
  */
 export function HoverPanel({ children, content, className, panelClassName }: Props) {
   const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<Placement>({
+    placeAbove: false,
+    shiftX: 0,
+  });
   const id = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function clearCloseTimer() {
@@ -56,6 +72,48 @@ export function HoverPanel({ children, content, className, panelClassName }: Pro
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (!open) return;
+
+    function measure() {
+      const root = rootRef.current;
+      const panel = panelRef.current;
+      if (!root || !panel) return;
+
+      const trigger = root.getBoundingClientRect();
+      // Temporarily place below to measure natural size
+      const panelRect = panel.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      const spaceBelow = vh - trigger.bottom - EDGE_PAD;
+      const spaceAbove = trigger.top - EDGE_PAD;
+      const need = panelRect.height || 200;
+      const placeAbove = spaceBelow < need && spaceAbove > spaceBelow;
+
+      // Horizontal: prefer left-aligned to trigger; clamp into viewport
+      let shiftX = 0;
+      const left = trigger.left;
+      const width = panelRect.width || 272;
+      if (left + width + EDGE_PAD > vw) {
+        shiftX = Math.min(0, vw - EDGE_PAD - width - left);
+      }
+      if (left + shiftX < EDGE_PAD) {
+        shiftX = EDGE_PAD - left;
+      }
+
+      setPlacement({ placeAbove, shiftX });
+    }
+
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [open, content]);
+
   return (
     <div
       ref={rootRef}
@@ -76,14 +134,22 @@ export function HoverPanel({ children, content, className, panelClassName }: Pro
       </button>
       {open && (
         <div
+          ref={panelRef}
           id={id}
           role="tooltip"
           className={cn(
-            // pt-2 bridges the visual gap: hit area includes padding so leave
-            // does not fire while moving from trigger into the panel body.
-            "absolute left-0 top-full z-50 w-max max-w-[20rem] pt-2",
+            "absolute z-50 w-max max-w-[20rem]",
+            placement.placeAbove
+              ? "bottom-full left-0 pb-2"
+              : "left-0 top-full pt-2",
             panelClassName,
           )}
+          style={{
+            transform:
+              placement.shiftX !== 0
+                ? `translateX(${placement.shiftX}px)`
+                : undefined,
+          }}
           onMouseEnter={openNow}
           onMouseLeave={scheduleClose}
         >

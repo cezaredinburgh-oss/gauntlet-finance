@@ -119,7 +119,7 @@ export function ExecutiveHero({
                     />
                   </div>
                 ) : (
-                  <span className="text-2xl font-bold text-ink-faint">Update prices</span>
+                  <span className="text-2xl font-bold text-ink-faint">Awaiting quotes</span>
                 )}
                 {snap.unrealized_pct != null && (
                   <span
@@ -133,6 +133,14 @@ export function ExecutiveHero({
                   </span>
                 )}
               </div>
+              {snap.missing_quotes.length > 0 && (
+                <p className="mt-1 text-xs text-warn">
+                  Marked MV only · {snap.missing_quotes.length} unpriced
+                  {snap.missing_quotes.length <= 4
+                    ? ` (${snap.missing_quotes.join(", ")})`
+                    : ""}
+                </p>
+              )}
               {health?.summary && (
                 <p className="mt-1 max-w-xl text-sm text-ink-muted">{health.summary}</p>
               )}

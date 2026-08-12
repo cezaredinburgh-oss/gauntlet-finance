@@ -715,6 +715,80 @@ def _series_value_on_or_before(
     return best
 
 
+def _series_day_on_or_before(
+    series_points: list[dict[str, str]],
+    as_of: date,
+) -> str | None:
+    """Calendar day key (YYYY-MM-DD) of last daily series bar on or before as_of."""
+    best: str | None = None
+    for p in series_points:
+        try:
+            d0 = _ts_to_date(p["date"])
+        except Exception:  # noqa: BLE001
+            continue
+        if d0 <= as_of:
+            best = p["date"][:10]
+        else:
+            break
+    if best is None and series_points:
+        return series_points[0]["date"][:10]
+    return best
+
+
+def densify_daily_closes(
+    series: list[SeriesPoint],
+    *,
+    max_gap_days: int = 3,
+) -> list[SeriesPoint]:
+    """
+    Forward-fill short interior holes in a daily series (crypto Yahoo gaps).
+
+    Only fills gaps of 1..max_gap_days calendar days between consecutive bars
+    so multi-month sparse fixtures / long ranges are not exploded into every day.
+    Skips intraday (ISO-T) series.
+    """
+    if len(series) < 2:
+        return series
+    if any("T" in ts for ts, _ in series):
+        return series
+    # Sort by date
+    ordered = sorted(series, key=lambda p: p[0][:10])
+    out: list[SeriesPoint] = [ordered[0]]
+    for i in range(1, len(ordered)):
+        prev_ts, prev_px = out[-1]
+        cur_ts, cur_px = ordered[i]
+        try:
+            prev_d = date.fromisoformat(prev_ts[:10])
+            cur_d = date.fromisoformat(cur_ts[:10])
+        except ValueError:
+            out.append((cur_ts[:10], cur_px))
+            continue
+        gap = (cur_d - prev_d).days
+        if 1 < gap <= max_gap_days:
+            d = prev_d + timedelta(days=1)
+            while d < cur_d:
+                out.append((d.isoformat(), prev_px))
+                d += timedelta(days=1)
+        out.append((cur_ts[:10], cur_px))
+    return out
+
+
+def densify_crypto_closes_map(
+    closes: dict[str, list[SeriesPoint]],
+    asset_classes: dict[str, str | None],
+) -> dict[str, list[SeriesPoint]]:
+    """Densify daily crypto series only; leave equities as market-day bars."""
+    out: dict[str, list[SeriesPoint]] = {}
+    for t, series in closes.items():
+        ac = (asset_classes.get(t) or "").lower()
+        ysym_crypto = t.upper().endswith("-USD")  # defensive
+        if ac == "crypto" or ysym_crypto:
+            out[t] = densify_daily_closes(series)
+        else:
+            out[t] = series
+    return out
+
+
 def collect_trade_markers(
     events: list[InvestmentEvent],
     series_points: list[dict[str, str]],
@@ -804,7 +878,12 @@ def collect_trade_markers(
                 marker_date = series_points[-1]["date"][:10]
                 series_val = _series_value_on_or_before(series_points, window_end_d)
             else:
-                marker_date = ed.isoformat()
+                # Interior Yahoo holes (e.g. missing Aug 11 between 10 and 12):
+                # marker date must be a series day key or FE attach orphans the trade.
+                snap_day = _series_day_on_or_before(series_points, ed)
+                if snap_day is None:
+                    continue
+                marker_date = snap_day
                 series_val = _series_value_on_or_before(series_points, ed)
 
         side = "buy" if e.event_type == InvestmentEventType.BUY else "sell"
@@ -1600,6 +1679,60 @@ class PriceHistoryService:
                 ac_map[t] = lot.asset_class.value if lot.asset_class else None
         return qty, cost, ac_map
 
+    def _book_prices_usd(self) -> dict[str, Decimal]:
+        """Latest Prices-tab USD marks keyed by ticker."""
+        from backend.schema.models import Price
+
+        out: dict[str, Decimal] = {}
+        for row in self.repo.list_rows("Prices"):
+            if not isinstance(row, Price):
+                continue
+            t = (row.ticker or "").strip().upper()
+            if not t or row.price is None:
+                continue
+            out[t] = row.price if isinstance(row.price, Decimal) else Decimal(str(row.price))
+        return out
+
+    def _book_price_usd(self, ticker: str) -> Decimal | None:
+        return self._book_prices_usd().get(ticker.strip().upper())
+
+    def _book_mv_from_qty(self, qty_map: dict[str, Decimal]) -> Decimal | None:
+        prices = self._book_prices_usd()
+        if not qty_map or not prices:
+            return None
+        total = Decimal("0")
+        any_priced = False
+        for t, qty in qty_map.items():
+            px = prices.get(t.upper())
+            if px is None or qty <= 0:
+                continue
+            total += qty * px
+            any_priced = True
+        return _q2(total) if any_priced else None
+
+    def _book_market_value_usd(
+        self,
+        open_lots: list[InvestmentLot],
+        *,
+        asset_class: AssetClass | None = None,
+    ) -> Decimal | None:
+        prices = self._book_prices_usd()
+        if not prices:
+            return None
+        total = Decimal("0")
+        any_priced = False
+        for lot in open_lots:
+            t = lot.ticker.upper()
+            if asset_class is not None:
+                if lot.asset_class is None or lot.asset_class != asset_class:
+                    continue
+            px = prices.get(t)
+            if px is None:
+                continue
+            total += lot.quantity_remaining * px
+            any_priced = True
+        return _q2(total) if any_priced else None
+
     def _fetch_closes(
         self,
         tickers: list[str],
@@ -1711,10 +1844,22 @@ class PriceHistoryService:
                     "last_24h" if ac == "crypto" else "rth_today_or_prior"
                 )
                 closes, session_status = trim_closes_map(closes, mode=mode)
+            elif (ac_map.get(t) or "").lower() == "crypto":
+                closes = densify_crypto_closes_map(closes, ac_map)
             series = closes.get(t, [])
             missing = [] if series else [t]
             qty = qty_map[t]
             avg_cost = (cost / qty) if qty > 0 else None
+            # Align last daily bar to Prices-tab book mark when available
+            book_px = self._book_price_usd(t)
+            if (
+                not is_intraday
+                and book_px is not None
+                and series
+            ):
+                series = list(series)
+                last_ts = series[-1][0]
+                series[-1] = (last_ts, book_px)
             points = [
                 {"date": d_ts, "value": _str_dec(px, places)} for d_ts, px in series
             ]
@@ -1836,7 +1981,7 @@ class PriceHistoryService:
                         closes_raw, mode=trim_mode
                     )
             else:
-                closes = closes_raw
+                closes = densify_crypto_closes_map(closes_raw, ac_map)
             missing = [t for t in tickers if t not in closes or not closes[t]]
             mv_series, agg_meta = aggregate_mv_series(
                 qty_map, closes, coverage_threshold=cov_threshold
@@ -1877,7 +2022,7 @@ class PriceHistoryService:
                         closes_raw, mode=trim_mode
                     )
             else:
-                closes = closes_raw
+                closes = densify_crypto_closes_map(closes_raw, ac_map)
             missing = [t for t in tickers if t not in closes or not closes[t]]
             mv_series, agg_meta = aggregate_mv_series_time_aware(
                 timeline,
@@ -1908,6 +2053,16 @@ class PriceHistoryService:
                 if q > 0
             }
 
+        # Align last MV bar to Prices-tab book mark (open lots × desk quotes)
+        # so chart "Market value" matches executive snapshot marked MV.
+        if not is_intraday and mv_series:
+            book_mv = self._book_market_value_usd(lots, asset_class=ac_filter)
+            if book_mv is None and qty_map:
+                book_mv = self._book_mv_from_qty(qty_map)
+            if book_mv is not None:
+                mv_series = list(mv_series)
+                last_ts = mv_series[-1][0]
+                mv_series[-1] = (last_ts, _q2(book_mv))
         points = [{"date": d_ts, "value": _str_dec(v)} for d_ts, v in mv_series]
         first = mv_series[0][1] if mv_series else None
         last = mv_series[-1][1] if mv_series else None

@@ -75,7 +75,7 @@ export function HoldingsHero({
                   />
                 </div>
               ) : (
-                <span className="text-2xl font-bold text-ink-faint">Update prices</span>
+                <span className="text-2xl font-bold text-ink-faint">Awaiting quotes</span>
               )}
               {snap.unrealized_pct != null && (
                 <span

@@ -4,6 +4,16 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — UX polish: chrome, alerts, charts, spending, research
+
+- Header: removed manual **Update prices** button and desktop sticky price bar; soft ~60s refresh remains on Home/Investments.
+- Portfolio: executive `total_market_value_usd` is authoritative marked MV; unpriced names called out; holdings Value shows cost fallback distinctly; chart last daily point aligns to Prices-tab book mark.
+- HoverPanel: flips above trigger / clamps horizontally when near viewport edges (tax runway on tablet).
+- Spending: cash-pulse KPIs moved into category chart header (price-history style); bottom cash hero removed.
+- Alerts badge: v3 localStorage by stable id + 7d TTL + level escalate; Mark all seen; body drift no longer rebadges.
+- Price history: daily trade markers snap to series day on interior Yahoo gaps; crypto densify fills short holes (≤3d); 7d/1m X-axis shows every day label; FE trade attach nearest prior day.
+- Position detail: external research links (Google/Yahoo Finance, X cashtag, CoinGecko/TradingView by asset class).
+
 ## 2026-08-12 — Analysis capital flows hero
 
 - Analysis: removed HealthBand; order is buy/sell cashflow → combined living-draw + fees + staking hero → FX chart.

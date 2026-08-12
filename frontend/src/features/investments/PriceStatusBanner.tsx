@@ -32,7 +32,8 @@ export function PriceStatusBanner({ snap }: { snap: PortfolioSnapshot }) {
       )}
       {(snap.missing_quotes.length > 0 || mode === "empty") && (
         <div className="mt-1 text-[11px] opacity-90">
-          Use <strong>Update prices</strong> in the header for live marks.
+          Live marks refresh automatically on this page (~60s). Missing tickers need a
+          Yahoo symbol match.
         </div>
       )}
     </div>

@@ -10,7 +10,6 @@ import {
   CartesianGrid,
 } from "recharts";
 import { Link, useNavigate } from "react-router-dom";
-import { TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import { api } from "../api/client";
 import type { DashboardSummary } from "../api/types";
 import { Money } from "../components/Money";
@@ -22,6 +21,7 @@ import {
 } from "../lib/timeframe";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import { d, formatUsd } from "../lib/money";
+import { cn } from "../lib/cn";
 
 type CategoryBar = {
   id: string;
@@ -209,10 +209,7 @@ export function SpendingPage() {
   const incomeDelta = deltaText(comp?.income_change_pct ?? null);
   const expenseDelta = deltaText(comp?.expense_change_pct ?? null, true);
   const pacePct = pace?.pace_pct;
-  const pacePctLiving = pace?.pace_pct_living;
-  const invShare30 = pace?.investments_share_30d_pct;
-  const invShare6m = pace?.investments_share_6m_avg_pct;
-
+      
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -239,26 +236,132 @@ export function SpendingPage() {
         </div>
       )}
 
+      {/*
+        Title left · cash pulse metrics top-right (same pattern as price history chart).
+      */}
       <div className="card p-5">
-        <div className="mb-1 flex flex-wrap items-start justify-between gap-2">
-          <div>
+        <div className="mb-1 flex w-full flex-wrap items-start gap-2 sm:gap-3">
+          <div className="min-w-0 max-w-full flex-1 basis-[12rem]">
             <h2 className="text-sm font-semibold">Spending by category</h2>
             <p className="text-xs text-ink-faint">
-              USD · {tf.label} · excludes internal transfers · bars colored by necessity
-              · top {CATEGORY_TOP_N} by spend · remainder as “Smaller categories”
-              · click a bar to open matching transactions
+              USD · {tf.label} · excludes internal transfers · bars by necessity
+              · top {CATEGORY_TOP_N} · click a bar for transactions
             </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {Object.entries(NECESSITY_LABEL).map(([key, label]) => (
+                <span key={key} className="badge bg-white/5 text-ink-muted">
+                  <span
+                    className="mr-1.5 inline-block h-2 w-2 rounded-full"
+                    style={{ background: NECESSITY_COLORS[key] || "#64748b" }}
+                  />
+                  {label}
+                </span>
+              ))}
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(NECESSITY_LABEL).map(([key, label]) => (
-              <span key={key} className="badge bg-white/5 text-ink-muted">
-                <span
-                  className="mr-1.5 inline-block h-2 w-2 rounded-full"
-                  style={{ background: NECESSITY_COLORS[key] || "#64748b" }}
+          <div className="ml-auto flex shrink-0 flex-wrap items-start justify-end gap-2 sm:gap-3">
+            <CompactCashMetric
+              label="Net"
+              tone={net >= 0 ? "ok" : "danger"}
+              delta={netDelta}
+              hover={
+                <>
+                  <HoverList
+                    title="Summary"
+                    rows={[
+                      { label: "Income", value: formatUsd(income) },
+                      { label: "Expenses", value: formatUsd(expense) },
+                      { label: "Net", value: formatUsd(net) },
+                      {
+                        label: "CZK net",
+                        value: `${d(cf.net_czk).toLocaleString("cs-CZ")} Kč`,
+                      },
+                    ]}
+                  />
+                  {comp && (
+                    <div className="text-xs text-ink-faint">
+                      Prior {comp.prior_from} → {comp.prior_to}: {formatUsd(comp.net_usd)}
+                    </div>
+                  )}
+                </>
+              }
+            >
+              <Money
+                amount={net}
+                currency="USD"
+                amountCzk={cf.net_czk}
+                secondaryMode="hover"
+                size="md"
+                signed
+              />
+            </CompactCashMetric>
+            <CompactCashMetric
+              label="Income"
+              tone="ok"
+              delta={incomeDelta}
+              hover={
+                <HoverList
+                  title="Top sources"
+                  rows={(cf.top_income || []).map((t) => ({
+                    label: t.label,
+                    value: formatUsd(t.amount_usd),
+                  }))}
                 />
-                {label}
-              </span>
-            ))}
+              }
+            >
+              <Money
+                amount={income}
+                currency="USD"
+                amountCzk={cf.income_czk}
+                secondaryMode="hover"
+                size="md"
+              />
+            </CompactCashMetric>
+            <CompactCashMetric
+              label="Expenses"
+              tone="danger"
+              delta={expenseDelta}
+              hover={
+                <>
+                  <HoverList
+                    title="Top merchants"
+                    rows={(cf.top_expense_merchants || []).map((t) => ({
+                      label: t.label,
+                      value: formatUsd(t.amount_usd),
+                    }))}
+                  />
+                  <div className="text-xs text-ink-faint">
+                    30d spend {formatUsd(pace?.spend_30d_usd ?? "0")}
+                    {pacePct != null && (
+                      <>
+                        {" "}
+                        · pace{" "}
+                        <span
+                          className={
+                            pacePct > 10
+                              ? "text-warn"
+                              : pacePct < -10
+                                ? "text-ok"
+                                : ""
+                          }
+                        >
+                          {pacePct >= 0 ? "+" : ""}
+                          {pacePct.toFixed(0)}%
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </>
+              }
+            >
+              <Money
+                amount={expense}
+                currency="USD"
+                amountCzk={cf.expense_czk}
+                secondaryMode="hover"
+                size="md"
+              />
+            </CompactCashMetric>
           </div>
         </div>
         {categoryData.length === 0 ? (
@@ -358,243 +461,6 @@ export function SpendingPage() {
         )}
       </div>
 
-      {/* Bottom cash hero: period KPIs + rolling pace in one glass block */}
-      <section
-        className="relative overflow-hidden rounded-2xl border p-5 sm:p-6"
-        style={{
-          background:
-            "linear-gradient(135deg, rgba(59,130,246,0.12), rgba(16,185,129,0.08) 45%, rgba(15,23,42,0.9))",
-          borderColor: "rgba(52,211,153,0.28)",
-          boxShadow: "0 16px 40px rgba(0,0,0,0.3)",
-        }}
-      >
-        <div className="relative space-y-5">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
-              Cash pulse · {tf.label}
-            </div>
-            <p className="mt-0.5 text-xs text-ink-faint">
-              Period income &amp; expenses · hover cards for CZK / merchants · pace is rolling 30d
-            </p>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <Kpi
-              label="Net cash flow"
-              icon={net >= 0 ? TrendingUp : TrendingDown}
-              tone={net >= 0 ? "ok" : "danger"}
-              delta={netDelta}
-              embedded
-              hover={
-                <>
-                  <HoverList
-                    title="Summary"
-                    rows={[
-                      { label: "Income", value: formatUsd(income) },
-                      { label: "Expenses", value: formatUsd(expense) },
-                      { label: "Net", value: formatUsd(net) },
-                      {
-                        label: "CZK net",
-                        value: `${d(cf.net_czk).toLocaleString("cs-CZ")} Kč`,
-                      },
-                    ]}
-                  />
-                  <HoverList
-                    title="By currency (native)"
-                    rows={(cf.by_currency || []).map((r) => ({
-                      label: r.currency,
-                      value: `${r.net} ${r.currency}`,
-                    }))}
-                  />
-                  {comp && (
-                    <div className="text-xs text-ink-faint">
-                      Prior {comp.prior_from} → {comp.prior_to}: {formatUsd(comp.net_usd)}
-                    </div>
-                  )}
-                </>
-              }
-            >
-              <Money
-                amount={net}
-                currency="USD"
-                amountCzk={cf.net_czk}
-                secondaryMode="hover"
-                size="lg"
-                signed
-              />
-            </Kpi>
-
-            <Kpi
-              label="Income"
-              icon={Wallet}
-              tone="ok"
-              delta={incomeDelta}
-              embedded
-              hover={
-                <>
-                  <HoverList
-                    title="Top sources"
-                    rows={(cf.top_income || []).map((t) => ({
-                      label: t.label,
-                      value: formatUsd(t.amount_usd),
-                    }))}
-                  />
-                  <HoverList
-                    title="By currency"
-                    rows={(cf.by_currency || [])
-                      .filter((r) => d(r.income) > 0)
-                      .map((r) => ({
-                        label: r.currency,
-                        value: `${r.income} ${r.currency}`,
-                      }))}
-                  />
-                  <div className="text-xs text-ink-faint">
-                    CZK ≈ {d(cf.income_czk).toLocaleString("cs-CZ")} Kč ·{" "}
-                    {cf.transaction_count} txs
-                  </div>
-                </>
-              }
-            >
-              <Money
-                amount={income}
-                currency="USD"
-                amountCzk={cf.income_czk}
-                secondaryMode="hover"
-                size="lg"
-              />
-            </Kpi>
-
-            <Kpi
-              label="Expenses"
-              icon={TrendingDown}
-              tone="danger"
-              delta={expenseDelta}
-              embedded
-              hover={
-                <>
-                  <HoverList
-                    title="Top merchants"
-                    rows={(cf.top_expense_merchants || []).map((t) => ({
-                      label: t.label,
-                      value: formatUsd(t.amount_usd),
-                    }))}
-                  />
-                  <HoverList
-                    title="Top domains"
-                    rows={(cf.top_expense_domains || []).map((t) => ({
-                      label: t.label,
-                      value: formatUsd(t.amount_usd),
-                    }))}
-                  />
-                  <div className="text-xs text-ink-faint">
-                    CZK ≈ {d(cf.expense_czk).toLocaleString("cs-CZ")} Kč
-                    {cf.unconverted_count > 0 &&
-                      ` · ${cf.unconverted_count} unconverted`}
-                  </div>
-                </>
-              }
-            >
-              <Money
-                amount={expense}
-                currency="USD"
-                amountCzk={cf.expense_czk}
-                secondaryMode="hover"
-                size="lg"
-              />
-            </Kpi>
-          </div>
-
-          <div className="grid gap-4 rounded-xl border border-white/10 bg-black/20 p-4 sm:grid-cols-3">
-            <div>
-              <div className="label">Rolling 30-day spend</div>
-              <Money
-                amount={pace?.spend_30d_usd}
-                currency="USD"
-                secondaryMode="hover"
-                size="lg"
-              />
-              <div className="mt-1 space-y-0.5 text-[11px] text-ink-faint">
-                <div>
-                  Investments:{" "}
-                  <span className="font-medium text-ink-muted">
-                    {formatUsd(pace?.spend_30d_investments_usd ?? "0")}
-                  </span>
-                  {invShare30 != null && (
-                    <span className="text-ink-faint"> ({invShare30.toFixed(0)}%)</span>
-                  )}
-                </div>
-                <div>
-                  Living:{" "}
-                  <span className="font-medium text-ink-muted">
-                    {formatUsd(pace?.spend_30d_living_usd ?? "0")}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div>
-              <div className="label">6‑mo avg monthly spend</div>
-              <Money
-                amount={pace?.avg_monthly_6m_usd}
-                currency="USD"
-                secondaryMode="hover"
-                size="lg"
-              />
-              <div className="mt-0.5 text-[11px] text-ink-faint">Last 180 days ÷ 6</div>
-              <div className="mt-1 space-y-0.5 text-[11px] text-ink-faint">
-                <div>
-                  Investments:{" "}
-                  <span className="font-medium text-ink-muted">
-                    {formatUsd(pace?.avg_monthly_6m_investments_usd ?? "0")}/mo
-                  </span>
-                  {invShare6m != null && (
-                    <span className="text-ink-faint"> ({invShare6m.toFixed(0)}%)</span>
-                  )}
-                </div>
-                <div>
-                  Living:{" "}
-                  <span className="font-medium text-ink-muted">
-                    {formatUsd(pace?.avg_monthly_6m_living_usd ?? "0")}/mo
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div>
-              <div className="label">30d vs monthly avg</div>
-              <div
-                className={`text-2xl font-semibold ${
-                  pacePct != null && pacePct > 10
-                    ? "text-warn"
-                    : pacePct != null && pacePct < -10
-                      ? "text-ok"
-                      : "text-ink"
-                }`}
-              >
-                {pacePct == null
-                  ? "—"
-                  : `${pacePct >= 0 ? "+" : ""}${pacePct.toFixed(0)}%`}
-              </div>
-              <div className="mt-0.5 text-[11px] text-ink-faint">Total spend pace</div>
-              <div className="mt-1 text-[11px] text-ink-muted">
-                Living only:{" "}
-                <span
-                  className={
-                    pacePctLiving != null && pacePctLiving > 10
-                      ? "text-warn"
-                      : pacePctLiving != null && pacePctLiving < -10
-                        ? "text-ok"
-                        : "text-ink"
-                  }
-                >
-                  {pacePctLiving == null
-                    ? "—"
-                    : `${pacePctLiving >= 0 ? "+" : ""}${pacePctLiving.toFixed(0)}%`}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <div className="flex flex-wrap gap-3 text-xs">
         <Link to="/expenses/categorize" className="font-medium text-brand hover:underline">
           Categorize transactions →
@@ -607,53 +473,39 @@ export function SpendingPage() {
   );
 }
 
-function Kpi({
+function CompactCashMetric({
   label,
   children,
-  icon: Icon,
   tone,
   delta,
   hover,
-  embedded = false,
 }: {
   label: string;
   children: React.ReactNode;
-  icon: React.ComponentType<{ className?: string }>;
   tone: "ok" | "danger" | "brand";
   delta?: { text: string; cls: string };
   hover?: React.ReactNode;
-  /** Nested glass cell inside a parent hero (no outer card chrome) */
-  embedded?: boolean;
 }) {
-  const toneCls =
-    tone === "ok"
-      ? "text-ok bg-ok/10"
-      : tone === "danger"
-        ? "text-danger bg-danger/10"
-        : "text-brand bg-brand/10";
+  const toneText =
+    tone === "ok" ? "text-ok" : tone === "danger" ? "text-danger" : "text-brand";
 
   const body = (
-    <div
-      className={
-        embedded
-          ? "rounded-xl border border-white/10 bg-black/20 p-4"
-          : "card p-4"
-      }
-    >
-      <div className="mb-3 flex items-center justify-between">
-        <span className="label mb-0">{label}</span>
-        <span className={`rounded-lg p-1.5 ${toneCls}`}>
-          <Icon className="h-4 w-4" />
-        </span>
+    <div className="min-w-[5.5rem] text-right">
+      <div className="text-[11px] uppercase tracking-wide text-ink-faint">{label}</div>
+      <div className={cn("font-semibold tabular-nums tracking-tight", toneText)}>
+        {children}
       </div>
-      {children}
-      {delta && <div className={`mt-1 text-xs ${delta.cls}`}>{delta.text}</div>}
+      {delta && (
+        <div className={cn("text-[11px] font-medium tabular-nums", delta.cls)}>
+          {delta.text}
+        </div>
+      )}
     </div>
   );
 
   if (!hover) return body;
   return (
-    <HoverPanel content={hover} className="h-full">
+    <HoverPanel content={hover} className="shrink-0">
       {body}
     </HoverPanel>
   );

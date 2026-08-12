@@ -777,6 +777,55 @@ def test_collect_trade_markers_after_last_bar_still_show():
     assert collect_trade_markers(far, series_1d) == []
 
 
+def test_collect_trade_markers_interior_gap_day_snaps():
+    """Trade on a missing Yahoo day (e.g. Aug 11 hole) snaps to prior bar day."""
+    from backend.services.price_history import collect_trade_markers
+
+    series = [
+        {"date": "2026-08-06", "value": "0.10"},
+        {"date": "2026-08-07", "value": "0.11"},
+        {"date": "2026-08-08", "value": "0.12"},
+        {"date": "2026-08-09", "value": "0.13"},
+        {"date": "2026-08-10", "value": "0.14"},
+        # Aug 11 missing (Yahoo hole)
+        {"date": "2026-08-12", "value": "0.15"},
+    ]
+    buys = [
+        _event(
+            ticker="DOGE",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 11),
+            qty="7000",
+            asset_class=AssetClass.CRYPTO,
+        ),
+        _event(
+            ticker="ETH",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2026, 8, 11),
+            qty="0.25",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    marks = collect_trade_markers(buys, series, asset_class=AssetClass.CRYPTO)
+    assert len(marks) == 2
+    assert all(m["date"] == "2026-08-10" for m in marks)
+    assert all(m["series_value"] == "0.14" for m in marks)
+
+
+def test_densify_daily_closes_fills_gap():
+    from backend.services.price_history import densify_daily_closes
+
+    series = [
+        ("2026-08-10", Decimal("1.00")),
+        ("2026-08-12", Decimal("1.20")),
+    ]
+    filled = densify_daily_closes(series)
+    days = [d for d, _ in filled]
+    assert days == ["2026-08-10", "2026-08-11", "2026-08-12"]
+    assert filled[1][1] == Decimal("1.00")  # forward-fill
+    assert filled[2][1] == Decimal("1.20")
+
+
 def test_portfolio_1d_aligned_grid_full_book_and_additive():
     """Shared 5m grid: full book from first bar; Δ ≈ stock session + crypto 24h."""
     from backend.services.price_history import (

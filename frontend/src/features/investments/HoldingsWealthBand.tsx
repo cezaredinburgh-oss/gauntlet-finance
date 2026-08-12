@@ -327,7 +327,7 @@ function UnrealizedBreakdown({
   if (breakdown.unrealized == null || breakdown.totalMv == null) {
     return (
       <p className="text-xs text-ink-faint">
-        Update prices to see unrealized gain vs invested amount.
+        Quotes refresh automatically on Investments (~60s) for unrealized gain.
       </p>
     );
   }
@@ -570,7 +570,7 @@ export function HoldingsWealthBand({
               size="lg"
             />
           ) : (
-            <div className="text-lg text-ink-faint">Update prices</div>
+            <div className="text-lg text-ink-faint">Awaiting quotes</div>
           )}
         </ExecStat>
 

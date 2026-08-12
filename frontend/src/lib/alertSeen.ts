@@ -1,68 +1,81 @@
 /**
  * Client-only “seen” state for sidebar alert badges.
- * Not synced to Sheets. Keys are content fingerprints so static backend
- * type ids (e.g. large_outflow) re-badge when title/body change.
+ * Not synced to Sheets.
+ *
+ * v3: stable alert **id** + seenAt + level. Body text drift must not rebadge.
+ * Quiet for TTL after view; rebadge early on level escalate or new id.
  */
 
-/** localStorage key (v2 fingerprints). v1 type-id keys are ignored. */
-export const ALERTS_SEEN_STORAGE_KEY = "gauntlet.alerts.seenFingerprints.v2";
+/** localStorage key (v3 id→seenAt map). v1/v2 ignored. */
+export const ALERTS_SEEN_STORAGE_KEY = "gauntlet.alerts.seen.v3";
 
 /** Dispatched on window after seen keys change (Layout listens). */
 export const ALERTS_SEEN_EVENT = "gauntlet:alerts-seen-changed";
+
+/** Default quiet period after the user views an alert (ms). */
+export const ALERT_SEEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type AlertSeenInput = {
   id: string;
   title?: string | null;
   body?: string | null;
+  level?: string | null;
 };
 
-/** FNV-1a 32-bit hex — compact stable content hash. */
-function hash32(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, "0");
+type SeenEntry = {
+  seenAt: number;
+  level?: string;
+};
+
+type SeenMap = Record<string, SeenEntry>;
+
+const LEVEL_RANK: Record<string, number> = {
+  info: 0,
+  opportunity: 1,
+  warn: 2,
+  danger: 3,
+};
+
+function levelRank(level: string | null | undefined): number {
+  const k = (level || "info").toLowerCase();
+  return LEVEL_RANK[k] ?? 0;
 }
 
-/**
- * Fingerprint id + title + body so continuous type-id alerts re-badge when
- * the payload changes (new amount, merchant, missing tickers, etc.).
- */
-export function alertFingerprint(a: AlertSeenInput): string {
-  const id = (a.id || "").trim();
-  if (!id) return "";
-  const t = (a.title ?? "").trim();
-  const b = (a.body ?? "").trim();
-  return `${id}:${hash32(`${id}\n${t}\n${b}`)}`;
-}
-
-export function loadSeenAlertKeys(): Set<string> {
+function loadSeenMap(): SeenMap {
   try {
     const raw = localStorage.getItem(ALERTS_SEEN_STORAGE_KEY);
-    if (!raw) return new Set();
+    if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(
-      parsed.filter((x): x is string => typeof x === "string" && x.length > 0),
-    );
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: SeenMap = {};
+    for (const [id, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!id.trim()) continue;
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        const rec = v as { seenAt?: unknown; level?: unknown };
+        const seenAt =
+          typeof rec.seenAt === "number"
+            ? rec.seenAt
+            : typeof rec.seenAt === "string"
+              ? Date.parse(rec.seenAt)
+              : NaN;
+        if (!Number.isFinite(seenAt)) continue;
+        out[id] = {
+          seenAt,
+          level: typeof rec.level === "string" ? rec.level : undefined,
+        };
+      }
+    }
+    return out;
   } catch {
-    return new Set();
+    return {};
   }
 }
 
-/** @deprecated alias — returns fingerprint keys, not raw type ids */
-export function loadSeenAlertIds(): Set<string> {
-  return loadSeenAlertKeys();
-}
-
-function persistSeen(seen: Set<string>): boolean {
+function persistSeen(map: SeenMap): boolean {
   try {
-    localStorage.setItem(ALERTS_SEEN_STORAGE_KEY, JSON.stringify([...seen]));
+    localStorage.setItem(ALERTS_SEEN_STORAGE_KEY, JSON.stringify(map));
     return true;
   } catch {
-    /* quota / private mode */
     return false;
   }
 }
@@ -73,61 +86,105 @@ function notifySeenChanged(): void {
   }
 }
 
+/** @deprecated fingerprint helpers — kept as id-only for back-compat call sites */
+export function alertFingerprint(a: AlertSeenInput): string {
+  return (a.id || "").trim();
+}
+
+export function loadSeenAlertKeys(): Set<string> {
+  const map = loadSeenMap();
+  const now = Date.now();
+  const keys = new Set<string>();
+  for (const [id, e] of Object.entries(map)) {
+    if (now - e.seenAt <= ALERT_SEEN_TTL_MS) keys.add(id);
+  }
+  return keys;
+}
+
+/** @deprecated alias */
+export function loadSeenAlertIds(): Set<string> {
+  return loadSeenAlertKeys();
+}
+
 /**
- * Mark one alert as seen by content fingerprint.
- * Accepts a full alert-like object or a precomputed fingerprint string.
- * Returns whether the key is now stored as seen.
+ * Mark one alert as seen by stable type id.
+ * Accepts a full alert-like object or a bare id string.
  */
 export function markAlertSeen(a: AlertSeenInput | string): boolean {
-  const key = typeof a === "string" ? a.trim() : alertFingerprint(a);
-  if (!key) return false;
-  const seen = loadSeenAlertKeys();
-  if (seen.has(key)) return true;
-  seen.add(key);
-  const ok = persistSeen(seen);
+  const id = typeof a === "string" ? a.trim() : (a.id || "").trim();
+  if (!id) return false;
+  const level =
+    typeof a === "string" ? undefined : a.level != null ? String(a.level) : undefined;
+  const map = loadSeenMap();
+  map[id] = { seenAt: Date.now(), level };
+  const ok = persistSeen(map);
   if (ok) notifySeenChanged();
   return ok;
 }
 
-export function isAlertSeen(a: AlertSeenInput): boolean {
-  const key = alertFingerprint(a);
-  if (!key) return false;
-  return loadSeenAlertKeys().has(key);
-}
-
-/** Count alerts that are still active and not yet acknowledged. */
-export function countUnseenAlerts(items: AlertSeenInput[]): number {
-  const seen = loadSeenAlertKeys();
+/** Mark every alert in the list as seen (same timestamp). */
+export function markAllAlertsSeen(items: AlertSeenInput[]): number {
+  if (!items.length) return 0;
+  const map = loadSeenMap();
+  const now = Date.now();
   let n = 0;
   for (const a of items) {
-    const key = alertFingerprint(a);
-    if (key && !seen.has(key)) n += 1;
+    const id = (a.id || "").trim();
+    if (!id) continue;
+    map[id] = {
+      seenAt: now,
+      level: a.level != null ? String(a.level) : undefined,
+    };
+    n += 1;
+  }
+  if (n > 0 && persistSeen(map)) notifySeenChanged();
+  return n;
+}
+
+export function isAlertSeen(a: AlertSeenInput, now = Date.now()): boolean {
+  const id = (a.id || "").trim();
+  if (!id) return false;
+  const map = loadSeenMap();
+  const e = map[id];
+  if (!e) return false;
+  if (now - e.seenAt > ALERT_SEEN_TTL_MS) return false;
+  // Rebadge if severity escalated since ack
+  if (levelRank(a.level) > levelRank(e.level)) return false;
+  return true;
+}
+
+/** Count alerts that are still active and not yet acknowledged (within TTL). */
+export function countUnseenAlerts(items: AlertSeenInput[], now = Date.now()): number {
+  let n = 0;
+  for (const a of items) {
+    if (!isAlertSeen(a, now)) n += 1;
   }
   return n;
 }
 
 /**
- * Drop seen fingerprints that are no longer in the active set so storage
- * does not grow forever and a resolved alert can badge again if it returns
- * with the same payload.
- *
+ * Drop seen entries whose ids are no longer active, and expire past TTL.
  * Empty active lists do **not** wipe storage (avoids glitch empty responses).
  */
 export function pruneSeenAlertKeys(active: AlertSeenInput[]): void {
   if (active.length === 0) return;
-  const activeKeys = new Set(active.map(alertFingerprint).filter(Boolean));
-  const seen = loadSeenAlertKeys();
+  const activeIds = new Set(
+    active.map((a) => (a.id || "").trim()).filter(Boolean),
+  );
+  const map = loadSeenMap();
+  const now = Date.now();
   let changed = false;
-  for (const k of [...seen]) {
-    if (!activeKeys.has(k)) {
-      seen.delete(k);
+  for (const id of Object.keys(map)) {
+    const e = map[id];
+    if (!activeIds.has(id) || now - e.seenAt > ALERT_SEEN_TTL_MS) {
+      delete map[id];
       changed = true;
     }
   }
-  if (changed) persistSeen(seen);
+  if (changed) persistSeen(map);
 }
 
-/** @deprecated alias — pass alert objects (not bare type ids) */
+/** @deprecated alias */
 export function pruneSeenAlertIds(active: AlertSeenInput[]): void {
   pruneSeenAlertKeys(active);
 }

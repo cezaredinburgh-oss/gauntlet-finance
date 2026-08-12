@@ -4,7 +4,6 @@ import {
   LineChart,
   Upload,
   Settings,
-  RefreshCw,
   LogOut,
   Menu,
   X,
@@ -34,7 +33,6 @@ import {
   pruneSeenAlertKeys,
 } from "../lib/alertSeen";
 import { cn } from "../lib/cn";
-import { Spinner } from "./Spinner";
 
 type NavLeaf = {
   kind: "leaf";
@@ -261,8 +259,6 @@ export function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [priceBusy, setPriceBusy] = useState(false);
-  const [priceMsg, setPriceMsg] = useState<string | null>(null);
   const [alertBadge, setAlertBadge] = useState(0);
   /** Always-current inventory for event-driven badge recompute (avoids empty-state race). */
   const alertItemsRef = useRef<AlertItem[]>([]);
@@ -387,7 +383,7 @@ export function Layout() {
   /**
    * Soft live marks (~60s) on Dashboard + Investments so portfolio MV tracks
    * the same cadence as 1D charts. Uses force=false (server quote TTL).
-   * Skips when tab hidden or a manual refresh is in flight.
+   * Manual header “Update prices” was removed — soft refresh only.
    */
   useEffect(() => {
     const path = location.pathname;
@@ -412,7 +408,7 @@ export function Layout() {
           }),
         );
       } catch {
-        /* quiet — manual Update prices still available */
+        /* quiet soft refresh */
       } finally {
         busy = false;
       }
@@ -428,30 +424,6 @@ export function Layout() {
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [location.pathname]);
-
-  async function refreshPrices() {
-    setPriceBusy(true);
-    setPriceMsg(null);
-    try {
-      const r = await api.refreshPrices(true);
-      setPriceMsg(
-        r.quote_count
-          ? `Updated ${r.quote_count} quote${r.quote_count === 1 ? "" : "s"}`
-          : r.errors?.[0] || "No quotes returned",
-      );
-      // Let open pages (Investments digests, dashboard) refetch mark-to-market data
-      window.dispatchEvent(
-        new CustomEvent("prices-updated", {
-          detail: { quote_count: r.quote_count, as_of: r.as_of },
-        }),
-      );
-    } catch (e) {
-      setPriceMsg(e instanceof Error ? e.message : "Price refresh failed");
-    } finally {
-      setPriceBusy(false);
-      setTimeout(() => setPriceMsg(null), 4000);
-    }
-  }
 
   return (
     <div className="min-h-screen bg-surface text-ink lg:flex">
@@ -494,40 +466,19 @@ export function Layout() {
 
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
-        <header className="safe-top sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-white/5 bg-surface/90 px-4 py-3 backdrop-blur-md">
-          <div className="flex items-center gap-2 lg:hidden">
-            <button
-              type="button"
-              className="btn-ghost p-2"
-              onClick={() => setMobileOpen(true)}
-              aria-label="Open menu"
-            >
-              <Menu className="h-5 w-5" />
-            </button>
-            <Link to="/" className="font-semibold">
-              Gauntlet
-            </Link>
-          </div>
-          <div className="hidden text-sm text-ink-muted lg:block">
-            Personal finance · USD primary
-          </div>
-          <div className="flex items-center gap-2">
-            {priceMsg && (
-              <span className="hidden max-w-[12rem] truncate text-xs text-ink-muted sm:inline">
-                {priceMsg}
-              </span>
-            )}
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={() => void refreshPrices()}
-              disabled={priceBusy}
-            >
-              {priceBusy ? <Spinner className="h-4 w-4 border-t-slate-900" /> : <RefreshCw className="h-4 w-4" />}
-              <span className="hidden sm:inline">Update prices</span>
-              <span className="sm:hidden">Prices</span>
-            </button>
-          </div>
+        {/* Mobile top bar only — desktop uses sidebar; no price chrome */}
+        <header className="safe-top sticky top-0 z-30 flex items-center gap-2 border-b border-white/5 bg-surface/90 px-4 py-3 backdrop-blur-md lg:hidden">
+          <button
+            type="button"
+            className="btn-ghost p-2"
+            onClick={() => setMobileOpen(true)}
+            aria-label="Open menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <Link to="/" className="font-semibold">
+            Gauntlet
+          </Link>
         </header>
 
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-5 sm:px-6">

@@ -6,7 +6,7 @@ import type { AlertItem } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import { cn } from "../lib/cn";
 import { summarizeAlertBuckets } from "../features/dashboard/alertBuckets";
-import { isAlertSeen, markAlertSeen } from "../lib/alertSeen";
+import { isAlertSeen, markAlertSeen, markAllAlertsSeen } from "../lib/alertSeen";
 
 type DomainKey = "spending" | "stocks" | "crypto";
 
@@ -81,6 +81,11 @@ export function AlertsPage() {
     setSeenTick((t) => t + 1);
   }
 
+  function onMarkAllSeen() {
+    markAllAlertsSeen(items);
+    setSeenTick((t) => t + 1);
+  }
+
   const byDomain = useMemo(() => {
     const map: Record<DomainKey, AlertItem[]> = {
       spending: [],
@@ -141,6 +146,15 @@ export function AlertsPage() {
                 : `${totals.total} alert${totals.total === 1 ? "" : "s"} · ${totals.spending} spend · ${totals.stocks} stocks · ${totals.crypto} crypto`}
             </p>
           </div>
+          {items.length > 0 && (
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              onClick={onMarkAllSeen}
+            >
+              Mark all seen
+            </button>
+          )}
         </div>
 
         {items.length === 0 ? (

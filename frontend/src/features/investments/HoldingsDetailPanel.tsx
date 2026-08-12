@@ -8,11 +8,12 @@ import {
   YAxis,
   CartesianGrid,
 } from "recharts";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, ExternalLink } from "lucide-react";
 import type { TickerDigest } from "../../api/types";
 import { Money } from "../../components/Money";
 import { d, formatQty, formatUsd } from "../../lib/money";
 import { cn } from "../../lib/cn";
+import { buildResearchLinks } from "../../lib/researchLinks";
 import { gradeStyleClass } from "./gradeStyles";
 
 const TAX_TRANCHE_COLORS: Record<string, string> = {
@@ -92,7 +93,7 @@ export function HoldingsDetailPanel({
                 ? `Mark ${formatUsd(digest.price_usd)}${
                     digest.price_as_of ? ` · ${digest.price_as_of}` : ""
                   }`
-                : "No market quote yet — use Update prices in the header"}
+                : "No market quote yet — soft refresh runs on Investments (~60s)"}
               {" · "}
               Avg cost {formatUsd(digest.avg_cost_usd)}
             </div>
@@ -413,6 +414,27 @@ export function HoldingsDetailPanel({
                 )}
             </span>
           </span>
+        </div>
+
+        <div className="border-t border-white/5 pt-3">
+          <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+            Research
+          </h4>
+          <div className="flex flex-wrap gap-2">
+            {buildResearchLinks(digest.ticker, digest.asset_class).map((link) => (
+              <a
+                key={link.id}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={link.description}
+                className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-[11px] text-ink-muted transition hover:border-brand/40 hover:bg-brand/10 hover:text-brand"
+              >
+                {link.label}
+                <ExternalLink className="h-3 w-3 opacity-70" />
+              </a>
+            ))}
+          </div>
         </div>
       </div>
     </div>

@@ -280,9 +280,19 @@ export function HoldingsTable({
                       </div>
                     </td>
                     <td className="px-2 py-2 text-right tabular-nums font-medium">
-                      {t.market_value_usd != null
-                        ? formatUsd(t.market_value_usd)
-                        : formatUsd(t.cost_basis_usd)}
+                      {t.market_value_usd != null ? (
+                        formatUsd(t.market_value_usd)
+                      ) : (
+                        <span
+                          className="text-ink-faint"
+                          title="No live quote — showing cost basis, not market value"
+                        >
+                          <span className="block text-[10px] font-normal uppercase tracking-wide">
+                            cost
+                          </span>
+                          {formatUsd(t.cost_basis_usd)}
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-2 text-right tabular-nums text-ink-muted">
                       {formatUsd(t.cost_basis_usd)}

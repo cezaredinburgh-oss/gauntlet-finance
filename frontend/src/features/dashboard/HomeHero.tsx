@@ -102,7 +102,7 @@ export function HomeHero({
               </div>
             ) : (
               <div className="text-2xl font-bold text-ink-faint sm:text-3xl">
-                Update prices
+                Awaiting quotes
               </div>
             )}
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
