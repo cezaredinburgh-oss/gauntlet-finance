@@ -44,6 +44,19 @@ import type {
  */
 export const API_BASE = (import.meta.env.VITE_API_BASE ?? "/api").replace(/\/$/, "");
 
+/**
+ * Browser URL for the Google Sheets setup wizard (API-hosted HTML at /setup).
+ * Dev Vite only proxies `/api`, so default to the API origin on port 8020.
+ */
+export function setupWizardUrl(): string {
+  const override = (import.meta.env.VITE_SETUP_URL as string | undefined)?.trim();
+  if (override) return override.replace(/\/$/, "");
+  if (API_BASE.startsWith("http")) {
+    return `${API_BASE.replace(/\/api\/?$/, "")}/setup`;
+  }
+  return "http://127.0.0.1:8020/setup";
+}
+
 /** Dispatched on any API 401 so AuthContext can clear session / show login. */
 export const AUTH_UNAUTHORIZED_EVENT = "auth:unauthorized";
 

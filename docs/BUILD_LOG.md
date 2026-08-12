@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Sheets onboarding wizard (non-technical)
+
+- Upgraded `/setup` Google Sheets wizard: Sheets-first path (Welcome → Cloud → Key → Sheet → Share → Ledger → App ready → Done).
+- Illustrated step cards (SVG) instead of fragile Console screenshots; plain-language copy.
+- Deploy/GitHub moved under optional advanced on the ready step.
+- React: `setupWizardUrl()` (API :8020), Home banner when `spreadsheet_configured` is false, Settings primary CTA.
+
 ## 2026-08-12 — Perf: quiet soft-refresh thrash + cheaper history
 
 - Soft price refresh: skip Sheets write / cache invalidate / client fan-out when marks did not move (`quotes_updated`).

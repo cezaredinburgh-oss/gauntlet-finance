@@ -29,9 +29,9 @@
                   var(--bg);
       color: var(--text);
       min-height: 100vh;
-      line-height: 1.5;
+      line-height: 1.55;
     }
-    .wrap { max-width: 820px; margin: 0 auto; padding: 28px 18px 80px; }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 28px 18px 80px; }
     h1 { font-size: 1.55rem; margin: 0 0 6px; font-weight: 700; }
     .sub { color: var(--muted); margin-bottom: 22px; }
     .progress {
@@ -43,14 +43,12 @@
       background: linear-gradient(90deg, var(--accent), var(--accent2));
       transition: width .35s ease;
     }
-    .progress-label { color: var(--muted); font-size: .85rem; margin-bottom: 20px; }
-    .steps-nav {
-      display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px;
-    }
+    .progress-label { color: var(--muted); font-size: .85rem; margin-bottom: 16px; }
+    .steps-nav { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
     .pill {
       border: 1px solid var(--border); background: var(--panel);
       color: var(--muted); padding: 6px 12px; border-radius: 999px;
-      font-size: .8rem; cursor: pointer;
+      font-size: .78rem; cursor: pointer;
     }
     .pill.active { color: var(--text); border-color: var(--accent); background: #1e3350; }
     .pill.done { color: var(--ok); border-color: #3d6b45; }
@@ -59,10 +57,11 @@
       border-radius: var(--radius); padding: 22px 22px 18px;
       box-shadow: 0 12px 40px rgba(0,0,0,.25);
     }
-    .card h2 { margin: 0 0 10px; font-size: 1.2rem; }
+    .card h2 { margin: 0 0 10px; font-size: 1.25rem; }
     .card p { color: var(--muted); margin: 0 0 12px; }
+    .lead { color: var(--text); font-size: 1.02rem; margin-bottom: 14px; }
     ol.checklist { margin: 0 0 16px; padding-left: 1.2rem; color: var(--text); }
-    ol.checklist li { margin: 8px 0; }
+    ol.checklist li { margin: 10px 0; }
     ol.checklist a { color: var(--accent); }
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
     label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: 4px; }
@@ -93,7 +92,6 @@
       background: var(--bg); padding: 8px 10px; border-radius: 8px;
       border: 1px solid var(--border); word-break: break-all; user-select: all;
     }
-    .copy-btn { margin-left: 8px; }
     .hidden { display: none !important; }
     .status-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;
@@ -104,34 +102,73 @@
       padding: 10px 12px; font-size: .88rem;
     }
     .stat b { display: block; color: var(--muted); font-weight: 500; font-size: .75rem; }
-    ul.tabs { margin: 8px 0 0; padding-left: 1.1rem; color: var(--muted); font-size: .85rem; columns: 2; }
     .footer { margin-top: 18px; color: var(--muted); font-size: .8rem; text-align: center; }
+    /* Illustrated step cards */
+    .viz {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0 18px;
+    }
+    @media (max-width: 640px) { .viz { grid-template-columns: 1fr; } }
+    .viz-card {
+      background: linear-gradient(160deg, #1e2a3d 0%, #152033 100%);
+      border: 1px solid var(--border); border-radius: 12px; padding: 14px;
+      min-height: 148px;
+    }
+    .viz-card h3 {
+      margin: 0 0 8px; font-size: .82rem; font-weight: 600; color: var(--accent2);
+      text-transform: uppercase; letter-spacing: .06em;
+    }
+    .viz-card p { margin: 0; font-size: .82rem; color: var(--muted); }
+    .viz-svg { width: 100%; height: 72px; margin-bottom: 8px; display: block; }
+    .callout {
+      display: flex; gap: 12px; align-items: flex-start;
+      background: #152033; border: 1px solid #2a4a6a; border-radius: 12px;
+      padding: 12px 14px; margin: 12px 0;
+    }
+    .callout .n {
+      flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%;
+      background: var(--accent); color: #041018; font-weight: 700;
+      display: grid; place-items: center; font-size: .9rem;
+    }
+    .callout div { font-size: .9rem; color: var(--text); }
+    .callout span { display: block; color: var(--muted); font-size: .82rem; margin-top: 2px; }
+    details.advanced {
+      margin-top: 22px; border-top: 1px solid var(--border); padding-top: 14px;
+    }
+    details.advanced summary {
+      cursor: pointer; color: var(--muted); font-size: .9rem; font-weight: 600;
+    }
+    .tip {
+      font-size: .85rem; color: var(--muted); margin-top: 10px;
+      border-left: 3px solid var(--accent); padding-left: 10px;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>Gauntlet setup &amp; deploy wizard</h1>
-    <p class="sub">Connect Google Sheets (your cloud database), then push to GitHub and deploy on Railway/Render — guided steps for non-experts. Secrets stay on your machine / host env, never in git.</p>
+    <h1>Connect Google Sheets</h1>
+    <p class="sub">
+      One guided path for new users: create a private spreadsheet “database” and link it to Gauntlet.
+      No coding required — about 10–15 minutes.
+    </p>
 
     <div class="progress"><i id="bar"></i></div>
     <div class="progress-label" id="progressLabel">Loading…</div>
     <div class="steps-nav" id="pills"></div>
 
     <div class="card" id="panel"></div>
-    <div class="footer">Gauntlet Finance · local setup only · credentials stay on your machine</div>
+    <div class="footer">Google Sheets setup wizard · secrets stay on your machine · never commit keys to git</div>
   </div>
 
   <script>
+    /** Main path: connect sheet + local ready. Deploy is optional (advanced). */
     const STEPS = [
       { key: "welcome", title: "Welcome" },
-      { key: "cloud", title: "1 · Cloud & APIs" },
-      { key: "key", title: "2 · Service key" },
+      { key: "cloud", title: "1 · Google Cloud" },
+      { key: "key", title: "2 · Access key" },
       { key: "sheet", title: "3 · Spreadsheet" },
-      { key: "share", title: "4 · Share / test" },
+      { key: "share", title: "4 · Share & test" },
       { key: "tabs", title: "5 · Prepare ledger" },
-      { key: "local", title: "6 · Local check" },
-      { key: "github", title: "7 · GitHub" },
-      { key: "deploy", title: "8 · Deploy" },
+      { key: "ready", title: "6 · App ready" },
       { key: "done", title: "Done" },
     ];
     let step = 0;
@@ -145,7 +182,11 @@
       const text = await r.text();
       let data;
       try { data = JSON.parse(text); } catch { data = { detail: text }; }
-      if (!r.ok) throw new Error(data.detail || data.message || r.statusText);
+      if (!r.ok) {
+        const d = data.detail;
+        const msg = typeof d === "string" ? d : (d && JSON.stringify(d)) || data.message || r.statusText;
+        throw new Error(msg);
+      }
       return data;
     }
 
@@ -158,8 +199,8 @@
       const p = status?.progress?.percent ?? 0;
       $("bar").style.width = p + "%";
       $("progressLabel").textContent = status?.progress?.ready
-        ? "Ready — spreadsheet connected and tabs OK"
-        : `Progress: ${status?.progress?.auto_steps_done ?? 0}/4 automated checks · ${p}%`;
+        ? "Ready — spreadsheet connected and ledger tabs OK"
+        : `Progress: ${status?.progress?.auto_steps_done ?? 0}/4 automatic checks · ${p}%`;
     }
 
     function pills() {
@@ -169,7 +210,6 @@
         const b = document.createElement("button");
         b.type = "button";
         b.className = "pill" + (i === step ? " active" : "");
-        // mark done-ish
         if (i === 2 && status?.steps?.service_account?.done) b.classList.add("done");
         if (i === 3 && status?.steps?.spreadsheet?.done) b.classList.add("done");
         if (i === 4 && status?.steps?.share?.done) b.classList.add("done");
@@ -192,6 +232,126 @@
       </div>`;
     }
 
+    /* ---- Simple illustrated cards (theme-native, not fragile Console screenshots) ---- */
+    function vizCloud() {
+      return `<div class="viz">
+        <div class="viz-card">
+          <svg class="viz-svg" viewBox="0 0 200 72" aria-hidden="true">
+            <rect x="8" y="10" width="184" height="52" rx="8" fill="#0f1419" stroke="#3d4f66"/>
+            <rect x="20" y="22" width="70" height="10" rx="3" fill="#3d9cf0" opacity=".85"/>
+            <rect x="20" y="38" width="100" height="8" rx="2" fill="#2e3a4d"/>
+            <circle cx="160" cy="36" r="14" fill="#1e3350" stroke="#3d9cf0"/>
+            <text x="160" y="40" text-anchor="middle" fill="#3d9cf0" font-size="12" font-family="Segoe UI">API</text>
+          </svg>
+          <h3>Turn on two switches</h3>
+          <p>In Google Cloud, enable <b>Sheets API</b> and <b>Drive API</b> so Gauntlet may talk to your sheet.</p>
+        </div>
+        <div class="viz-card">
+          <svg class="viz-svg" viewBox="0 0 200 72" aria-hidden="true">
+            <rect x="30" y="14" width="140" height="44" rx="6" fill="#152033" stroke="#2dd4a8"/>
+            <text x="100" y="40" text-anchor="middle" fill="#2dd4a8" font-size="11" font-family="Segoe UI">gauntlet-finance</text>
+          </svg>
+          <h3>One project is enough</h3>
+          <p>Name it anything you like (e.g. gauntlet-finance). You only do this once.</p>
+        </div>
+      </div>`;
+    }
+
+    function vizKey() {
+      return `<div class="viz">
+        <div class="viz-card">
+          <svg class="viz-svg" viewBox="0 0 200 72" aria-hidden="true">
+            <circle cx="48" cy="36" r="18" fill="#1e3350" stroke="#3d9cf0"/>
+            <text x="48" y="40" text-anchor="middle" fill="#e7ecf3" font-size="10">bot</text>
+            <rect x="80" y="24" width="100" height="24" rx="6" fill="#0f1419" stroke="#f0b429"/>
+            <text x="130" y="40" text-anchor="middle" fill="#f0b429" font-size="10">JSON key</text>
+          </svg>
+          <h3>Robot helper</h3>
+          <p>A “service account” is a robot Google user. Gauntlet uses its key to read/write your sheet.</p>
+        </div>
+        <div class="viz-card">
+          <svg class="viz-svg" viewBox="0 0 200 72" aria-hidden="true">
+            <rect x="40" y="16" width="120" height="40" rx="8" fill="#152033" stroke="#3d9cf0" stroke-dasharray="4 3"/>
+            <text x="100" y="40" text-anchor="middle" fill="#9aa8bc" font-size="11">Drop .json here</text>
+          </svg>
+          <h3>Upload in this page</h3>
+          <p>After Google downloads a JSON file, upload it below. We save it only under <code>secrets/</code>.</p>
+        </div>
+      </div>`;
+    }
+
+    function vizSheet() {
+      return `<div class="viz">
+        <div class="viz-card">
+          <svg class="viz-svg" viewBox="0 0 200 72" aria-hidden="true">
+            <rect x="24" y="12" width="152" height="48" rx="4" fill="#0f3d2e" stroke="#2dd4a8"/>
+            <line x1="24" y1="28" x2="176" y2="28" stroke="#2dd4a8" opacity=".4"/>
+            <line x1="70" y1="12" x2="70" y2="60" stroke="#2dd4a8" opacity=".35"/>
+            <line x1="120" y1="12" x2="120" y2="60" stroke="#2dd4a8" opacity=".35"/>
+          </svg>
+          <h3>Your cloud notebook</h3>
+          <p>The spreadsheet is Gauntlet’s database — private to you, editable in Google Sheets anytime.</p>
+        </div>
+        <div class="viz-card">
+          <svg class="viz-svg" viewBox="0 0 200 72" aria-hidden="true">
+            <rect x="50" y="20" width="100" height="32" rx="8" fill="#2dd4a8"/>
+            <text x="100" y="40" text-anchor="middle" fill="#042018" font-size="11" font-weight="700">Create for me</text>
+          </svg>
+          <h3>Recommended</h3>
+          <p>One click creates the sheet with the robot. Paste your Gmail so you can open it in the browser.</p>
+        </div>
+      </div>`;
+    }
+
+    function vizShare() {
+      return `<div class="viz">
+        <div class="viz-card">
+          <svg class="viz-svg" viewBox="0 0 200 72" aria-hidden="true">
+            <circle cx="50" cy="36" r="16" fill="#1e3350" stroke="#e7ecf3"/>
+            <text x="50" y="40" text-anchor="middle" fill="#e7ecf3" font-size="9">you</text>
+            <path d="M70 36 H120" stroke="#3d9cf0" stroke-width="2" marker-end="url(#a)"/>
+            <circle cx="150" cy="36" r="16" fill="#1e3350" stroke="#3d9cf0"/>
+            <text x="150" y="40" text-anchor="middle" fill="#3d9cf0" font-size="9">bot</text>
+          </svg>
+          <h3>Share as Editor</h3>
+          <p>If you created the sheet yourself, invite the robot email with role <b>Editor</b> (not Viewer).</p>
+        </div>
+        <div class="viz-card">
+          <svg class="viz-svg" viewBox="0 0 200 72" aria-hidden="true">
+            <circle cx="100" cy="36" r="20" fill="#16352d" stroke="#7fd962"/>
+            <path d="M88 36 l8 8 16-18" fill="none" stroke="#7fd962" stroke-width="3"/>
+          </svg>
+          <h3>Test connection</h3>
+          <p>Use the button below. Green means Gauntlet can open the sheet with the key you uploaded.</p>
+        </div>
+      </div>`;
+    }
+
+    function vizTabs() {
+      return `<div class="viz">
+        <div class="viz-card">
+          <svg class="viz-svg" viewBox="0 0 200 72" aria-hidden="true">
+            <rect x="16" y="18" width="50" height="36" rx="4" fill="#243044"/>
+            <rect x="74" y="18" width="50" height="36" rx="4" fill="#243044"/>
+            <rect x="132" y="18" width="50" height="36" rx="4" fill="#243044"/>
+            <text x="41" y="40" text-anchor="middle" fill="#9aa8bc" font-size="8">Tx</text>
+            <text x="99" y="40" text-anchor="middle" fill="#9aa8bc" font-size="8">Lots</text>
+            <text x="157" y="40" text-anchor="middle" fill="#9aa8bc" font-size="8">…</text>
+          </svg>
+          <h3>Blank pages → ledger</h3>
+          <p>“Prepare ledger” creates all required tabs and starter categories in one click.</p>
+        </div>
+        <div class="viz-card">
+          <svg class="viz-svg" viewBox="0 0 200 72" aria-hidden="true">
+            <rect x="40" y="22" width="120" height="28" rx="8" fill="#2dd4a8"/>
+            <text x="100" y="40" text-anchor="middle" fill="#042018" font-size="11" font-weight="700">Safe to re-run</text>
+          </svg>
+          <h3>Idempotent</h3>
+          <p>Running prepare again will not wipe your data — it only fills missing structure.</p>
+        </div>
+      </div>`;
+    }
+
     function renderPanel() {
       const L = status?.links || {};
       const sa = status?.service_account_email;
@@ -201,101 +361,115 @@
       if (step === 0) {
         html = `
           <h2>Welcome</h2>
-          <p>This wizard walks you through connecting a real Google Spreadsheet using a <b>service account</b> (best for personal use on Windows + iPhone/iPad against this API).</p>
+          <p class="lead">Gauntlet stores your finance data in <b>your</b> Google Spreadsheet — not on our servers.</p>
+          <p>This wizard helps you:</p>
+          <ol class="checklist">
+            <li>Turn on Google Sheets access in Google Cloud</li>
+            <li>Create a private “robot” key and save it safely</li>
+            <li>Create (or connect) a spreadsheet</li>
+            <li>Prepare the ledger tabs so the app can work</li>
+          </ol>
           <div class="status-grid">
-            <div class="stat"><b>Credentials</b>${status?.credentials_found ? "✅ Found" : "❌ Missing"}</div>
-            <div class="stat"><b>Spreadsheet ID</b>${status?.spreadsheet_id ? "✅ Set" : "❌ Not set"}</div>
-            <div class="stat"><b>API connection</b>${conn.connected ? "✅ Connected" : "❌ Not connected"}</div>
-            <div class="stat"><b>Tabs ready</b>${conn.ok ? "✅ All tabs OK" : "❌ Incomplete"}</div>
+            <div class="stat"><b>Access key</b>${status?.credentials_found ? "✅ Ready" : "❌ Still needed"}</div>
+            <div class="stat"><b>Spreadsheet</b>${status?.spreadsheet_id ? "✅ Linked" : "❌ Not linked"}</div>
+            <div class="stat"><b>Connection</b>${conn.connected ? "✅ Works" : "❌ Not yet"}</div>
+            <div class="stat"><b>Ledger tabs</b>${conn.ok ? "✅ Ready" : "❌ Incomplete"}</div>
           </div>
-          ${conn.error ? banner("warn", "Last error: " + escapeHtml(conn.error)) : ""}
-          <p style="margin-top:14px">You will need about 10–15 minutes and a Google account.</p>
-          ${nav(false, true, status?.progress?.ready ? "Review steps" : "Start setup")}`;
+          ${conn.error ? banner("warn", "Last check: " + escapeHtml(conn.error)) : ""}
+          <p class="tip">You need a normal Google account and about 10–15 minutes. Keep this tab open while you work in Google Cloud.</p>
+          ${nav(false, true, status?.progress?.ready ? "Review setup" : "Start setup")}`;
       }
 
       if (step === 1) {
         html = `
-          <h2>Step 1 — Google Cloud project & APIs</h2>
-          <p>Do these once in the Google Cloud Console (opens in new tabs).</p>
-          <ol class="checklist">
-            <li>Open <a href="${L.create_project}" target="_blank" rel="noopener">Create a project</a> → name it e.g. <code>gauntlet-finance</code> → Create.</li>
-            <li>Select that project in the top bar.</li>
-            <li>Enable <a href="${L.sheets_api}" target="_blank" rel="noopener">Google Sheets API</a>.</li>
-            <li>Enable <a href="${L.drive_api}" target="_blank" rel="noopener">Google Drive API</a>.</li>
-            <li>Optional hub: <a href="${L.api_library}" target="_blank" rel="noopener">API Library</a> · <a href="${L.credentials}" target="_blank" rel="noopener">Credentials</a>.</li>
-          </ol>
-          <label><input type="checkbox" id="chkCloud" /> I have created the project and enabled both APIs</label>
+          <h2>Step 1 — Google Cloud (one-time)</h2>
+          <p class="lead">Think of Google Cloud as the control panel that allows apps to use Sheets safely.</p>
+          ${vizCloud()}
+          <div class="callout"><div class="n">1</div><div>Open <a href="${L.create_project}" target="_blank" rel="noopener">Create a project</a><span>Name it e.g. gauntlet-finance → Create. Select it in the top bar.</span></div></div>
+          <div class="callout"><div class="n">2</div><div>Enable <a href="${L.sheets_api}" target="_blank" rel="noopener">Google Sheets API</a><span>Click Enable if it is not already on.</span></div></div>
+          <div class="callout"><div class="n">3</div><div>Enable <a href="${L.drive_api}" target="_blank" rel="noopener">Google Drive API</a><span>Needed so the wizard can create a spreadsheet for you.</span></div></div>
+          <p class="tip">More links: <a href="${L.api_library}" target="_blank" rel="noopener">API Library</a> · <a href="${L.credentials}" target="_blank" rel="noopener">Credentials</a></p>
+          <label style="margin-top:14px"><input type="checkbox" id="chkCloud" /> I created the project and enabled both APIs</label>
           ${nav(true, true)}`;
       }
 
       if (step === 2) {
         html = `
-          <h2>Step 2 — Create & upload service account key</h2>
+          <h2>Step 2 — Access key (service account)</h2>
+          <p class="lead">Create a robot identity, download its key file, and upload it here.</p>
+          ${vizKey()}
           <ol class="checklist">
-            <li>Go to <a href="${L.credentials}" target="_blank" rel="noopener">Credentials</a>.</li>
+            <li>Open <a href="${L.credentials}" target="_blank" rel="noopener">Credentials</a>.</li>
             <li><b>Create credentials → Service account</b> → name <code>finance-sheets</code> → Done.</li>
-            <li>Open the service account → <b>Keys → Add key → Create new key → JSON</b>.</li>
-            <li>Upload that downloaded JSON file here (saved as <code>secrets/service-account.json</code>).</li>
+            <li>Click the new account → <b>Keys → Add key → Create new key → JSON</b>.</li>
+            <li>Upload the downloaded file below.</li>
           </ol>
-          ${sa ? banner("ok", "Key loaded. Service account email:<div class='mono' style='margin-top:8px' id='saEmail'>" + escapeHtml(sa) + "</div><button type='button' class='btn secondary copy-btn' data-act='copy-sa'>Copy email</button>") : banner("warn", "No valid key detected yet.")}
+          ${sa
+            ? banner("ok", "Key loaded. Robot email (you may need it for Share):<div class='mono' style='margin-top:8px' id='saEmail'>" + escapeHtml(sa) + "</div><button type='button' class='btn secondary' style='margin-top:8px' data-act='copy-sa'>Copy email</button>")
+            : banner("warn", "No valid key detected yet — upload the JSON file.")}
           ${status?.steps?.service_account?.error ? banner("err", escapeHtml(status.steps.service_account.error)) : ""}
           <div class="row" style="flex-direction:column;align-items:stretch">
             <div>
               <label>Upload JSON key file</label>
               <input type="file" id="keyFile" accept=".json,application/json" />
             </div>
-            <button type="button" class="btn" data-act="upload-key" ${busy ? "disabled" : ""}>Save key to project</button>
+            <button type="button" class="btn" data-act="upload-key" ${busy ? "disabled" : ""}>Save key</button>
           </div>
-          <p style="font-size:.85rem">Path target: <code>${escapeHtml(status?.credentials_path || "")}</code></p>
+          <p class="tip">Saved as <code>${escapeHtml(status?.credentials_path || "secrets/service-account.json")}</code> — never email or commit this file.</p>
           ${nav(true, !!sa)}`;
       }
 
       if (step === 3) {
         html = `
-          <h2>Step 3 — Spreadsheet (your cloud database)</h2>
-          <p><b>Recommended:</b> let the wizard create a sheet with your service account (one click). Or paste an existing sheet URL.</p>
+          <h2>Step 3 — Spreadsheet</h2>
+          <p class="lead">This is your private finance notebook in the cloud.</p>
+          ${vizSheet()}
           <div class="row" style="flex-direction:column;align-items:stretch">
-            <label>Your Gmail (optional — so you can open the new sheet in the browser)</label>
+            <label>Your Gmail (so you can open the sheet in Google)</label>
             <input type="text" id="shareEmail" placeholder="you@gmail.com" />
             <label>Sheet title</label>
             <input type="text" id="sheetTitle" value="Gauntlet Finance Data" />
             <button type="button" class="btn success" data-act="create-sheet" ${busy || !sa ? "disabled" : ""}>
-              Create spreadsheet automatically
+              Create spreadsheet for me
             </button>
-            ${!sa ? banner("warn", "Upload a service account key first (step 2).") : ""}
+            ${!sa ? banner("warn", "Upload an access key first (step 2).") : ""}
           </div>
           <hr style="border:0;border-top:1px solid var(--border);margin:18px 0" />
-          <p style="font-size:.9rem">Or paste an existing sheet URL / ID:</p>
+          <p style="font-size:.9rem">Already have a sheet? Paste its URL or ID:</p>
           <label>Spreadsheet URL or ID</label>
-          <input type="text" id="sheetId" placeholder="Paste full URL or ID" value="${escapeHtml(status?.spreadsheet_id || "")}" />
+          <input type="text" id="sheetId" placeholder="https://docs.google.com/spreadsheets/d/…" value="${escapeHtml(status?.spreadsheet_id || "")}" />
           <div class="row">
-            <button type="button" class="btn secondary" data-act="save-sheet">Save to .env</button>
+            <button type="button" class="btn secondary" data-act="save-sheet">Save link</button>
             <a class="btn ghost" href="${L.new_sheet || "https://sheets.google.com"}" target="_blank" rel="noopener">Open blank sheet</a>
           </div>
           <div id="sheetMsg"></div>
-          ${status?.spreadsheet_id ? banner("ok", "Saved ID: <code>" + escapeHtml(status.spreadsheet_id) + "</code>") : banner("warn", "No spreadsheet ID saved yet.")}
+          ${status?.spreadsheet_id ? banner("ok", "Linked ID: <code>" + escapeHtml(status.spreadsheet_id) + "</code>") : banner("warn", "No spreadsheet linked yet.")}
           ${nav(true, !!status?.spreadsheet_id)}`;
       }
 
       if (step === 4) {
         html = `
-          <h2>Step 4 — Share the sheet with the robot</h2>
-          <p>Google treats the service account as a separate user. You must share the spreadsheet with it as <b>Editor</b>.</p>
-          ${sa ? `<p>Share with this email:</p><div class="mono" id="saEmail2">${escapeHtml(sa)}</div>
-            <div class="row"><button type="button" class="btn secondary" data-act="copy-sa2">Copy email</button>
-            <a class="btn ghost" href="https://docs.google.com/spreadsheets/d/${encodeURIComponent(status?.spreadsheet_id || "")}/edit" target="_blank" rel="noopener">Open your sheet</a></div>`
-            : banner("err", "Upload a service account key first (step 2).")}
+          <h2>Step 4 — Share &amp; test</h2>
+          <p class="lead">Google treats the robot as a separate user. It needs Editor access (unless you used “Create for me”, which often shares for you).</p>
+          ${vizShare()}
+          ${sa
+            ? `<p>Invite this email on the sheet:</p><div class="mono" id="saEmail2">${escapeHtml(sa)}</div>
+              <div class="row">
+                <button type="button" class="btn secondary" data-act="copy-sa2">Copy email</button>
+                <a class="btn ghost" href="https://docs.google.com/spreadsheets/d/${encodeURIComponent(status?.spreadsheet_id || "")}/edit" target="_blank" rel="noopener">Open sheet</a>
+              </div>`
+            : banner("err", "Upload an access key first (step 2).")}
           <ol class="checklist">
-            <li>In the sheet click <b>Share</b>.</li>
-            <li>Paste the email above.</li>
-            <li>Role: <b>Editor</b>.</li>
-            <li>Uncheck “Notify people” if you want → Share.</li>
+            <li>In Google Sheets click <b>Share</b> (top right).</li>
+            <li>Paste the robot email → role <b>Editor</b>.</li>
+            <li>Uncheck “Notify people” if you like → Share.</li>
+            <li>Click <b>Test connection</b> below.</li>
           </ol>
           <div class="row">
             <button type="button" class="btn" data-act="test-conn">Test connection</button>
           </div>
           <div id="shareMsg"></div>
-          ${conn.connected ? banner("ok", "Connection works — the service account can open the spreadsheet.") : ""}
+          ${conn.connected ? banner("ok", "Connection works — Gauntlet can open your spreadsheet.") : ""}
           ${conn.error && !conn.connected ? banner("err", escapeHtml(conn.error)) : ""}
           ${nav(true, !!conn.connected)}`;
       }
@@ -304,104 +478,72 @@
         const missing = (conn.missing_tabs || []).join(", ") || "none";
         html = `
           <h2>Step 5 — Prepare ledger</h2>
-          <p>Creates all finance tabs, default categories (Fitness, My business, …), and the Digital Assets Europe rule. Safe to run multiple times.</p>
+          <p class="lead">Create the tabs and starter categories Gauntlet expects (transactions, lots, categories, …).</p>
+          ${vizTabs()}
           <div class="status-grid">
             <div class="stat"><b>Missing tabs</b>${escapeHtml(missing)}</div>
-            <div class="stat"><b>Tabs in sheet</b>${(conn.tabs || []).length}</div>
+            <div class="stat"><b>Tabs found</b>${(conn.tabs || []).length}</div>
           </div>
           <div class="row">
             <button type="button" class="btn success" data-act="prepare-ledger">Prepare ledger now</button>
             <button type="button" class="btn secondary" data-act="ensure-tabs">Tabs only</button>
           </div>
           <div id="tabsMsg"></div>
-          ${conn.ok ? banner("ok", "All required tabs are present with headers.") : banner("warn", "Tabs not complete yet.")}
-          ${conn.ok && conn.tabs?.length ? `<ul class="tabs">${conn.tabs.map(t => `<li>${escapeHtml(t)}</li>`).join("")}</ul>` : ""}
+          ${conn.ok ? banner("ok", "All required tabs are present.") : banner("warn", "Tabs not complete yet — click Prepare ledger.")}
           ${nav(true, !!conn.ok)}`;
       }
 
       if (step === 6) {
+        const ready = !!(conn.connected && conn.ok);
         html = `
-          <h2>Step 6 — Local check</h2>
-          <p>Confirm the API sees your sheet. Then open the React UI (port 5190) to import statements.</p>
+          <h2>Step 6 — App ready check</h2>
+          <p class="lead">Confirm the API sees your sheet, then open the main Gauntlet UI.</p>
           <div class="status-grid">
-            <div class="stat"><b>Health</b><a href="/health" target="_blank">/health</a></div>
-            <div class="stat"><b>Sheets status</b><a href="/sheets/status" target="_blank">/sheets/status</a></div>
-            <div class="stat"><b>Spreadsheet</b>${conn.connected ? "✅ Connected" : "❌ Not connected"}</div>
-            <div class="stat"><b>Tabs</b>${conn.ok ? "✅ Ready" : "❌ Incomplete"}</div>
+            <div class="stat"><b>API health</b><a href="/health" target="_blank" rel="noopener">Open /health</a></div>
+            <div class="stat"><b>Sheets status</b><a href="/sheets/status" target="_blank" rel="noopener">Open /sheets/status</a></div>
+            <div class="stat"><b>Connected</b>${conn.connected ? "✅ Yes" : "❌ No"}</div>
+            <div class="stat"><b>Ledger tabs</b>${conn.ok ? "✅ Ready" : "❌ Incomplete"}</div>
           </div>
           <div class="row" style="margin-top:14px">
             <button type="button" class="btn" data-act="test-conn">Re-test connection</button>
-            <a class="btn secondary" href="http://127.0.0.1:5190/" target="_blank" rel="noopener">Open app UI (5190)</a>
-            <a class="btn ghost" href="/docs" target="_blank">API docs</a>
+            <a class="btn success" href="http://127.0.0.1:5190/" target="_blank" rel="noopener">Open Gauntlet UI</a>
+            <a class="btn ghost" href="/docs" target="_blank" rel="noopener">API docs</a>
           </div>
           <div id="shareMsg"></div>
-          <p style="font-size:.85rem;color:var(--muted);margin-top:12px">
-            Tip: double-click <code>Start-App.bat</code> for API + UI together.
-          </p>
-          ${nav(true, !!(conn.connected && conn.ok))}`;
+          <p class="tip">Tip: double-click <code>Start-App.bat</code> to run API + UI together. Next in the app: <b>Upload</b> a bank statement.</p>
+          ${ready ? banner("ok", "Local setup looks ready.") : banner("warn", "Finish connection and ledger steps before relying on the app.")}
+          ${nav(true, ready, "Finish")}
+          <details class="advanced">
+            <summary>Optional: put the app on the internet later (GitHub / Railway)</summary>
+            <p style="margin-top:10px">Not required for local use. See <code>docs/DEPLOY.md</code> and use
+              <code>scripts\\Prepare-GitHub.bat</code> when you are ready. Never upload <code>secrets/</code> or <code>.env</code>.</p>
+            <div class="row">
+              <button type="button" class="btn secondary" data-act="deploy-env">Generate deploy env vars</button>
+            </div>
+            <input type="text" id="publicUrl" placeholder="https://your-app.up.railway.app (optional)" style="margin-top:8px" />
+            <div id="deployMsg"></div>
+            <textarea id="deployEnv" class="hidden" readonly style="min-height:140px;margin-top:10px"></textarea>
+          </details>`;
       }
 
       if (step === 7) {
         html = `
-          <h2>Step 7 — GitHub (safe push)</h2>
-          <p>Put the code on GitHub <b>without secrets</b>. Your <code>.env</code> and <code>secrets/</code> stay local.</p>
-          <ol class="checklist">
-            <li>Install <a href="https://git-scm.com/downloads" target="_blank" rel="noopener">Git</a> and optionally <a href="https://cli.github.com/" target="_blank" rel="noopener">GitHub CLI</a>.</li>
-            <li>Create an empty repo: <a href="https://github.com/new" target="_blank" rel="noopener">github.com/new</a> → name <code>gauntlet-finance</code> (no README if project already has files).</li>
-            <li>In the project folder, double-click <code>scripts\\Prepare-GitHub.bat</code>
-              <b>or</b> in PowerShell run:<br>
-              <div class="mono">powershell -ExecutionPolicy Bypass -File .\\scripts\\Prepare-GitHub.ps1</div>
-              (Windows often blocks <code>.ps1</code> alone; Bypass is only for this run.)
-              Then follow the printed <code>git remote</code> / <code>git push</code> lines.
-            </li>
-            <li>Never upload <code>secrets/service-account.json</code> or <code>.env</code>.</li>
-          </ol>
-          ${banner("ok", "Dockerfile and railway.toml are already in the project for the next step.")}
-          ${nav(true, true)}`;
-      }
-
-      if (step === 8) {
-        html = `
-          <h2>Step 8 — Deploy (Railway / Render)</h2>
-          <p>Host the app on the internet so iPhone / iPad / PC can open one HTTPS URL. Database remains Google Sheets.</p>
-          <ol class="checklist">
-            <li>Open <a href="https://railway.app/new" target="_blank" rel="noopener">Railway</a> (recommended) or <a href="https://dashboard.render.com/" target="_blank" rel="noopener">Render</a> → login with GitHub.</li>
-            <li>New project → Deploy from your <code>gauntlet-finance</code> repo.</li>
-            <li>Paste environment variables (button below builds them from your local setup).</li>
-            <li>After you get a public URL, paste it here and regenerate so <code>CORS_ORIGINS</code> matches.</li>
-          </ol>
-          <label>Public app URL (after first deploy)</label>
-          <input type="text" id="publicUrl" placeholder="https://your-app.up.railway.app" />
-          <div class="row">
-            <button type="button" class="btn success" data-act="deploy-env">Generate env vars to copy</button>
-          </div>
-          <div id="deployMsg"></div>
-          <textarea id="deployEnv" class="hidden" readonly style="min-height:160px;margin-top:10px"></textarea>
-          <p style="font-size:.85rem;color:var(--muted)">Full guide: <code>docs/DEPLOY.md</code></p>
-          ${nav(true, true)}`;
-      }
-
-      if (step === 9) {
-        html = `
-          <h2>${status?.progress?.ready ? "You're set up 🎉" : "Almost there"}</h2>
+          <h2>${status?.progress?.ready ? "You’re connected 🎉" : "Almost there"}</h2>
           ${status?.progress?.ready
-            ? banner("ok", "Google Sheets is your cloud database. Local app can upload statements. Deploy for multi-device access.")
-            : banner("warn", "Sheets setup incomplete — use Back to finish steps 1–6.")}
+            ? banner("ok", "Google Sheets is linked. Import statements in the app to build your ledger.")
+            : banner("warn", "Setup incomplete — use Back to finish the remaining steps.")}
           <div class="status-grid">
-            <div class="stat"><b>Backend store</b>${conn.connected ? "google_sheets" : (status?.spreadsheet_id ? "not connected" : "unset")}</div>
             <div class="stat"><b>Spreadsheet</b>${escapeHtml(status?.spreadsheet_id || "—")}</div>
-            <div class="stat"><b>Service account</b>${escapeHtml(sa || "—")}</div>
+            <div class="stat"><b>Robot email</b>${escapeHtml(sa || "—")}</div>
+            <div class="stat"><b>Connected</b>${conn.connected ? "yes" : "no"}</div>
             <div class="stat"><b>Tabs OK</b>${conn.ok ? "yes" : "no"}</div>
           </div>
           <div class="row" style="margin-top:16px">
-            <a class="btn" href="http://127.0.0.1:5190/" target="_blank" rel="noopener">Open local UI</a>
-            <a class="btn secondary" href="/docs" target="_blank">API docs</a>
-            <a class="btn secondary" href="/health" target="_blank">Health</a>
+            <a class="btn" href="http://127.0.0.1:5190/" target="_blank" rel="noopener">Open Gauntlet UI</a>
+            <a class="btn secondary" href="/health" target="_blank" rel="noopener">Health</a>
             <button type="button" class="btn ghost" data-act="refresh">Refresh status</button>
           </div>
-          <p style="margin-top:16px;font-size:.9rem;color:var(--muted)">
-            Phone checklist: open your Railway HTTPS URL → confirm /health → import a small statement → refresh investments.
-          </p>
+          <p class="tip">Next: Upload a Revolut / Raiffeisen / eToro statement → Categorize → check Investments.</p>
           ${nav(true, false)}`;
       }
 
@@ -481,8 +623,6 @@
       if (act === "create-sheet") {
         const title = document.getElementById("sheetTitle")?.value || "Gauntlet Finance Data";
         const share = document.getElementById("shareEmail")?.value || "";
-        const msg = document.getElementById("sheetMsg");
-        if (msg) msg.innerHTML = banner("warn", "Creating spreadsheet…");
         busy = true; render();
         try {
           const r = await api("/setup/api/create-spreadsheet", {
@@ -512,9 +652,11 @@
         try {
           const r = await api("/setup/api/prepare-ledger", { method: "POST" });
           await refreshStatus();
-          if (msg) msg.innerHTML = banner(r.ok ? "ok" : "err", escapeHtml(r.message || JSON.stringify(r)));
+          const m = document.getElementById("tabsMsg");
+          if (m) m.innerHTML = banner(r.ok ? "ok" : "err", escapeHtml(r.message || JSON.stringify(r)));
         } catch (e) {
-          if (msg) msg.innerHTML = banner("err", escapeHtml(e.message));
+          const m = document.getElementById("tabsMsg");
+          if (m) m.innerHTML = banner("err", escapeHtml(e.message));
         }
         return;
       }
@@ -542,30 +684,32 @@
         try {
           const r = await api("/setup/api/test-connection", { method: "POST" });
           await refreshStatus();
-          if (msg) msg.innerHTML = r.ok
+          const m = document.getElementById("shareMsg");
+          if (m) m.innerHTML = r.ok
             ? banner("ok", escapeHtml(r.message || "Connected."))
             : banner("err", escapeHtml(r.message || r.error || "Failed"));
         } catch (e) {
-          if (msg) msg.innerHTML = banner("err", escapeHtml(e.message));
+          const m = document.getElementById("shareMsg");
+          if (m) m.innerHTML = banner("err", escapeHtml(e.message));
         }
         return;
       }
       if (act === "ensure-tabs") {
         const msg = document.getElementById("tabsMsg");
-        const seed = document.getElementById("chkSeed")?.checked;
         if (msg) msg.innerHTML = banner("warn", "Creating tabs…");
         try {
           const r = await api("/setup/api/ensure-tabs", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ seed: !!seed }),
+            body: JSON.stringify({ seed: false }),
           });
           await refreshStatus();
-          if (msg) msg.innerHTML = banner(r.ok ? "ok" : "err", escapeHtml(r.message || JSON.stringify(r)));
+          const m = document.getElementById("tabsMsg");
+          if (m) m.innerHTML = banner(r.ok ? "ok" : "err", escapeHtml(r.message || JSON.stringify(r)));
         } catch (e) {
-          if (msg) msg.innerHTML = banner("err", escapeHtml(e.message));
+          const m = document.getElementById("tabsMsg");
+          if (m) m.innerHTML = banner("err", escapeHtml(e.message));
         }
-        return;
       }
     }
 
@@ -577,7 +721,7 @@
 
     refreshStatus().catch(e => {
       $("panel").innerHTML = banner("err", "Could not load wizard status: " + escapeHtml(e.message) +
-        "<p>Is the API running? Start with <code>uvicorn backend.api.main:app --reload --port 8020</code></p>");
+        ". Is the API running on this host?");
     });
   </script>
 </body>

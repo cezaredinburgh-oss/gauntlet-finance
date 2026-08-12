@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, Save, Trash2 } from "lucide-react";
-import { api } from "../api/client";
+import { api, setupWizardUrl } from "../api/client";
 import type {
   AdminJob,
   CleanupPreview,
@@ -283,9 +283,18 @@ export function SettingsPage() {
                 Open in Google Sheets <ExternalLink className="h-4 w-4" />
               </a>
             )}
-            <a className="btn-ghost inline-flex text-sm" href="/setup" target="_blank" rel="noreferrer">
-              Backend setup wizard
+            <a
+              className="btn-primary inline-flex text-sm"
+              href={setupWizardUrl()}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Connect Google Sheets wizard
+              <ExternalLink className="h-4 w-4" />
             </a>
+            <p className="text-xs text-ink-faint">
+              Guided steps for new users: Cloud project, access key, spreadsheet, and ledger tabs.
+            </p>
           </>
         ) : (
           <EmptyState title="No sheet status" description="Is the API running?" />

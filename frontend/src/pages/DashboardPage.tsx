@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../api/client";
-import type { AlertItem, DashboardSummary, PortfolioSnapshot } from "../api/types";
+import { ExternalLink } from "lucide-react";
+import { api, setupWizardUrl } from "../api/client";
+import type { AlertItem, DashboardSummary, Health, PortfolioSnapshot } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import {
   canGoNextMonth,
@@ -31,6 +32,7 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [wealthRefreshing, setWealthRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
   const loadGen = useRef(0);
 
   const load = useCallback(
@@ -52,7 +54,7 @@ export function DashboardPage() {
           if (dig) setDigests(dig.tickers);
           return;
         }
-        const [dsum, isnap, dig, al] = await Promise.all([
+        const [dsum, isnap, dig, al, h] = await Promise.all([
           api.dashboard({
             date_from: cashTf.from ?? undefined,
             date_to: cashTf.to,
@@ -61,16 +63,20 @@ export function DashboardPage() {
           api.investmentsSnapshot(),
           api.tickerDigests().catch(() => ({ tickers: [] as TickerDigest[] })),
           api.alerts().catch(() => ({ items: [] as AlertItem[], warn_count: 0, total: 0 })),
+          api.health().catch(() => null),
         ]);
         if (gen !== loadGen.current) return;
         setDash(dsum);
         setSnap(isnap);
         setDigests(dig.tickers || []);
         setAlerts(al.items || []);
+        if (h) setHealth(h);
       } catch (e) {
         if (gen !== loadGen.current) return;
         if (pricesOnly) return;
         setError(e instanceof Error ? e.message : "Failed to load");
+        // Still try health so unconfigured sheet CTA can show
+        void api.health().then(setHealth).catch(() => undefined);
       } finally {
         if (gen !== loadGen.current) return;
         if (!quiet && !pricesOnly) setLoading(false);
@@ -108,18 +114,43 @@ export function DashboardPage() {
     [alerts, digests],
   );
 
+  const needsSheet =
+    health != null && health.spreadsheet_configured === false;
+
   if (loading && !dash) return <PageLoader label="Loading executive snapshot…" />;
   if (error && !dash) {
     return (
-      <EmptyState
-        title="Couldn’t load dashboard"
-        description={error}
-        action={
-          <button type="button" className="btn-primary" onClick={() => void load()}>
-            Retry
-          </button>
-        }
-      />
+      <div className="space-y-4">
+        {needsSheet && (
+          <SetupSheetsBanner />
+        )}
+        <EmptyState
+          title="Couldn’t load dashboard"
+          description={
+            needsSheet
+              ? "Google Sheets is not linked yet. Use the setup wizard, then retry."
+              : error
+          }
+          action={
+            <div className="flex flex-wrap gap-2">
+              {needsSheet && (
+                <a
+                  className="btn-primary inline-flex"
+                  href={setupWizardUrl()}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Connect Google Sheets
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              )}
+              <button type="button" className="btn-secondary" onClick={() => void load()}>
+                Retry
+              </button>
+            </div>
+          }
+        />
+      </div>
     );
   }
   if (!dash) return null;
@@ -130,6 +161,7 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      {needsSheet && <SetupSheetsBanner />}
       {snap ? (
         <ExecutiveHero
           snap={snap}
@@ -151,6 +183,31 @@ export function DashboardPage() {
       )}
 
       <HomeDeepLinks />
+    </div>
+  );
+}
+
+function SetupSheetsBanner() {
+  return (
+    <div className="rounded-2xl border border-brand/35 bg-brand/10 px-4 py-4 sm:px-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-brand">Connect Google Sheets</div>
+          <p className="mt-1 max-w-xl text-xs text-ink-muted sm:text-sm">
+            New here? Link a private spreadsheet so Gauntlet can store your ledger. A short
+            guided wizard walks you through Cloud, key, sheet, and ledger tabs — no coding.
+          </p>
+        </div>
+        <a
+          className="btn-primary inline-flex shrink-0"
+          href={setupWizardUrl()}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Start setup
+          <ExternalLink className="h-4 w-4" />
+        </a>
+      </div>
     </div>
   );
 }

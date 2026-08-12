@@ -3,7 +3,7 @@
 **Recommended method: Service Account** (already supported).  
 You create one robot Google identity, download a JSON key, and share your spreadsheet with that robot’s email. No browser OAuth dance, no expired user tokens, works from Windows + later from any device that hits your API.
 
-## Easiest path: interactive wizard
+## Easiest path: interactive wizard (recommended for new users)
 
 ```powershell
 cd "C:\Users\cezar\iCloudDrive\Gauntlet Finance App"
@@ -16,7 +16,10 @@ Then open in your browser:
 
 **http://localhost:8020/setup**
 
-The wizard walks you through Cloud Console links, uploading the JSON key, pasting the Spreadsheet ID, sharing access, and creating all tabs.  
+Or from the React app (http://localhost:5190): Home banner **Start setup** / Settings → **Connect Google Sheets wizard**.
+
+The wizard is written for non-technical users: illustrated step cards, plain language, and a Sheets-only path (Cloud → key → spreadsheet → share/test → prepare ledger → app ready). Deploy is optional and folded under Advanced.
+
 Or: `python -m backend.scripts.open_setup_wizard` (starts the server and opens the browser).
 
 ---
