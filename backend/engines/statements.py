@@ -521,12 +521,37 @@ class StatementService:
         return "soft:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
 
     @staticmethod
+    def _event_soft_day_key(ev: InvestmentEvent) -> str:
+        """
+        Same-day soft key without wall-clock time.
+
+        Revolut re-exports sometimes re-stamp the same trade with a shifted
+        timezone (e.g. 11:30Z vs 13:30Z) which changes ``external_id`` and
+        datetime soft keys. Day + type + ticker + qty + value still match.
+        Distinct same-day trades usually differ in value/qty.
+        """
+        blob = "|".join(
+            [
+                ev.event_type.value,
+                str(ev.event_date),
+                (ev.ticker or "").strip().upper(),
+                StatementService._norm_decimal(ev.quantity),
+                StatementService._norm_decimal(ev.value_native),
+                StatementService._norm_decimal(ev.fees_native or 0),
+                (ev.native_currency or "").strip().upper(),
+                (ev.source or "").strip().lower(),
+            ]
+        )
+        return "soft_day:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
+
+    @staticmethod
     def _event_keys(ev: InvestmentEvent) -> set[str]:
         """
         Identity keys for an investment event.
 
-        Revolut (or missing external_id): soft∪hard so pre-external_id ledger
-        rows still match new parser output and Sheets µs truncation.
+        Revolut (or missing external_id): soft∪hard∪soft_day so pre-external_id
+        ledger rows still match new parser output, Sheets µs truncation, and
+        timezone-shifted re-exports of the same trade.
         Non-Revolut with hard external_id: hard only (avoids soft over-collapse
         of distinct eToro ids that share coarse soft fields).
         """
@@ -536,4 +561,5 @@ class StatementService:
             keys.add(hard)
         if not hard or _is_revolut_source(ev.source):
             keys.add(StatementService._event_soft_key(ev))
+            keys.add(StatementService._event_soft_day_key(ev))
         return keys

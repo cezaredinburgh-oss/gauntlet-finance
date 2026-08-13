@@ -529,20 +529,37 @@ class GoogleSheetsRepository:
 
     def delete_by_id(self, tab: str, row_id: UUID) -> bool:
         """Remove one row. Clears that sheet row in place (leaves a blank gap)."""
+        return self.delete_by_ids(tab, [row_id]) == 1
+
+    def delete_by_ids(self, tab: str, row_ids: list[UUID]) -> int:
+        """
+        Remove many rows in one (or few) patch batches.
+
+        Prefer this over looping ``delete_by_id`` during lot rebuild so a partial
+        failure cannot leave half-deleted stale lots next to newly upserted ones.
+        """
+        if not row_ids:
+            return 0
         self._load_tab(tab)
-        if self._cache[tab].pop(row_id, None) is None:
-            return False
+        headers = SHEET_HEADERS[tab]
+        blank = [""] * len(headers)
         index = self._row_index.setdefault(tab, {})
-        sheet_row = index.pop(row_id, None)
-        if sheet_row is not None:
-            headers = SHEET_HEADERS[tab]
-            blank = [""] * len(headers)
-            self._patch_rows(tab, [(sheet_row, blank)])
+        updates: list[tuple[int, list[str]]] = []
+        removed = 0
+        for rid in row_ids:
+            if self._cache[tab].pop(rid, None) is None:
+                continue
+            removed += 1
+            sheet_row = index.pop(rid, None)
+            if sheet_row is not None:
+                updates.append((sheet_row, blank))
+        if updates:
+            self._patch_rows(tab, updates)
         import time
 
         self._cache_loaded_at[tab] = time.time()
         self._dirty.discard(tab)
-        return True
+        return removed
 
     def replace_all_rows(self, tab: str, rows: list[SheetRow]) -> None:
         """Replace an entire tab contents in one write (efficient bulk repair)."""

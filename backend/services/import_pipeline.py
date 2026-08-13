@@ -5,10 +5,13 @@ lots FIFO → persist via repository.
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID, uuid4
+
+logger = logging.getLogger(__name__)
 
 from backend.common.timeutil import utc_now
 from backend.engines.categorize import CategoryEngine
@@ -606,6 +609,7 @@ class ImportPipeline:
         fifo: FifoResult
         stale_alloc_ids: list[UUID] = []
         stale_lot_ids: list[UUID] = []
+        used_ticker_rebuild = False
 
         if touched and (
             force_rebuild
@@ -630,6 +634,7 @@ class ImportPipeline:
             )
             stale_alloc_ids = plan.stale_allocation_ids
             stale_lot_ids = plan.stale_lot_ids
+            used_ticker_rebuild = True
         elif new_non_alloc:
             fifo = self.lot_engine.apply_events(
                 existing_lots, new_non_alloc, now=ts
@@ -665,23 +670,36 @@ class ImportPipeline:
         if existing_updates:
             self.repo.upsert_rows("Transactions", existing_updates)
 
-        # Drop stale lots/allocs for rebuilt tickers before writing fresh rows
-        for alloc_id in stale_alloc_ids:
-            self.repo.delete_by_id("InvestmentEvents", alloc_id)
-        for lot_id in stale_lot_ids:
-            self.repo.delete_by_id("InvestmentLots", lot_id)
-
-        if fifo.events:
-            self.repo.upsert_rows("InvestmentEvents", fifo.events)
-        if enriched_lots:
-            # On ticker rebuild, write full lot set for those tickers (plus others
-            # already in fifo.lots). On incremental path, upsert changed lots.
-            self.repo.upsert_rows("InvestmentLots", enriched_lots)
+        # Lots / events persistence
+        if used_ticker_rebuild:
+            # Atomic lots tab rewrite: never leave stale open lots beside new ones
+            # (per-row delete_by_id was partial-failure prone under Sheets quota).
+            if stale_alloc_ids:
+                n_del = self.repo.delete_by_ids("InvestmentEvents", stale_alloc_ids)
+                if n_del < len(stale_alloc_ids):
+                    logger.warning(
+                        "lot rebuild: deleted %s/%s stale LotAllocations",
+                        n_del,
+                        len(stale_alloc_ids),
+                    )
+            if fifo.events:
+                self.repo.upsert_rows("InvestmentEvents", fifo.events)
+            self.repo.replace_all_rows("InvestmentLots", enriched_lots)
             fifo = FifoResult(
                 lots=enriched_lots,
                 events=fifo.events,
                 allocations_created=fifo.allocations_created,
             )
+        else:
+            if fifo.events:
+                self.repo.upsert_rows("InvestmentEvents", fifo.events)
+            if enriched_lots and new_non_alloc:
+                self.repo.upsert_rows("InvestmentLots", enriched_lots)
+                fifo = FifoResult(
+                    lots=enriched_lots,
+                    events=fifo.events,
+                    allocations_created=fifo.allocations_created,
+                )
 
         self.statements.mark_imported(
             reg_statement.id,

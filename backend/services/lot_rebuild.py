@@ -131,6 +131,53 @@ def rebuild_lots_for_tickers(
     )
 
 
+def open_qty_by_ticker(lots: list[InvestmentLot]) -> dict[str, object]:
+    """Sum open quantity_remaining by uppercase ticker (for audits)."""
+    from decimal import Decimal
+
+    from backend.schema.models import LotStatus
+
+    out: dict[str, Decimal] = {}
+    for lot in lots:
+        if lot.archived:
+            continue
+        if lot.status != LotStatus.OPEN:
+            continue
+        if lot.quantity_remaining is None or lot.quantity_remaining <= 0:
+            continue
+        k = _ticker_key(lot.ticker)
+        if not k:
+            continue
+        out[k] = out.get(k, Decimal("0")) + lot.quantity_remaining
+    return out  # type: ignore[return-value]
+
+
+def event_net_by_ticker(events: list[InvestmentEvent]) -> dict[str, object]:
+    """Buy − Sell quantity by ticker (ignores allocations/stake)."""
+    from decimal import Decimal
+
+    buys: dict[str, Decimal] = {}
+    sells: dict[str, Decimal] = {}
+    for e in events:
+        if e.archived:
+            continue
+        if e.event_type == InvestmentEventType.LOT_ALLOCATION:
+            continue
+        k = _ticker_key(e.ticker)
+        if not k:
+            continue
+        q = e.quantity or Decimal("0")
+        if e.event_type in {
+            InvestmentEventType.BUY,
+            InvestmentEventType.STAKING_REWARD,
+        }:
+            buys[k] = buys.get(k, Decimal("0")) + q
+        elif e.event_type == InvestmentEventType.SELL:
+            sells[k] = sells.get(k, Decimal("0")) + q
+    keys = set(buys) | set(sells)
+    return {k: buys.get(k, Decimal("0")) - sells.get(k, Decimal("0")) for k in keys}
+
+
 def should_rebuild_tickers(
     *,
     touched_tickers: set[str],

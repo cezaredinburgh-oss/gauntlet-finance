@@ -21,6 +21,10 @@ class SheetsRepository(Protocol):
 
     def delete_by_id(self, tab: str, row_id: UUID) -> bool: ...
 
+    def delete_by_ids(self, tab: str, row_ids: list[UUID]) -> int:
+        """Delete many rows; returns how many were removed. Default: loop delete_by_id."""
+        ...
+
     def replace_all_rows(self, tab: str, rows: list[SheetRow]) -> None: ...
 
 
@@ -60,6 +64,13 @@ class InMemorySheetsRepository:
 
     def delete_by_id(self, tab: str, row_id: UUID) -> bool:
         return self._data[tab].pop(row_id, None) is not None
+
+    def delete_by_ids(self, tab: str, row_ids: list[UUID]) -> int:
+        n = 0
+        for rid in row_ids:
+            if self.delete_by_id(tab, rid):
+                n += 1
+        return n
 
     def replace_all_rows(self, tab: str, rows: list[SheetRow]) -> None:
         expected = TAB_MODEL[tab]

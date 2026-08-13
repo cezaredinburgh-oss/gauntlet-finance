@@ -13,7 +13,7 @@ from backend.engines.statements import (
     event_datetime_iso,
     revolut_event_external_id,
 )
-from backend.schema.models import InvestmentEventType, StatementFileStatus
+from backend.schema.models import InvestmentEventType, StatementFileStatus, TradeSide
 from backend.sheets.codec import decode_cell, encode_cell
 from backend.sheets.repository import InMemorySheetsRepository
 from backend.tests.helpers import inv_event, tx
@@ -260,6 +260,73 @@ def test_event_keys_bridge_external_id_and_soft():
     new = old.model_copy(update={"id": uuid4(), "external_id": eid})
     result = StatementService.dedupe_events([old_sheet], [new])
     assert result.dropped_events == 1
+
+
+def test_collapse_revolut_timezone_shifted_twins():
+    """Same trade re-imported with +2h datetime must collapse (soft_day key)."""
+    dt_a = datetime(2026, 8, 4, 11, 30, 2, tzinfo=timezone.utc)
+    dt_b = datetime(2026, 8, 4, 13, 30, 2, tzinfo=timezone.utc)
+    a = inv_event(
+        ticker="PLTR",
+        quantity="10",
+        value_native="1449.96",
+        fees_native="0",
+        event_date=dt_a.date(),
+    ).model_copy(
+        update={
+            "event_type": InvestmentEventType.SELL,
+            "side": TradeSide.SELL,
+            "event_datetime": dt_a,
+            "external_id": revolut_event_external_id(
+                event_type="Sell",
+                ticker="PLTR",
+                event_datetime=dt_a,
+                quantity=Decimal("10"),
+                value_native=Decimal("1449.96"),
+                fees_native=Decimal("0"),
+                currency="USD",
+            ),
+            "created_at": datetime(2026, 8, 1, tzinfo=timezone.utc),
+        }
+    )
+    b = a.model_copy(
+        update={
+            "id": uuid4(),
+            "event_datetime": dt_b,
+            "external_id": revolut_event_external_id(
+                event_type="Sell",
+                ticker="PLTR",
+                event_datetime=dt_b,
+                quantity=Decimal("10"),
+                value_native=Decimal("1449.96"),
+                fees_native=Decimal("0"),
+                currency="USD",
+            ),
+            "created_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+        }
+    )
+    # Different value same day — real second trade, must survive
+    c = a.model_copy(
+        update={
+            "id": uuid4(),
+            "event_datetime": dt_b.replace(hour=17),
+            "value_native": Decimal("1639.62"),
+            "external_id": revolut_event_external_id(
+                event_type="Sell",
+                ticker="PLTR",
+                event_datetime=dt_b.replace(hour=17),
+                quantity=Decimal("10"),
+                value_native=Decimal("1639.62"),
+                fees_native=Decimal("0"),
+                currency="USD",
+            ),
+        }
+    )
+    keep, removed = collapse_events_by_identity([a, b, c])
+    assert removed == 1
+    assert len(keep) == 2
+    assert a.id in {e.id for e in keep}  # earlier twin kept
+    assert c.id in {e.id for e in keep}
 
 
 def test_collapse_events_bridges_soft_only_and_hard():

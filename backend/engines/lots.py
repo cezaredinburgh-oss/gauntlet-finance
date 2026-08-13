@@ -35,7 +35,12 @@ def _q2(value: Decimal) -> Decimal:
 
 
 def _event_sort_key(e: InvestmentEvent) -> tuple:
-    """Sort key using timezone-aware UTC datetimes only."""
+    """
+    Sort key using timezone-aware UTC datetimes only.
+
+    Same-second ordering: open inventory (Buy / Staking reward) before Sell /
+    Fee / other, so a sell cannot sort ahead of its buy purely by UUID string.
+    """
     from datetime import timezone
 
     dt = e.event_datetime
@@ -46,7 +51,19 @@ def _event_sort_key(e: InvestmentEvent) -> tuple:
             dt = dt.astimezone(timezone.utc)
     else:
         dt = datetime(e.event_date.year, e.event_date.month, e.event_date.day, tzinfo=timezone.utc)
-    return (dt, e.event_date, str(e.id))
+    # Lower rank processes first
+    if e.event_type in {
+        InvestmentEventType.BUY,
+        InvestmentEventType.STAKING_REWARD,
+    }:
+        type_rank = 0
+    elif e.event_type == InvestmentEventType.SELL:
+        type_rank = 1
+    elif e.event_type == InvestmentEventType.FEE:
+        type_rank = 2
+    else:
+        type_rank = 3
+    return (dt, e.event_date, type_rank, str(e.id))
 
 
 @dataclass

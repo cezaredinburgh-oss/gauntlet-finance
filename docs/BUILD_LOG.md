@@ -4,6 +4,15 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Lot inventory repair + import atomic replace
+
+- **Root causes of wrong holdings:**
+  1. Ticker FIFO rebuild could leave **stale open lots** if per-row `delete_by_id` partially failed under Sheets quota / interrupted import.
+  2. Same-second events sorted by UUID only — a **Sell could process before Buy**, leaving inventory unreduced (or wrong).
+- **Import harden:** on ticker rebuild, `replace_all_rows(InvestmentLots)` (atomic tab replace); `delete_by_ids` batch-blanks stale LotAllocations.
+- **FIFO sort:** Buy/StakingReward before Sell/Fee within the same timestamp.
+- **Repair:** `python -m backend.scripts.rebuild_lots_from_events --collapse-dupes --dry-run` then live; prints open lots vs event net for PLTR/SPCX/COIN/crypto.
+
 ## 2026-08-12 — Async statement upload (proxy timeout fix)
 
 - `POST /upload` accepts file, stores bytes, starts in-process background job; returns `job_id` immediately.

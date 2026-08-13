@@ -17,7 +17,13 @@ Optional residual close for broker-verified zero positions (e.g. ENJ).
 Usage (project root):
   python -m backend.scripts.rebuild_lots_from_events --dry-run
   python -m backend.scripts.rebuild_lots_from_events
+  python -m backend.scripts.rebuild_lots_from_events --tickers PLTR,SPCX,COIN --dry-run
+  python -m backend.scripts.rebuild_lots_from_events --collapse-dupes --dry-run
   python -m backend.scripts.rebuild_lots_from_events --close-residuals ENJ
+
+After overlapping statement imports that left wrong open inventory, prefer:
+  1) --collapse-dupes --dry-run  then without --dry-run
+  2) this rebuild (always) so lots match Buy−Sell event net
 """
 
 from __future__ import annotations
@@ -151,27 +157,42 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
+        "--collapse-dupes",
+        action="store_true",
+        help="Collapse duplicate source events (soft∪hard identity) before FIFO",
+    )
+    parser.add_argument(
+        "--tickers",
+        default="",
+        help="Optional comma-separated tickers to highlight in the open-qty report "
+        "(rebuild is always full-ledger for consistency)",
+    )
+    parser.add_argument(
         "--close-residuals",
-        default="ENJ",
+        default="",
         help="Comma-separated tickers to force-close residual open qty "
-        "(default ENJ; pass empty string to skip)",
+        "(default: none; e.g. ENJ)",
     )
     args = parser.parse_args()
 
     residual_tickers = {
         t.strip().upper() for t in args.close_residuals.split(",") if t.strip()
     }
+    focus_tickers = {
+        t.strip().upper() for t in args.tickers.split(",") if t.strip()
+    } or {"PLTR", "SPCX", "COIN", "ETH", "DOGE", "XRP", "SOL", "ADA"}
 
     from backend.config import get_settings
     from backend.engines.lots import LotEngine
+    from backend.engines.statements import collapse_events_by_identity
     from backend.schema.models import (
         InvestmentEvent,
         InvestmentEventType,
-        InvestmentLot,
         LotStatus,
     )
     from backend.services.fx_amounts import build_fx_service
     from backend.services.lot_costs import enrich_lots
+    from backend.services.lot_rebuild import event_net_by_ticker, open_qty_by_ticker
     from backend.services.response_cache import cache_invalidate
     from backend.sheets.google_sheets import (
         GoogleSheetsRepository,
@@ -196,6 +217,10 @@ def main() -> int:
     events = [
         r for r in repo.list_rows("InvestmentEvents") if isinstance(r, InvestmentEvent)
     ]
+    old_lots = list(repo.list_rows("InvestmentLots"))
+    old_open = open_qty_by_ticker(
+        [l for l in old_lots if hasattr(l, "ticker")]  # type: ignore[list-item]
+    )
     old_realized, old_ratios = _realized_and_ratio(events)
     print(f"BEFORE: events={len(events)} realized_usd(deduped)={old_realized:.2f}")
     bad = {t: r for t, r in old_ratios.items() if abs(r - 1.0) > 0.02}
@@ -203,6 +228,9 @@ def main() -> int:
         print(f"BEFORE: alloc/sell qty ratios off (sample): {dict(list(bad.items())[:8])}")
 
     non_alloc = [e for e in events if e.event_type != InvestmentEventType.LOT_ALLOCATION]
+    if args.collapse_dupes:
+        non_alloc, removed = collapse_events_by_identity(non_alloc)
+        print(f"Collapsed duplicate source events: removed {removed}, keep {len(non_alloc)}")
     # Clear lot links so FIFO opens lots purely from buy events
     cleaned = [e.model_copy(update={"lot_id": None}) for e in non_alloc]
     cleaned, renet_n = _renet_revolut_crypto_buys(cleaned)
@@ -210,6 +238,14 @@ def main() -> int:
         print(f"Re-netted Revolut crypto buys (gross→fee-net qty): {renet_n}")
     old_alloc_n = sum(1 for e in events if e.event_type == InvestmentEventType.LOT_ALLOCATION)
     print(f"FIFO inputs: non_alloc={len(cleaned)} dropping_old_allocs={old_alloc_n}")
+
+    ev_net = event_net_by_ticker(cleaned)
+    print("BEFORE open lots vs event net (focus tickers):")
+    for t in sorted(focus_tickers):
+        o = old_open.get(t, Decimal("0"))
+        n = ev_net.get(t, Decimal("0"))
+        flag = "  ** MISMATCH **" if o != n else ""
+        print(f"  {t}: open_lots={o}  event_net(buy-sell)={n}{flag}")
 
     fx = build_fx_service(repo)
     engine = LotEngine(
@@ -257,8 +293,9 @@ def main() -> int:
             by_ticker.get(l.ticker.upper(), Decimal("0")) + l.quantity_remaining
         )
     print(f"Rebuilt lots={len(rebuilt)} open={len(open_after)}")
-    for t in ("GOEVQ", "ENJ", "PLTR"):
-        print(f"  open {t}: {by_ticker.get(t, 0)}")
+    print("AFTER open lots (focus):")
+    for t in sorted(focus_tickers):
+        print(f"  open {t}: {by_ticker.get(t, 0)}  (was {old_open.get(t, 0)})")
 
     if args.dry_run:
         print("[dry-run] no write")
