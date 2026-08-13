@@ -32,18 +32,33 @@ _DASH_TTL = 45.0
 _ALERTS_TTL = 60.0
 
 
+def _principal_cache_tag(user) -> str:
+    """
+    Scope expensive GET caches per principal.
+
+    Prevents demo/lab/sandbox from ever sharing owner dashboard/alerts
+    (defense in depth beyond tenant contextvars).
+    """
+    if getattr(user, "is_demo", False):
+        kind = getattr(user, "demo_kind", "") or "demo"
+        sid = user.user_id or user.spreadsheet_id or user.email or "demo"
+        return f"demo:{kind}:{sid}"
+    return f"user:{user.user_id or user.email or 'anon'}"
+
+
 @router.get("/dashboard-summary")
 async def get_dashboard_summary(
     repo: RepoDep,
     settings: SettingsDep,
-    _user: UserDep,
+    user: UserDep,
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
     currency: str | None = Query(None, min_length=3, max_length=3),
     period_key: PeriodKeyParam | None = Query(None),
 ) -> dict[str, Any]:
     key = (
-        f"dash:{date_from}:{date_to}:{currency}:{period_key}:"
+        f"dash:{_principal_cache_tag(user)}:"
+        f"{date_from}:{date_to}:{currency}:{period_key}:"
         f"{settings.holding_period_exemption_days}"
     )
 
@@ -66,12 +81,12 @@ async def get_dashboard_summary(
 async def get_alerts(
     repo: RepoDep,
     settings: SettingsDep,
-    _user: UserDep,
+    user: UserDep,
 ) -> dict[str, Any]:
     days = settings.holding_period_exemption_days
     return await asyncio.to_thread(
         cached,
-        f"alerts:v3:{days}",
+        f"alerts:v4:{_principal_cache_tag(user)}:{days}",
         _ALERTS_TTL,
         lambda: build_alerts(repo, persist_fx=False, exemption_days=days),
     )

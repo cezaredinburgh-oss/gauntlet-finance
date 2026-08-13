@@ -4,6 +4,14 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-13 — Clean empty-account alerts (lab isolation)
+
+- **Root cause:** prod lab disk ledger had been contaminated with full personal history (~14k txs + lots), so alerts correctly fired on that data — looked like “residual” owner alerts on a “fresh” account.
+- **Reset:** `python -m backend.scripts.reset_lab_ledger` wipes `LAB_DATA_DIR/ledger.json` and re-seeds public categories only.
+- **Cache:** dashboard/alerts cache keys include principal tag (`demo:lab:…` vs `user:…`) so demos never share owner GET caches.
+- **sheets/status:** reports `disk_memory` for lab (not env `SPREADSHEET_ID`).
+- **Invariant:** empty public categories + zero txs/lots → zero alerts.
+
 ## 2026-08-13 — Lab test account (disk-persistent demo principal)
 
 - **Password login** via `LAB_LOGIN_ENABLED` + `LAB_EMAIL` + `LAB_PASSWORD` (default email `testaccount@o2.pl`). Never commit the password.

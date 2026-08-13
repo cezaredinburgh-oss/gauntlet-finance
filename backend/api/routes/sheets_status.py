@@ -13,6 +13,7 @@ from backend.sheets.google_sheets import (
     GoogleSheetsRepository,
     service_account_email,
 )
+from backend.sheets.disk_memory import DiskBackedSheetsRepository
 from backend.sheets.repository import InMemorySheetsRepository
 
 router = APIRouter(tags=["sheets"])
@@ -48,6 +49,27 @@ async def sheets_status(
             "spreadsheet_id": bound_id if settings.multi_tenant else None,
             "multi_tenant": settings.multi_tenant,
             "message": msg,
+            "required_tabs": list(SHEET_HEADERS.keys()),
+            "tabs": list(SHEET_HEADERS.keys()),
+            "missing_tabs": [],
+            "ok": True,
+        }
+
+    if isinstance(repo, DiskBackedSheetsRepository):
+        # Lab (and any disk demo): never report env SPREADSHEET_ID as the bound sheet.
+        path = str(getattr(repo, "path", "") or "")
+        return {
+            "backend": "disk_memory",
+            "spreadsheet_id": user.spreadsheet_id if user.is_demo else None,
+            "multi_tenant": settings.multi_tenant,
+            "demo_kind": user.demo_kind or None,
+            "path": path,
+            "message": (
+                "Disk-backed lab ledger (not Google Sheets). "
+                "Empty new-user surface; data persists under LAB_DATA_DIR."
+                if user.is_demo and user.demo_kind == "lab"
+                else "Disk-backed memory ledger (not Google Sheets)."
+            ),
             "required_tabs": list(SHEET_HEADERS.keys()),
             "tabs": list(SHEET_HEADERS.keys()),
             "missing_tabs": [],
