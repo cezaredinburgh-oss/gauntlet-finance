@@ -188,6 +188,66 @@ def test_cleanup_categories_clears_tx_assignments():
     assert txs[0].category_override is False
 
 
+def test_cleanup_categories_preserves_statement_data():
+    """Categories/rules wipe must not delete txs, statement registry, or investments."""
+    repo = InMemorySheetsRepository()
+    _seed(repo)
+    before = {
+        "Transactions": len(repo.list_rows("Transactions")),
+        "StatementFiles": len(repo.list_rows("StatementFiles")),
+        "InvestmentLots": len(repo.list_rows("InvestmentLots")),
+        "InvestmentEvents": len(repo.list_rows("InvestmentEvents")),
+        "Accounts": len(repo.list_rows("Accounts")),
+    }
+    assert before["Transactions"] >= 1
+    assert before["StatementFiles"] >= 1
+
+    r = run_cleanup(repo, ["categories"])
+    assert "Transactions" not in r.tabs_cleared
+    assert "StatementFiles" not in r.tabs_cleared
+    assert r.tabs_cleared.get("Categories", 0) >= 1
+    assert r.tabs_cleared.get("CategoryRules", 0) >= 1
+
+    assert len(repo.list_rows("Transactions")) == before["Transactions"]
+    assert len(repo.list_rows("StatementFiles")) == before["StatementFiles"]
+    assert len(repo.list_rows("InvestmentLots")) == before["InvestmentLots"]
+    assert len(repo.list_rows("InvestmentEvents")) == before["InvestmentEvents"]
+    assert len(repo.list_rows("Accounts")) == before["Accounts"]
+    # Still have the statement file row + cash tx identity
+    txs = [t for t in repo.list_rows("Transactions") if isinstance(t, Transaction)]
+    assert txs[0].merchant == "BILLA"
+    assert txs[0].amount is not None
+
+
+def test_cleanup_categories_uses_upsert_not_replace_all_on_transactions():
+    """Regression: replace_all on Transactions is clear+rewrite and can wipe Sheets."""
+    repo = InMemorySheetsRepository()
+    _seed(repo)
+
+    calls: list[str] = []
+    orig_replace = repo.replace_all_rows
+    orig_upsert = repo.upsert_rows
+
+    def spy_replace(tab: str, rows) -> None:  # type: ignore[no-untyped-def]
+        calls.append(f"replace:{tab}:{len(rows)}")
+        return orig_replace(tab, rows)
+
+    def spy_upsert(tab: str, rows) -> None:  # type: ignore[no-untyped-def]
+        calls.append(f"upsert:{tab}:{len(rows)}")
+        return orig_upsert(tab, rows)
+
+    repo.replace_all_rows = spy_replace  # type: ignore[method-assign]
+    repo.upsert_rows = spy_upsert  # type: ignore[method-assign]
+
+    run_cleanup(repo, ["categories"])
+
+    assert not any(c.startswith("replace:Transactions") for c in calls), calls
+    assert any(c.startswith("upsert:Transactions") for c in calls), calls
+    # Categories/rules still use full clear (empty replace)
+    assert any(c.startswith("replace:Categories") for c in calls)
+    assert any(c.startswith("replace:CategoryRules") for c in calls)
+
+
 def test_cleanup_all_ledger():
     repo = InMemorySheetsRepository()
     _seed(repo)

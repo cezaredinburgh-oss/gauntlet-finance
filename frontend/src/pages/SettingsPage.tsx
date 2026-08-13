@@ -520,8 +520,11 @@ export function SettingsPage() {
           <div>
             <h2 className="text-sm font-semibold text-danger">Data cleanup</h2>
             <p className="mt-1 text-xs text-ink-muted">
-              Permanently deletes rows in Google Sheets for the selected areas. Re-import from{" "}
-              <span className="font-medium text-ink">Bank statements/</span> afterward. Type{" "}
+              Permanently deletes rows for the selected areas only.{" "}
+              <strong className="text-ink">Categories &amp; rules</strong> removes category
+              trees and rules and unassigns categories on cash txs — it does{" "}
+              <strong className="text-ink">not</strong> delete uploaded statement history.
+              Use “All money history” or the cash/investments scopes to remove imports. Type{" "}
               <span className="font-mono text-danger">DELETE</span> to confirm.
             </p>
           </div>

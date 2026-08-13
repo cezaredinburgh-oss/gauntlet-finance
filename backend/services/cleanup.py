@@ -50,7 +50,11 @@ SCOPE_META: dict[str, dict[str, str]] = {
     },
     "categories": {
         "label": "Categories & rules",
-        "description": "Clears Categories and CategoryRules, and removes category assignments on remaining transactions.",
+        "description": (
+            "Deletes Categories and CategoryRules only. Unassigns categories on "
+            "existing cash transactions (does not delete uploaded statement data, "
+            "transactions, investments, or StatementFiles)."
+        ),
     },
     "statement_files": {
         "label": "Statement file registry",
@@ -145,7 +149,11 @@ def preview_cleanup(repo: SheetsRepository) -> dict[str, Any]:
         row_counts = {t: tab_counts.get(t, 0) for t in tabs_u}
         notes = ""
         if sid == "categories":
-            notes = "Also clears category_id on remaining transactions."
+            notes = (
+                "Safe for ledger history: keeps Transactions, StatementFiles, and "
+                "investments. Only drops category trees/rules and nulls category_id "
+                "on cash txs (patch — never full-tab wipe)."
+            )
         if sid == "statement_files":
             notes = "Re-import still dedupes txs/events unless those scopes are cleared too."
         if sid == "accounts":
@@ -182,20 +190,39 @@ def _clear_tab(repo: SheetsRepository, tab: str) -> int:
 
 
 def _clear_transaction_categories(repo: SheetsRepository) -> int:
+    """
+    Null category assignments on cash transactions.
+
+    Uses upsert/patch only — never ``replace_all_rows`` on Transactions.
+    Full-tab replace is clear+rewrite on Google Sheets and can wipe the ledger
+    if the write fails mid-flight or if a partial cache were ever rewritten.
+    """
     rows = [r for r in repo.list_rows("Transactions") if isinstance(r, Transaction)]
-    changed = 0
     updated: list[Transaction] = []
     for t in rows:
         if t.category_id is not None or t.category_override:
-            changed += 1
             updated.append(
                 t.model_copy(update={"category_id": None, "category_override": False})
             )
-        else:
-            updated.append(t)
-    if changed:
-        repo.replace_all_rows("Transactions", updated)
-    return changed
+    if updated:
+        repo.upsert_rows("Transactions", updated)
+    return len(updated)
+
+
+# Tabs that categories-only cleanup must never clear entirely.
+_CATEGORIES_FORBIDDEN_TABS = frozenset(
+    {
+        "Transactions",
+        "StatementFiles",
+        "InvestmentLots",
+        "InvestmentEvents",
+        "Accounts",
+        "Prices",
+        "FXRates",
+        "Settings",
+        "PortfolioSnapshots",
+    }
+)
 
 
 def run_cleanup(repo: SheetsRepository, scopes: list[str]) -> CleanupResult:
@@ -203,6 +230,9 @@ def run_cleanup(repo: SheetsRepository, scopes: list[str]) -> CleanupResult:
     Execute cleanup for the given scope ids (atomic or composite).
 
     Idempotent: clearing an already-empty tab is fine.
+
+    ``categories`` only deletes Categories/CategoryRules and unassigns
+    category_id on cash txs — never deletes statement history tabs.
     """
     requested = list(scopes)
     applied = expand_scopes(scopes)
@@ -224,14 +254,43 @@ def run_cleanup(repo: SheetsRepository, scopes: list[str]) -> CleanupResult:
     ]
     ordered = [s for s in order if s in applied]
 
+    # Snapshot counts for ledger tabs so categories-only cannot silently shrink them
+    ledger_before: dict[str, int] = {}
+    if "categories" in ordered and "transactions" not in ordered:
+        for tab in (
+            "Transactions",
+            "StatementFiles",
+            "InvestmentLots",
+            "InvestmentEvents",
+        ):
+            try:
+                ledger_before[tab] = _count_tab(repo, tab)
+            except Exception:  # noqa: BLE001
+                ledger_before[tab] = -1
+
     for scope in ordered:
         if scope == "categories":
             for tab in _SCOPE_TABS["categories"]:
+                if tab in _CATEGORIES_FORBIDDEN_TABS:
+                    raise RuntimeError(
+                        f"internal error: categories scope tried to clear {tab}"
+                    )
                 tabs_cleared[tab] = tabs_cleared.get(tab, 0) + _clear_tab(repo, tab)
             uncategorized += _clear_transaction_categories(repo)
             continue
         for tab in _SCOPE_TABS[scope]:
             tabs_cleared[tab] = tabs_cleared.get(tab, 0) + _clear_tab(repo, tab)
+
+    if ledger_before:
+        for tab, before in ledger_before.items():
+            if before < 0:
+                continue
+            after = _count_tab(repo, tab)
+            if after < before:
+                raise RuntimeError(
+                    f"categories cleanup must not remove {tab} rows "
+                    f"(before={before}, after={after})"
+                )
 
     return CleanupResult(
         scopes_requested=requested,

@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-13 — Categories cleanup must not wipe statement data
+
+- **Bug:** Settings cleanup scope `categories` used `replace_all_rows` on **Transactions** to null `category_id`. On Google Sheets that is **clear + full rewrite**; a failed/partial write (or huge tab) can destroy cash history while the user only asked to delete rules/categories.
+- **Fix:** unassign categories via **`upsert_rows` patch only**; never full-replace Transactions for this scope. Post-check asserts Transactions/StatementFiles/investments row counts do not shrink on categories-only cleanup.
+- **Copy:** scope description/notes state explicitly that uploads and money history are kept.
+
 ## 2026-08-13 — Clean empty-account alerts (lab isolation)
 
 - **Root cause:** prod lab disk ledger had been contaminated with full personal history (~14k txs + lots), so alerts correctly fired on that data — looked like “residual” owner alerts on a “fresh” account.
