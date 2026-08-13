@@ -414,3 +414,32 @@ def test_import_engine_leaves_unmatched_uncategorized():
     assert by_m["BILLA Praha"].category_id == cat_food.id
     assert by_m["Mystery Shop"].category_id is None
     assert result.unmatched == 1
+
+
+def test_ledger_tx_counts_full_ledger_skips_internal():
+    from backend.services.categorization import ledger_tx_counts
+
+    food = category(
+        name="Groceries",
+        necessity=Necessity.VARIABLE_NECESSITY,
+        life_domain=LifeDomain.FOOD,
+    )
+    other = category(name="Other", life_domain=LifeDomain.OTHER)
+    cats = {food.id: food, other.id: other}
+    rows = [
+        tx(merchant="Lidl", category_id=food.id, amount="-10"),
+        tx(merchant="Lidl", amount="-10"),
+        tx(merchant="Lidl", amount="-10"),
+        tx(merchant="Old shop", amount="-10"),
+        tx(
+            merchant="Revolut",
+            category_id=food.id,
+            amount="-10",
+            is_internal_transfer=True,
+        ),
+        tx(merchant="Dump", category_id=other.id, amount="-10"),
+    ]
+    counts = ledger_tx_counts(rows, cats)
+    assert counts["tx_categorized"] == 1
+    assert counts["tx_uncategorized"] == 4
+    assert counts["tx_total"] == 5

@@ -263,3 +263,151 @@ export function countRuleMatches(
   }
   return n;
 }
+
+export type VendorBucket = {
+  key: string;
+  label: string;
+  count: number;
+  ids: string[];
+  suggestedCategoryId?: string;
+  suggestedCategoryName?: string;
+  reason?: string;
+  confidence?: number;
+};
+
+/** Collapse txs to one row per vendor, largest count first. */
+export function groupTransactionsByVendor(txs: Transaction[]): VendorBucket[] {
+  const buckets = new Map<string, { label: string; ids: string[] }>();
+  for (const t of txs) {
+    const key = vendorKey(t) ?? "none";
+    const label = vendorKey(t) ? vendorDisplayName(t) : "(no label)";
+    const prev = buckets.get(key);
+    if (prev) prev.ids.push(t.id);
+    else buckets.set(key, { label, ids: [t.id] });
+  }
+  return [...buckets.entries()]
+    .map(([key, v]) => ({
+      key,
+      label: v.label,
+      count: v.ids.length,
+      ids: v.ids,
+    }))
+    .sort(
+      (a, b) =>
+        b.count - a.count ||
+        a.label.localeCompare(b.label, undefined, { sensitivity: "base" }),
+    );
+}
+
+const NON_VENDOR_LABEL =
+  /\b(to pocket|from pocket|purchase vault|from vault|to vault|exchanged to|exchange to|exchanged from|incoming payment|outgoing payment|card payment|top-?up|topup|top up|transfer to|transfer from|between own|own account|sent to|sent from|me to me)\b/i;
+
+export function isSearchableVendorBucket(bucket: VendorBucket): boolean {
+  const blob = `${bucket.label} ${bucket.key}`;
+  if (NON_VENDOR_LABEL.test(blob)) return false;
+  if (bucket.key.startsWith("d:")) {
+    const low = (bucket.label || "").trim().toLowerCase();
+    if (/^(incoming|outgoing|payment|card payment)\b/.test(low)) return false;
+  }
+  return true;
+}
+
+export type CategoryVendorGroup = {
+  categoryId: string;
+  categoryName: string;
+  vendors: VendorBucket[];
+  txCount: number;
+};
+
+export function groupVendorsByCategory(buckets: VendorBucket[]): {
+  groups: CategoryVendorGroup[];
+  unassigned: VendorBucket[];
+} {
+  const unassigned: VendorBucket[] = [];
+  const byCat = new Map<string, VendorBucket[]>();
+  for (const b of buckets) {
+    if (!b.suggestedCategoryId) {
+      unassigned.push(b);
+      continue;
+    }
+    const arr = byCat.get(b.suggestedCategoryId) || [];
+    arr.push(b);
+    byCat.set(b.suggestedCategoryId, arr);
+  }
+  const groups = [...byCat.entries()]
+    .map(([categoryId, vendors]) => ({
+      categoryId,
+      categoryName: vendors[0]?.suggestedCategoryName || "Category",
+      vendors,
+      txCount: vendors.reduce((n, v) => n + v.count, 0),
+    }))
+    .sort(
+      (a, b) =>
+        b.txCount - a.txCount ||
+        a.categoryName.localeCompare(b.categoryName, undefined, {
+          sensitivity: "base",
+        }),
+    );
+  return { groups, unassigned };
+}
+
+/** Comma-separated vendor names that fit in ``maxChars``, then “+N more”. */
+export function formatVendorPreview(names: string[], maxChars = 72): string {
+  const out: string[] = [];
+  let used = 0;
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    const piece = out.length ? `, ${name}` : name;
+    const rest = names.length - i;
+    const more = rest > 1 ? `, +${rest} more` : "";
+    if (out.length > 0 && used + piece.length + (rest > 1 ? more.length : 0) > maxChars) {
+      out.push(`+${rest} more`);
+      break;
+    }
+    out.push(name);
+    used += piece.length;
+  }
+  return out.join(", ");
+}
+
+export function selectSearchableVendorBuckets(
+  buckets: VendorBucket[],
+  limit = 10,
+): VendorBucket[] {
+  return buckets
+    .filter(isSearchableVendorBucket)
+    .sort((a, b) => {
+      const am = a.key.startsWith("m:") ? 0 : 1;
+      const bm = b.key.startsWith("m:") ? 0 : 1;
+      return (
+        am - bm ||
+        b.count - a.count ||
+        a.label.localeCompare(b.label, undefined, { sensitivity: "base" })
+      );
+    })
+    .slice(0, Math.max(0, limit));
+}
+
+export type LedgerCategoryCounts = {
+  categorized: number;
+  uncategorized: number;
+  total: number;
+  pct: number;
+};
+
+/** Count residual vs real-category rows. Internal transfers are skipped. */
+export function ledgerCategoryCounts(
+  txs: Transaction[],
+  catMap: Map<string, Category>,
+): LedgerCategoryCounts {
+  let categorized = 0;
+  let uncategorized = 0;
+  for (const t of txs) {
+    if (t.is_internal_transfer) continue;
+    if (isResidualCategory(t, catMap)) uncategorized += 1;
+    else categorized += 1;
+  }
+  const total = categorized + uncategorized;
+  const pct = total > 0 ? (categorized / total) * 100 : 0;
+  return { categorized, uncategorized, total, pct };
+}

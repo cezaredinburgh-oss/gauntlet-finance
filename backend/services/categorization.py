@@ -318,6 +318,27 @@ def _is_blank_or_other_category(
     return False
 
 
+def ledger_tx_counts(
+    transactions: list[Transaction],
+    categories: dict[UUID, Category],
+) -> dict[str, int]:
+    """Full-ledger residual vs real-category counts. Skips archived and internals."""
+    categorized = 0
+    uncategorized = 0
+    for t in transactions:
+        if t.archived or t.is_internal_transfer:
+            continue
+        if _is_blank_or_other_category(t, categories):
+            uncategorized += 1
+        else:
+            categorized += 1
+    return {
+        "tx_categorized": categorized,
+        "tx_uncategorized": uncategorized,
+        "tx_total": categorized + uncategorized,
+    }
+
+
 def apply_rules_fill_blanks(repo: SheetsRepository) -> dict[str, Any]:
     """
     Apply active rules to blank *and* residual Other/Uncategorized rows.
@@ -1205,8 +1226,12 @@ def coverage_stats(repo: SheetsRepository, *, days: int = 180) -> dict[str, Any]
     w30 = _window_coverage(txs, cats, fx, start=today - timedelta(days=29), end=today)
     # Drop private maps from public payload
     top = primary["top_uncategorized_merchants"]
+    tx_counts = ledger_tx_counts(txs, cats)
     return {
         "days": days,
+        "tx_categorized": tx_counts["tx_categorized"],
+        "tx_uncategorized": tx_counts["tx_uncategorized"],
+        "tx_total": tx_counts["tx_total"],
         "expense_usd_total": primary["expense_usd_total"],
         "expense_usd_categorized": primary["expense_usd_categorized"],
         "uncategorized_expense_usd": primary["uncategorized_expense_usd"],

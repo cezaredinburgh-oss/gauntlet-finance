@@ -15,10 +15,9 @@ import {
   Undo2,
   X,
 } from "lucide-react";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import type {
-  AiClusterSuggestion,
-  AiStatus,
+  AiCategorizeSuggestResult,
   Category,
   CategoryCoverage,
   CategoryRule,
@@ -27,14 +26,14 @@ import type {
 import { useAuth } from "../auth/AuthContext";
 import { Money } from "../components/Money";
 import { EmptyState, PageLoader, Spinner } from "../components/Spinner";
-import { AiDesk } from "../features/new-et/AiDesk";
 import { CategoriesMode } from "../features/new-et/CategoriesMode";
 import {
-  OfferRuleCard,
-  OfferSimilarCard,
+  NextStepsCard,
   ReviewSimilarCard,
 } from "../features/new-et/GuidedCards";
 import { RulesMode } from "../features/new-et/RulesMode";
+import { GrokPlusPanel } from "../features/new-et/GrokPlusPanel";
+import { VendorRollup, type VendorApplyRow } from "../features/new-et/VendorRollup";
 import {
   createUndoEntry,
   isUndoValid,
@@ -50,8 +49,12 @@ import {
 import {
   countRuleMatches,
   findSimilarTransactions,
+  groupTransactionsByVendor,
+  isResidualCategory,
+  ledgerCategoryCounts,
   suggestRuleFromTransactions,
   vendorDisplayName,
+  type VendorBucket,
 } from "../lib/ruleSuggest";
 
 const UUID_RE =
@@ -66,7 +69,7 @@ const MODES = [
 type WorkspaceMode = (typeof MODES)[number]["id"];
 type TxSortKey = "date" | "description" | "category" | "source" | "amount";
 type SortDir = "asc" | "desc";
-type SimPhase = "idle" | "offer_similar" | "reviewing_similar" | "offer_rule";
+type SimPhase = "idle" | "next_steps" | "reviewing_similar";
 
 type SimFlow = {
   phase: SimPhase;
@@ -75,6 +78,7 @@ type SimFlow = {
   seedSnapshots: Transaction[];
   similarIds: string[];
   acceptedSimilarIds: string[];
+  excludedIds: string[];
 };
 
 type RuleDraft = {
@@ -96,6 +100,7 @@ const IDLE_SIM: SimFlow = {
   seedSnapshots: [],
   similarIds: [],
   acceptedSimilarIds: [],
+  excludedIds: [],
 };
 
 const SORT_DEFAULT_DIR: Record<TxSortKey, SortDir> = {
@@ -108,6 +113,40 @@ const SORT_DEFAULT_DIR: Record<TxSortKey, SortDir> = {
 
 function isUuid(value: string): boolean {
   return UUID_RE.test(value);
+}
+
+function mapGrokSuggestions(
+  suggestions: AiCategorizeSuggestResult["suggestions"],
+  catsSorted: Category[],
+): VendorBucket[] {
+  return suggestions.map((s) => {
+    const want = (s.category_id || "").trim().toLowerCase();
+    const byId = want
+      ? catsSorted.find((c) => c.id.toLowerCase() === want)
+      : undefined;
+    const byName = s.category_name
+      ? catsSorted.find(
+          (c) => c.name.toLowerCase() === s.category_name.trim().toLowerCase(),
+        )
+      : undefined;
+    const resolved = byId || byName;
+    return {
+      key: s.merchant_key,
+      label: s.label,
+      count: s.sample_count || s.transaction_ids.length,
+      ids: s.transaction_ids,
+      suggestedCategoryId: resolved?.id || "",
+      suggestedCategoryName: resolved?.name || s.category_name,
+      reason: s.reason
+        ? `${s.reason}${resolved?.name || s.category_name ? ` → ${resolved?.name || s.category_name}` : ""}`
+        : resolved?.name || s.category_name || undefined,
+      confidence: s.confidence,
+    };
+  });
+}
+
+function normTxId(id: string): string {
+  return id.trim().toLowerCase();
 }
 
 function txSignedAmount(t: Transaction): number {
@@ -164,6 +203,7 @@ export function NewEtCategorizePage() {
   const [total, setTotal] = useState(0);
   const [cats, setCats] = useState<Category[]>([]);
   const [coverage, setCoverage] = useState<CategoryCoverage | null>(null);
+  const [countAdj, setCountAdj] = useState({ cat: 0, uncat: 0 });
   const [rules, setRules] = useState<CategoryRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -184,17 +224,18 @@ export function NewEtCategorizePage() {
   const [undoEntry, setUndoEntry] = useState<UndoEntry | null>(null);
   const [undoBusy, setUndoBusy] = useState(false);
   const [undoTick, setUndoTick] = useState(0);
-  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
-  const [aiStatusError, setAiStatusError] = useState<string | null>(null);
-  const [aiClusters, setAiClusters] = useState<AiClusterSuggestion[]>([]);
-  const [aiMsg, setAiMsg] = useState<string | null>(null);
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiPicks, setAiPicks] = useState<Record<string, string>>({});
+  const [vendorPanel, setVendorPanel] = useState<
+    "off" | "plain" | "grok" | "grokplus"
+  >("off");
+  const [vendorApplyKey, setVendorApplyKey] = useState<string | null>(null);
+  const [grokBusy, setGrokBusy] = useState(false);
+  const [grokMsg, setGrokMsg] = useState<string | null>(null);
+  const [grokDebug, setGrokDebug] = useState<string | null>(null);
+  const [grokBuckets, setGrokBuckets] = useState<VendorBucket[]>([]);
   const loadGen = useRef(0);
   const txTableRef = useRef<HTMLDivElement | null>(null);
-  const clusterTxRef = useRef<Map<string, Transaction>>(new Map());
-  const appliedClusterIdsRef = useRef<string[]>([]);
-  const skippedClusterIdsRef = useRef<string[]>([]);
+  const grokExcludeRef = useRef<string[]>([]);
+  const grokBusyRef = useRef(false);
 
   const dateFrom = searchParams.get("date_from") || "";
   const dateTo = searchParams.get("date_to") || "";
@@ -268,6 +309,7 @@ export function NewEtCategorizePage() {
         setTotal(t.total);
         setCats(c.items);
         setCoverage(cov);
+        setCountAdj({ cat: 0, uncat: 0 });
         setRules(r.items);
         setError(null);
       } catch (e) {
@@ -284,23 +326,6 @@ export function NewEtCategorizePage() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const s = await api.aiStatus();
-        if (!cancelled) setAiStatus(s);
-      } catch (e) {
-        if (!cancelled) {
-          setAiStatusError(e instanceof Error ? e.message : "Could not load AI status");
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (simFlow.phase === "reviewing_similar") return;
@@ -331,12 +356,45 @@ export function NewEtCategorizePage() {
     [cats],
   );
 
+  const vendorBuckets = useMemo(() => {
+    const pool = items.filter((t) => {
+      if (!isResidualCategory(t, catMap)) return false;
+      if (expensesOnly && !txIsExpense(t)) return false;
+      if (incomeOnly && !txIsIncome(t)) return false;
+      return true;
+    });
+    return groupTransactionsByVendor(pool);
+  }, [items, catMap, expensesOnly, incomeOnly]);
+
+  const liveCoverage = useMemo(
+    () => ledgerCategoryCounts(items, catMap),
+    [items, catMap],
+  );
+
+  const ledgerCoverage = useMemo(() => {
+    const categorized = Math.max(
+      0,
+      (coverage?.tx_categorized ?? liveCoverage.categorized) + countAdj.cat,
+    );
+    const uncategorized = Math.max(
+      0,
+      (coverage?.tx_uncategorized ?? liveCoverage.uncategorized) + countAdj.uncat,
+    );
+    const all = categorized + uncategorized;
+    return {
+      categorized,
+      uncategorized,
+      total: all,
+      pct: all > 0 ? (categorized / all) * 100 : 0,
+    };
+  }, [coverage, liveCoverage, countAdj]);
+
   const filtered = useMemo(() => {
     let rows = items;
 
     if (focusIds && focusIds.length > 0) {
-      const allow = new Set(focusIds);
-      return rows.filter((t) => allow.has(t.id));
+      const allow = new Set(focusIds.map(normTxId));
+      return rows.filter((t) => allow.has(normTxId(t.id)));
     }
 
     if (categoryIdParam === "uncategorized") {
@@ -584,14 +642,15 @@ export function NewEtCategorizePage() {
   }
 
   function startGuidedAfterAssign(seeds: Transaction[], categoryId: string) {
-    setRuleDraft(null);
+    setRuleDraft(buildRuleDraft(seeds, [], categoryId));
     setSimFlow({
-      phase: "offer_similar",
+      phase: "next_steps",
       categoryId,
       seedIds: seeds.map((t) => t.id),
       seedSnapshots: seeds,
       similarIds: [],
       acceptedSimilarIds: [],
+      excludedIds: [],
     });
   }
 
@@ -629,7 +688,7 @@ export function NewEtCategorizePage() {
     };
   }
 
-  function enterOfferRule(
+  function enterNextSteps(
     seeds: Transaction[],
     categoryId: string,
     accepted: Transaction[] = [],
@@ -637,27 +696,35 @@ export function NewEtCategorizePage() {
   ) {
     setRuleDraft(buildRuleDraft([...seeds, ...accepted], excluded, categoryId));
     setFocusIds(null);
+    setSelected(new Set());
     setSimFlow({
-      phase: "offer_rule",
+      phase: "next_steps",
       categoryId,
       seedIds: seeds.map((t) => t.id),
       seedSnapshots: seeds,
       similarIds: [],
       acceptedSimilarIds: accepted.map((t) => t.id),
+      excludedIds: excluded.map((t) => t.id),
     });
   }
 
-  function onOfferSimilarYes() {
-    const seeds = simFlow.seedSnapshots;
-    if (!seeds.length) return;
-    const similar = findSimilarTransactions(items, seeds, {
+  function similarForSeeds(seeds: Transaction[]): Transaction[] {
+    if (!seeds.length) return [];
+    const skip = new Set(simFlow.excludedIds);
+    return findSimilarTransactions(items, seeds, {
       sameAmountSign: true,
       residualOnly: true,
       catMap,
       sortAlpha: true,
-    });
+    }).filter((t) => !skip.has(t.id));
+  }
+
+  function onReviewSimilar() {
+    const seeds = simFlow.seedSnapshots;
+    if (!seeds.length) return;
+    const similar = similarForSeeds(seeds);
     if (similar.length === 0) {
-      enterOfferRule(seeds, simFlow.categoryId, [], []);
+      enterNextSteps(seeds, simFlow.categoryId, [], []);
       return;
     }
     const seedIds = seeds.map((t) => t.id);
@@ -670,6 +737,29 @@ export function NewEtCategorizePage() {
     }, 60);
   }
 
+  async function applySimilarIds(
+    toAssign: string[],
+  ): Promise<Transaction[]> {
+    if (!simFlow.categoryId || toAssign.length === 0) return [];
+    const previousTxs = items.filter((t) => toAssign.includes(t.id));
+    const catName = catMap.get(simFlow.categoryId)?.name || "category";
+    pushUndo(`Assigned ${catName} to ${toAssign.length}`, previousTxs);
+    const r = await api.bulkOverrideCategory(simFlow.categoryId, toAssign);
+    const idSet = new Set(r.transaction_ids);
+    const forceInternal = categoryImpliesInternal(simFlow.categoryId);
+    const patch = {
+      category_id: simFlow.categoryId,
+      category_override: true as const,
+      ...(forceInternal ? { is_internal_transfer: true } : {}),
+    };
+    setItems((cur) => cur.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t)));
+    nudgeLedgerCounts(idSet.size);
+    void refreshCoverage();
+    return previousTxs
+      .filter((t) => idSet.has(t.id))
+      .map((t) => ({ ...t, ...patch }));
+  }
+
   async function onAssignSimilarSelected() {
     if (!simFlow.categoryId) return;
     const seedIdSet = new Set(simFlow.seedIds);
@@ -677,31 +767,13 @@ export function NewEtCategorizePage() {
     const excluded = simFlow.similarIds.filter((id) => !selected.has(id));
     const excludedTxs = items.filter((t) => excluded.includes(t.id));
     if (toAssign.length === 0) {
-      setSelected(new Set());
-      enterOfferRule(simFlow.seedSnapshots, simFlow.categoryId, [], excludedTxs);
+      enterNextSteps(simFlow.seedSnapshots, simFlow.categoryId, [], excludedTxs);
       return;
     }
     setBulkBusy(true);
     try {
-      const previousTxs = items.filter((t) => toAssign.includes(t.id));
-      const catName = catMap.get(simFlow.categoryId)?.name || "category";
-      pushUndo(`Assigned ${catName} to ${toAssign.length}`, previousTxs);
-      const r = await api.bulkOverrideCategory(simFlow.categoryId, toAssign);
-      const idSet = new Set(r.transaction_ids);
-      const forceInternal = categoryImpliesInternal(simFlow.categoryId);
-      const patch = {
-        category_id: simFlow.categoryId,
-        category_override: true as const,
-        ...(forceInternal ? { is_internal_transfer: true } : {}),
-      };
-      const nextItems = items.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t));
-      setItems(nextItems);
-      const accepted = previousTxs
-        .filter((t) => idSet.has(t.id))
-        .map((t) => ({ ...t, ...patch }));
-      void refreshCoverage();
-      setSelected(new Set());
-      enterOfferRule(simFlow.seedSnapshots, simFlow.categoryId, accepted, excludedTxs);
+      const accepted = await applySimilarIds(toAssign);
+      enterNextSteps(simFlow.seedSnapshots, simFlow.categoryId, accepted, excludedTxs);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Group assign failed");
     } finally {
@@ -709,24 +781,64 @@ export function NewEtCategorizePage() {
     }
   }
 
+  async function onApplyAllSimilar() {
+    if (!simFlow.categoryId) return;
+    const similar = similarForSeeds(simFlow.seedSnapshots);
+    if (similar.length === 0) {
+      enterNextSteps(simFlow.seedSnapshots, simFlow.categoryId, [], []);
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const accepted = await applySimilarIds(similar.map((t) => t.id));
+      enterNextSteps(simFlow.seedSnapshots, simFlow.categoryId, accepted, []);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Apply similar failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function createVendorRule(seeds: Transaction[], categoryId: string) {
+    const draft = buildRuleDraft(seeds, [], categoryId);
+    if (!draft.match_value.trim() || !draft.category_id) return;
+    await api.createCategoryRule({
+      priority: 100,
+      match_field: draft.match_field,
+      match_type: draft.match_type,
+      match_value: draft.match_value.trim(),
+      category_id: draft.category_id,
+      set_internal_transfer: categoryImpliesInternal(draft.category_id),
+      institution_scope: draft.institution_scope.trim() || undefined,
+      is_active: true,
+      notes: "Created from New ET vendor apply",
+    });
+  }
+
+  async function persistRule(draft: RuleDraft) {
+    if (!draft.match_value.trim() || !draft.category_id) return;
+    await api.createCategoryRule({
+      priority: 100,
+      match_field: draft.match_field,
+      match_type: draft.match_type,
+      match_value: draft.match_value.trim(),
+      category_id: draft.category_id,
+      set_internal_transfer: categoryImpliesInternal(draft.category_id),
+      institution_scope: draft.institution_scope.trim() || undefined,
+      is_active: true,
+      notes: "Created from New ET guided flow",
+    });
+    setRuleDraft(null);
+    setSimFlow(IDLE_SIM);
+    setFocusIds(null);
+    await load({ quiet: true });
+  }
+
   async function saveOfferedRule() {
-    if (!ruleDraft || !ruleDraft.match_value.trim() || !ruleDraft.category_id) return;
+    if (!ruleDraft) return;
     setRuleBusy(true);
     try {
-      await api.createCategoryRule({
-        priority: 100,
-        match_field: ruleDraft.match_field,
-        match_type: ruleDraft.match_type,
-        match_value: ruleDraft.match_value.trim(),
-        category_id: ruleDraft.category_id,
-        set_internal_transfer: categoryImpliesInternal(ruleDraft.category_id),
-        institution_scope: ruleDraft.institution_scope.trim() || undefined,
-        is_active: true,
-        notes: "Created from New ET guided flow",
-      });
-      setRuleDraft(null);
-      setSimFlow(IDLE_SIM);
-      await load({ quiet: true });
+      await persistRule(ruleDraft);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Save rule failed");
     } finally {
@@ -734,198 +846,46 @@ export function NewEtCategorizePage() {
     }
   }
 
-  async function fetchAiClusters() {
-    setAiBusy(true);
-    setAiMsg(null);
-    try {
-      const r = await api.aiCategorizeClusters({
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-        exclude_transaction_ids: [
-          ...appliedClusterIdsRef.current,
-          ...skippedClusterIdsRef.current,
-        ],
-      });
-      setAiStatus((prev) =>
-        prev
-          ? { ...prev, configured: r.configured, enabled: r.enabled, model: r.model, quota_used: r.quota_used, quota_cap: r.quota_cap }
-          : prev,
-      );
-      if (!r.configured) {
-        setAiClusters([]);
-        setAiMsg(r.message || "AI is not configured.");
-        return;
-      }
-      const bundled = r.transactions ?? [];
-      for (const t of bundled) {
-        clusterTxRef.current.set(normTxId(t.id), t);
-      }
-      if (bundled.length) {
-        setItems((prev) => {
-          const seen = new Set(prev.map((t) => normTxId(t.id)));
-          const next = prev.slice();
-          for (const t of bundled) {
-            const key = normTxId(t.id);
-            if (!seen.has(key)) {
-              next.push(t);
-              seen.add(key);
-            }
-          }
-          return next;
-        });
-      }
-      setAiClusters(r.clusters);
-      setAiMsg(r.message || null);
-    } catch (e) {
-      setAiMsg(e instanceof Error ? e.message : "Cluster request failed");
-    } finally {
-      setAiBusy(false);
-    }
-  }
-
-  function normTxId(id: string): string {
-    return id.trim().toLowerCase();
-  }
-
-  async function ensureClusterRows(ids: string[]): Promise<Transaction[]> {
-    const want = [...new Set(ids.map(normTxId).filter(Boolean))];
-    const have = new Map(items.map((t) => [normTxId(t.id), t]));
-    for (const [key, t] of clusterTxRef.current) {
-      if (!have.has(key)) have.set(key, t);
-    }
-    const missing = want.filter((id) => !have.has(id));
-    if (missing.length) {
-      try {
-        const extra = await api.transactions({
-          tx_ids: missing.join(","),
-          limit: Math.max(missing.length, 1),
-        });
-        const matched = extra.items.filter((t) => want.includes(normTxId(t.id)));
-        setItems((prev) => {
-          const seen = new Set(prev.map((t) => normTxId(t.id)));
-          const next = prev.slice();
-          for (const t of matched) {
-            const key = normTxId(t.id);
-            have.set(key, t);
-            clusterTxRef.current.set(key, t);
-            if (!seen.has(key)) {
-              next.push(t);
-              seen.add(key);
-            }
-          }
-          return next;
-        });
-        for (const t of matched) have.set(normTxId(t.id), t);
-      } catch (e) {
-        setAiMsg(e instanceof Error ? e.message : "Could not load cluster rows");
-      }
-    }
-    return want.map((id) => have.get(id)).filter((t): t is Transaction => t != null);
-  }
-
-  async function focusCluster(c: AiClusterSuggestion) {
-    const rows = await ensureClusterRows(c.transaction_ids);
-    if (!rows.length) {
-      setAiMsg(
-        `Could not open “${c.title}” — those rows are not in the loaded ledger. Try clearing date filters.`,
-      );
-      return;
-    }
-    const rowIds = rows.map((t) => t.id);
-    setFocusIds(rowIds);
-    setSelected(new Set(rowIds));
-    setAiMsg(`Showing ${rows.length} transaction${rows.length === 1 ? "" : "s"} from “${c.title}”.`);
-    window.setTimeout(() => {
-      txTableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 80);
-  }
-
-  async function applyCluster(c: AiClusterSuggestion) {
-    const ids = [...new Set(c.transaction_ids.map(normTxId).filter(Boolean))];
-    if (!ids.length) {
-      setAiMsg(`“${c.title}” has no transaction ids to apply.`);
-      return;
-    }
-    const internalCat = catsSorted.find((cat) => {
-      const name = cat.name.toLowerCase();
-      return cat.is_transfer && name.includes("internal") && !name.includes("external");
-    });
-    let categoryId =
-      c.needs_human || !c.category_id ? aiPicks[c.cluster_key] || "" : c.category_id;
-    const forceInternal = c.kind === "internal_transfer";
-    if (forceInternal && internalCat) {
-      categoryId = internalCat.id;
-    }
-    if (!categoryId) {
-      setAiMsg("Pick a category before applying this cluster.");
-      return;
-    }
+  async function onApplyAndSaveRule() {
+    if (!simFlow.categoryId) return;
+    const seeds = simFlow.seedSnapshots;
+    const similar = similarForSeeds(seeds);
+    setRuleBusy(true);
     setBulkBusy(true);
     try {
-      const snapshotRows = await ensureClusterRows(ids);
-      if (snapshotRows.length) {
-        const catName = catMap.get(categoryId)?.name || c.category_name || "category";
-        pushUndo(`Assigned ${catName} to ${snapshotRows.length}`, snapshotRows);
-      }
-      const r = await api.bulkOverrideCategory(categoryId, ids, {
-        is_internal_transfer:
-          forceInternal || categoryImpliesInternal(categoryId) ? true : undefined,
-      });
-      if (r.updated === 0) {
-        setAiMsg(
-          `Could not apply “${c.title}” — server found none of ${ids.length} row(s).`,
-        );
-        return;
-      }
-      const updatedIds = (r.transaction_ids || []).map((id) => String(id));
-      appliedClusterIdsRef.current.push(...updatedIds.map(normTxId));
-      const idSet = new Set(updatedIds.map(normTxId));
-      const patch = {
-        category_id: categoryId,
-        category_override: true as const,
-        ...(forceInternal || categoryImpliesInternal(categoryId)
-          ? { is_internal_transfer: true }
-          : {}),
-      };
-      const hydrated = await ensureClusterRows(updatedIds);
-      setItems((prev) => {
-        const seen = new Set(prev.map((t) => normTxId(t.id)));
-        const next = prev.map((t) =>
-          idSet.has(normTxId(t.id)) ? { ...t, ...patch } : t,
-        );
-        for (const t of hydrated) {
-          if (!seen.has(normTxId(t.id))) {
-            next.push({ ...t, ...patch });
-            seen.add(normTxId(t.id));
-          }
-        }
-        return next;
-      });
-      const seeds = hydrated
-        .filter((t) => idSet.has(normTxId(t.id)))
-        .map((t) => ({ ...t, ...patch }));
-      setAiClusters((prev) => prev.filter((x) => x.cluster_key !== c.cluster_key));
-      setSelected(new Set(updatedIds));
-      setFocusIds(updatedIds);
-      if (forceInternal) {
-        patchParams({ hide_transfers: "0" });
-      }
-      void refreshCoverage();
-      const miss =
-        r.missing > 0 ? ` · ${r.missing} id(s) not on the ledger` : "";
-      setAiMsg(`Applied ${r.updated} from “${c.title}”${miss}.`);
-      if (seeds.length) startGuidedAfterAssign(seeds, categoryId);
+      const accepted =
+        similar.length > 0 ? await applySimilarIds(similar.map((t) => t.id)) : [];
+      const draft = buildRuleDraft([...seeds, ...accepted], [], simFlow.categoryId);
+      await persistRule(draft);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Apply cluster failed");
+      alert(e instanceof Error ? e.message : "Apply and save rule failed");
     } finally {
+      setRuleBusy(false);
       setBulkBusy(false);
     }
+  }
+
+  function nudgeLedgerCounts(assignedResidual: number) {
+    if (!assignedResidual) return;
+    setCountAdj((prev) => ({
+      cat: prev.cat + assignedResidual,
+      uncat: prev.uncat - assignedResidual,
+    }));
+  }
+
+  function nudgeLedgerCleared(clearedCategorized: number) {
+    if (!clearedCategorized) return;
+    setCountAdj((prev) => ({
+      cat: prev.cat - clearedCategorized,
+      uncat: prev.uncat + clearedCategorized,
+    }));
   }
 
   async function refreshCoverage() {
     try {
       const cov = await api.categoryCoverage(180);
       setCoverage(cov);
+      setCountAdj({ cat: 0, uncat: 0 });
     } catch {
       /* mutation already succeeded */
     }
@@ -953,6 +913,7 @@ export function NewEtCategorizePage() {
             : t,
         ),
       );
+      if (!isResidualCategory(prev, catMap)) nudgeLedgerCleared(1);
       void refreshCoverage();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Clear category failed");
@@ -986,6 +947,9 @@ export function NewEtCategorizePage() {
             : t,
         ),
       );
+      nudgeLedgerCleared(
+        previousTxs.filter((t) => !isResidualCategory(t, catMap)).length,
+      );
       void refreshCoverage();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Clear categories failed");
@@ -1014,6 +978,7 @@ export function NewEtCategorizePage() {
         ...(forceInternal ? { is_internal_transfer: true } : {}),
       };
       setItems((cur) => cur.map((t) => (t.id === txId ? { ...t, ...patch } : t)));
+      if (prev && isResidualCategory(prev, catMap)) nudgeLedgerCounts(1);
       void refreshCoverage();
       if (simFlow.phase !== "reviewing_similar" && prev) {
         startGuidedAfterAssign([{ ...prev, ...patch }], categoryId);
@@ -1050,6 +1015,7 @@ export function NewEtCategorizePage() {
         .filter((t) => idSet.has(t.id))
         .map((t) => ({ ...t, ...patch }));
       setSelected(new Set());
+      nudgeLedgerCounts(seeds.length);
       void refreshCoverage();
       if (seeds.length) startGuidedAfterAssign(seeds, bulkCategoryId);
     } catch (e) {
@@ -1058,6 +1024,349 @@ export function NewEtCategorizePage() {
       setBulkBusy(false);
     }
   }
+
+  async function openVendorBucket(bucket: { ids: string[] }) {
+    const ids = bucket.ids.map(normTxId).filter(Boolean);
+    const have = new Set(items.map((t) => normTxId(t.id)));
+    const missing = ids.filter((id) => !have.has(id));
+    if (missing.length) {
+      try {
+        const extra = await api.transactions({
+          tx_ids: missing.join(","),
+          ids: missing.join(","),
+          limit: Math.max(missing.length, 1),
+        });
+        if (extra.items.length) {
+          setItems((prev) => {
+            const seen = new Set(prev.map((t) => normTxId(t.id)));
+            const next = prev.slice();
+            for (const t of extra.items) {
+              const key = normTxId(t.id);
+              if (!seen.has(key)) {
+                next.push(t);
+                seen.add(key);
+              }
+            }
+            return next;
+          });
+        }
+      } catch {
+        /* still focus rows we already have */
+      }
+    }
+    setFocusIds(ids);
+    setSelected(new Set(ids));
+    window.setTimeout(() => {
+      txTableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  }
+
+  function markVendorConsumed(keys: string[]) {
+    grokExcludeRef.current.push(...keys);
+    setGrokBuckets((prev) => prev.filter((b) => !keys.includes(b.key)));
+  }
+
+  async function commitVendorAssign(
+    working: Transaction[],
+    bucket: { key: string; label: string; ids: string[] },
+    categoryId: string,
+  ): Promise<{ working: Transaction[]; seeds: Transaction[] }> {
+    if (!categoryId || bucket.ids.length === 0) {
+      return { working, seeds: [] };
+    }
+    const idSetWant = new Set(bucket.ids);
+    const previousTxs = working.filter((t) => idSetWant.has(t.id));
+    const catName = catMap.get(categoryId)?.name || "category";
+    pushUndo(`Assigned ${catName} to ${previousTxs.length} ${bucket.label}`, previousTxs);
+    const r = await api.bulkOverrideCategory(categoryId, bucket.ids);
+    const idSet = new Set(r.transaction_ids);
+    const forceInternal = categoryImpliesInternal(categoryId);
+    const patch = {
+      category_id: categoryId,
+      category_override: true as const,
+      ...(forceInternal ? { is_internal_transfer: true } : {}),
+    };
+    const next = working.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t));
+    const seeds = previousTxs
+      .filter((t) => idSet.has(t.id))
+      .map((t) => ({ ...t, ...patch }));
+    nudgeLedgerCounts(seeds.length);
+    return { working: next, seeds };
+  }
+
+  async function applyVendorBucket(
+    bucket: { key: string; label: string; ids: string[] },
+    categoryId: string,
+    opts?: { makeRule?: boolean },
+  ) {
+    if (!categoryId || bucket.ids.length === 0) return;
+    setVendorApplyKey(bucket.key);
+    setBulkBusy(true);
+    try {
+      const { working, seeds } = await commitVendorAssign(items, bucket, categoryId);
+      setItems(working);
+      void refreshCoverage();
+      const left = grokBuckets.filter((b) => b.key !== bucket.key);
+      markVendorConsumed([bucket.key]);
+      if (vendorPanel === "grok" || vendorPanel === "grokplus") {
+        setFocusIds(null);
+        setSelected(new Set());
+      }
+      if (opts?.makeRule && seeds.length) {
+        await createVendorRule(seeds, categoryId);
+        void load({ quiet: true });
+      } else if (seeds.length) {
+        startGuidedAfterAssign(seeds, categoryId);
+      }
+      if (vendorPanel === "grok" && left.length === 0) {
+        void fetchGrokVendors();
+      } else if (
+        vendorPanel === "grokplus" &&
+        left.length === 0 &&
+        !grokBusyRef.current
+      ) {
+        void fetchGrokPlus();
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Vendor assign failed");
+    } finally {
+      setVendorApplyKey(null);
+      setBulkBusy(false);
+    }
+  }
+
+  async function applyVendorBatch(rows: VendorApplyRow[], makeRule: boolean) {
+    if (!rows.length) return;
+    setBulkBusy(true);
+    try {
+      let working = items;
+      for (const row of rows) {
+        setVendorApplyKey(row.bucket.key);
+        const out = await commitVendorAssign(working, row.bucket, row.categoryId);
+        working = out.working;
+        if (makeRule && out.seeds.length) {
+          await createVendorRule(out.seeds, row.categoryId);
+        }
+      }
+      setItems(working);
+      markVendorConsumed(rows.map((r) => r.bucket.key));
+      void refreshCoverage();
+      if (makeRule) void load({ quiet: true });
+      if (vendorPanel === "grok") {
+        setFocusIds(null);
+        setSelected(new Set());
+        void fetchGrokVendors();
+      } else if (vendorPanel === "grokplus") {
+        setFocusIds(null);
+        setSelected(new Set());
+        if (!grokBusyRef.current) void fetchGrokPlus();
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Apply all failed");
+    } finally {
+      setVendorApplyKey(null);
+      setBulkBusy(false);
+    }
+  }
+
+  async function fetchGrokVendors() {
+    setVendorPanel("grok");
+    setFocusIds(null);
+    setSelected(new Set());
+    setGrokBusy(true);
+    setGrokMsg("Looking up merchants across the full ledger…");
+    setGrokDebug(null);
+    const preview: VendorBucket[] = [];
+    try {
+      let r;
+      try {
+        r = await api.aiVendorSuggest({
+          limit: 10,
+          exclude_merchant_keys: grokExcludeRef.current,
+        });
+      } catch (first) {
+        if (first instanceof ApiError && first.status === 404) {
+          r = await api.aiCategorizeSuggest({
+            limit: 10,
+            web_search: true,
+          });
+        } else {
+          throw first;
+        }
+      }
+      const sent = r.vendors_sent || [];
+      if (sent.length && r.suggestions.length === 0) {
+        setGrokBuckets(
+          sent.map((v) => ({
+            key: v.merchant_key,
+            label: v.label,
+            count: v.count,
+            ids: [],
+          })),
+        );
+      }
+      if (!r.configured) {
+        setGrokMsg(r.message || "Grok is not configured. Set AI_ENABLED and XAI_API_KEY.");
+      } else {
+        const previewByKey = new Map(preview.map((b) => [b.key, b]));
+        const buckets: VendorBucket[] = r.suggestions.map((s) => {
+          const want = (s.category_id || "").trim().toLowerCase();
+          const byId = want
+            ? catsSorted.find((c) => c.id.toLowerCase() === want)
+            : undefined;
+          const byName = s.category_name
+            ? catsSorted.find(
+                (c) =>
+                  c.name.toLowerCase() === s.category_name.trim().toLowerCase(),
+              )
+            : undefined;
+          const resolved = byId || byName;
+          const prev = previewByKey.get(s.merchant_key);
+          return {
+            key: s.merchant_key,
+            label: s.label,
+            count: s.sample_count || s.transaction_ids.length || prev?.count || 0,
+            ids: s.transaction_ids.length ? s.transaction_ids : prev?.ids || [],
+            suggestedCategoryId: resolved?.id || "",
+            suggestedCategoryName: resolved?.name || s.category_name,
+            reason: s.reason
+              ? `${s.reason}${resolved?.name || s.category_name ? ` → ${resolved?.name || s.category_name}` : ""}`
+              : resolved?.name || s.category_name || undefined,
+            confidence: s.confidence,
+          };
+        });
+        if (buckets.length) setGrokBuckets(buckets);
+        setGrokMsg(
+          r.message ||
+            (buckets.length
+              ? `Grok suggested ${buckets.length} vendor${buckets.length === 1 ? "" : "s"}.`
+              : "Grok returned no vendor guesses."),
+        );
+      }
+      const vendorLines = sent
+        .map((v, i) => `${i + 1}. ${v.label} ×${v.count} (${v.merchant_key})`)
+        .join("\n");
+      setGrokDebug(
+        [
+          vendorLines ? `Vendors sent (${sent.length}):\n${vendorLines}` : "Vendors sent: (none)",
+          "",
+          "--- system prompt ---",
+          r.system_prompt || "(empty)",
+          "",
+          "--- user prompt ---",
+          r.user_prompt || "(empty)",
+        ].join("\n"),
+      );
+    } catch (e) {
+      const detail =
+        e instanceof ApiError
+          ? e.status === 404
+            ? "The API running on port 8020 is old — it does not have Ask Grok yet. Restart Start-App, then try again. The merchants below are still ready to Apply."
+            : e.message
+          : e instanceof Error
+            ? e.message
+            : "Grok request failed";
+      setGrokMsg(detail);
+    } finally {
+      setGrokBusy(false);
+    }
+  }
+
+  async function fetchGrokPlus() {
+    setVendorPanel("grokplus");
+    setFocusIds(null);
+    setSelected(new Set());
+    grokBusyRef.current = true;
+    setGrokBusy(true);
+    setGrokMsg("Sorting residual vendors, then asking Grok about leftovers…");
+    setGrokDebug(null);
+    setGrokBuckets([]);
+    const collected: VendorBucket[] = [];
+    const debugChunks: string[] = [];
+    const seen = new Set<string>(grokExcludeRef.current);
+    const rounds = 3;
+    const batch = 12;
+    let finalMsg: string | null = null;
+    try {
+      for (let i = 0; i < rounds; i += 1) {
+        setGrokMsg(
+          collected.length
+            ? `Mapped ${collected.length} vendors… batch ${i + 1} of ${rounds}`
+            : `Matching vendors to categories… batch ${i + 1} of ${rounds}`,
+        );
+        let r: AiCategorizeSuggestResult;
+        try {
+          r = await api.aiVendorSuggestPlus({
+            exclude_merchant_keys: [...seen],
+            limit: batch,
+          });
+        } catch (e) {
+          const detail =
+            e instanceof ApiError
+              ? e.status === 404
+                ? "The API on port 8020 is old — restart Start-App, then try Ask Grok+ again."
+                : e.message
+              : e instanceof Error
+                ? e.message
+                : "Grok+ request failed";
+          finalMsg = collected.length
+            ? `Mapped ${collected.length} vendor${collected.length === 1 ? "" : "s"}, then a later batch failed: ${detail}`
+            : detail;
+          break;
+        }
+        for (const v of r.vendors_sent || []) {
+          if (v.merchant_key) seen.add(v.merchant_key);
+        }
+        for (const s of r.suggestions) {
+          if (s.merchant_key) seen.add(s.merchant_key);
+        }
+        const sent = r.vendors_sent || [];
+        if (sent.length) {
+          debugChunks.push(
+            `Batch ${i + 1} vendors (${sent.length}):\n` +
+              sent
+                .map((v, n) => `${n + 1}. ${v.label} ×${v.count} (${v.merchant_key})`)
+                .join("\n"),
+          );
+        }
+        if (i === 0) {
+          debugChunks.push(
+            "",
+            "--- system prompt ---",
+            r.system_prompt || "(empty)",
+            "",
+            "--- user prompt ---",
+            r.user_prompt || "(empty)",
+          );
+        }
+        setGrokDebug(debugChunks.join("\n"));
+        if (!r.configured) {
+          finalMsg =
+            r.message || "Grok is not configured. Set AI_ENABLED and XAI_API_KEY.";
+          break;
+        }
+        const next = mapGrokSuggestions(r.suggestions, catsSorted);
+        for (const b of next) {
+          if (!collected.some((x) => x.key === b.key)) collected.push(b);
+        }
+        if (collected.length) setGrokBuckets([...collected]);
+        if (!sent.length && next.length === 0) break;
+      }
+      if (finalMsg == null) {
+        finalMsg = collected.length
+          ? `Grok mapped ${collected.length} vendor${collected.length === 1 ? "" : "s"} into categories.`
+          : "Grok returned no vendor guesses.";
+      }
+      setGrokMsg(finalMsg);
+    } finally {
+      grokBusyRef.current = false;
+      setGrokBusy(false);
+    }
+  }
+
+  const grokAwaitingClick =
+    (vendorPanel === "grok" || vendorPanel === "grokplus") &&
+    !(focusIds && focusIds.length);
 
   const categorySelectValue =
     multiCategoryIds.length > 0
@@ -1139,7 +1448,7 @@ export function NewEtCategorizePage() {
       </div>
 
       {hasActiveScope && (
-        <div className="sticky top-14 z-20 rounded-xl border border-brand/30 bg-slate-950/95 px-4 py-3 shadow-lg backdrop-blur-md">
+        <div className="rounded-xl border border-brand/30 bg-slate-950/95 px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
               <div className="text-xs font-semibold uppercase tracking-wide text-brand">
@@ -1166,82 +1475,75 @@ export function NewEtCategorizePage() {
 
       {mode === "review" && (
         <div className="grid gap-3 lg:grid-cols-3">
-          {coverage && (
-            <div className="card p-4 lg:col-span-1">
-              <div className="label">Coverage (last {coverage.days}d expense)</div>
+          <div className="card p-4 lg:col-span-1">
+            <div className="label">Coverage (full ledger)</div>
+            <div
+              className={cn(
+                "text-2xl font-semibold",
+                ledgerCoverage.pct >= 90
+                  ? "text-ok"
+                  : ledgerCoverage.pct >= 70
+                    ? "text-warn"
+                    : "text-danger",
+              )}
+            >
+              {ledgerCoverage.pct.toFixed(0)}%
+            </div>
+            <p className="mt-1 text-sm text-ink">
+              <span className="font-medium tabular-nums">
+                {ledgerCoverage.categorized.toLocaleString()}
+              </span>
+              <span className="text-ink-muted"> categorized</span>
+              <span className="text-ink-faint"> · </span>
+              <span className="font-medium tabular-nums">
+                {ledgerCoverage.uncategorized.toLocaleString()}
+              </span>
+              <span className="text-ink-muted"> uncategorized</span>
+            </p>
+            <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-white/10">
               <div
                 className={cn(
-                  "text-2xl font-semibold",
-                  coverage.coverage_pct >= (coverage.target_pct ?? 90)
-                    ? "text-ok"
-                    : coverage.coverage_pct >= (coverage.amber_pct ?? 70)
-                      ? "text-warn"
-                      : "text-danger",
+                  "h-full rounded-full",
+                  ledgerCoverage.pct >= 90
+                    ? "bg-ok"
+                    : ledgerCoverage.pct >= 70
+                      ? "bg-warn"
+                      : "bg-danger",
                 )}
-              >
-                {coverage.coverage_pct.toFixed(0)}%
-              </div>
-              <p className="mt-0.5 text-[10px] text-ink-faint">
-                Expense coverage (income assigns do not change this).
-              </p>
-              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-white/10">
-                <div
-                  className={cn(
-                    "h-full rounded-full",
-                    coverage.coverage_pct >= (coverage.target_pct ?? 90)
-                      ? "bg-ok"
-                      : coverage.coverage_pct >= (coverage.amber_pct ?? 70)
-                        ? "bg-warn"
-                        : "bg-danger",
-                  )}
-                  style={{
-                    width: `${Math.min(100, Math.max(0, coverage.coverage_pct))}%`,
-                  }}
-                />
-              </div>
-              <div className="mt-1 text-xs text-ink-faint">
-                {formatUsd(coverage.expense_usd_categorized)} of{" "}
-                {formatUsd(coverage.expense_usd_total)}
-                {" · "}
-                target {coverage.target_pct ?? 90}%
-              </div>
-              {coverage.windows?.["30d"] && (
-                <div className="mt-1 text-[11px] text-ink-faint">
-                  30d: {coverage.windows["30d"].coverage_pct.toFixed(0)}% (
-                  {coverage.windows["30d"].status})
-                </div>
+                style={{
+                  width: `${Math.min(100, Math.max(0, ledgerCoverage.pct))}%`,
+                }}
+              />
+            </div>
+            <div className="mt-1 text-[11px] text-ink-faint">
+              Table shows newest {items.length.toLocaleString()}
+              {total > items.length ? ` of ${total.toLocaleString()}` : ""}
+              {hideTransfers ? " · internals hidden" : ""}
+              {coverage
+                ? ` · ${formatUsd(coverage.expense_usd_categorized)} of ${formatUsd(coverage.expense_usd_total)} last ${coverage.days}d expense`
+                : ""}
+            </div>
+          </div>
+          <div className="card p-4 lg:col-span-1">
+            <div className="label mb-1">Top uncategorized</div>
+            <ul className="max-h-28 space-y-0.5 overflow-y-auto text-xs text-ink-muted">
+              {vendorBuckets.slice(0, 6).map((m) => (
+                <li key={m.key}>
+                  <button
+                    type="button"
+                    className="flex w-full justify-between gap-2 text-left hover:text-brand"
+                    onClick={() => openVendorBucket(m)}
+                  >
+                    <span className="truncate">{m.label}</span>
+                    <span className="shrink-0">×{m.count}</span>
+                  </button>
+                </li>
+              ))}
+              {!vendorBuckets.length && (
+                <li className="text-ok">None left on this list</li>
               )}
-            </div>
-          )}
-          {coverage && (
-            <div className="card p-4 lg:col-span-1">
-              <div className="label mb-1">Top uncategorized</div>
-              <ul className="max-h-28 space-y-0.5 overflow-y-auto text-xs text-ink-muted">
-                {coverage.top_uncategorized_merchants.slice(0, 6).map((m) => (
-                  <li key={m.label}>
-                    <button
-                      type="button"
-                      className="flex w-full justify-between gap-2 text-left hover:text-brand"
-                      onClick={() => {
-                        setQ(m.label);
-                        patchParams({
-                          q: m.label,
-                          category_id: "uncategorized",
-                          category_ids: null,
-                        });
-                      }}
-                    >
-                      <span className="truncate">{m.label}</span>
-                      <span className="shrink-0">{formatUsd(m.amount_usd)}</span>
-                    </button>
-                  </li>
-                ))}
-                {!coverage.top_uncategorized_merchants.length && (
-                  <li className="text-ok">None in window</li>
-                )}
-              </ul>
-            </div>
-          )}
+            </ul>
+          </div>
           <div className="card flex flex-col justify-center gap-2 p-4 lg:col-span-1">
             <div className="label">Shortcuts</div>
             <div className="flex flex-wrap gap-1.5">
@@ -1297,48 +1599,141 @@ export function NewEtCategorizePage() {
               >
                 Uncategorized All
               </button>
+              <button
+                type="button"
+                className="rounded-lg border border-white/10 px-2 py-1 text-[11px] text-ink-muted hover:border-brand/40 hover:text-ink"
+                onClick={() =>
+                  setVendorPanel((cur) => (cur === "plain" ? "off" : "plain"))
+                }
+              >
+                By vendor{vendorBuckets.length ? ` (${vendorBuckets.length})` : ""}
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-white/10 px-2 py-1 text-[11px] text-ink-muted hover:border-brand/40 hover:text-ink"
+                disabled={grokBusy}
+                onClick={() => void fetchGrokVendors()}
+              >
+                {grokBusy && vendorPanel === "grok" ? "Asking Grok…" : "Ask Grok"}
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-white/10 px-2 py-1 text-[11px] text-ink-muted hover:border-brand/40 hover:text-ink"
+                disabled={grokBusy}
+                onClick={() => void fetchGrokPlus()}
+              >
+                {grokBusy && vendorPanel === "grokplus" ? "Asking Grok+…" : "Ask Grok+"}
+              </button>
             </div>
           </div>
         </div>
       )}
 
+      {mode === "review" && vendorPanel === "plain" && (
+        <VendorRollup
+          title="Vendors"
+          buckets={vendorBuckets}
+          catsSorted={catsSorted}
+          busy={bulkBusy || ruleBusy}
+          isReadOnly={isReadOnly}
+          applyingKey={vendorApplyKey}
+          onApply={(b, categoryId) => void applyVendorBucket(b, categoryId)}
+          onApplyRule={(b, categoryId) =>
+            void applyVendorBucket(b, categoryId, { makeRule: true })
+          }
+          onApplyAll={(rows, makeRule) => void applyVendorBatch(rows, makeRule)}
+          onOpen={openVendorBucket}
+          onClose={() => setVendorPanel("off")}
+        />
+      )}
+
+      {mode === "review" && vendorPanel === "grokplus" && (
+        <GrokPlusPanel
+          buckets={grokBuckets}
+          catsSorted={catsSorted}
+          busy={bulkBusy || ruleBusy || (grokBusy && grokBuckets.length === 0)}
+          isReadOnly={isReadOnly}
+          applyingKey={vendorApplyKey}
+          message={grokMsg}
+          debugText={grokDebug}
+          onApply={(b, categoryId) => void applyVendorBucket(b, categoryId)}
+          onApplyRule={(b, categoryId) =>
+            void applyVendorBucket(b, categoryId, { makeRule: true })
+          }
+          onApplyAll={(rows, makeRule) => void applyVendorBatch(rows, makeRule)}
+          onOpen={openVendorBucket}
+          onExpandCategory={() => {
+            setFocusIds(null);
+            setSelected(new Set());
+          }}
+          onClose={() => setVendorPanel("off")}
+        />
+      )}
+
+      {mode === "review" && vendorPanel === "grok" && (
+        <VendorRollup
+          title="Grok vendor guesses"
+          subtitle={
+            grokBusy
+              ? "Looking up the top 10 residual vendors…"
+              : "Grok looks up each merchant online, then maps it to one of your categories."
+          }
+          buckets={grokBuckets}
+          catsSorted={catsSorted}
+          busy={bulkBusy || ruleBusy || grokBusy}
+          isReadOnly={isReadOnly}
+          applyingKey={vendorApplyKey}
+          message={grokMsg}
+          debugText={grokDebug}
+          onApply={(b, categoryId) => void applyVendorBucket(b, categoryId)}
+          onApplyRule={(b, categoryId) =>
+            void applyVendorBucket(b, categoryId, { makeRule: true })
+          }
+          onApplyAll={(rows, makeRule) => void applyVendorBatch(rows, makeRule)}
+          onOpen={openVendorBucket}
+          onClose={() => setVendorPanel("off")}
+        />
+      )}
+
       {mode === "review" && (
         <>
-          <AiDesk
-            status={aiStatus}
-            statusError={aiStatusError}
-            clusters={aiClusters}
-            message={aiMsg}
-            busy={aiBusy}
-            applyBusy={bulkBusy}
-            isReadOnly={isReadOnly}
-            catsSorted={catsSorted}
-            categoryPicks={aiPicks}
-            onSuggest={() => void fetchAiClusters()}
-            onFocus={(c) => void focusCluster(c)}
-            onApply={(c) => void applyCluster(c)}
-            onSkip={(c) => {
-              skippedClusterIdsRef.current.push(
-                ...c.transaction_ids.map(normTxId).filter(Boolean),
-              );
-              setAiClusters((prev) => prev.filter((x) => x.cluster_key !== c.cluster_key));
-            }}
-            onPick={(key, categoryId) =>
-              setAiPicks((prev) => ({ ...prev, [key]: categoryId }))
-            }
-          />
-          {simFlow.phase === "offer_similar" && (
-            <OfferSimilarCard
+          {simFlow.phase === "next_steps" && (
+            <NextStepsCard
               categoryName={catMap.get(simFlow.categoryId)?.name || "category"}
               vendorLabel={
                 simFlow.seedSnapshots[0]
                   ? vendorDisplayName(simFlow.seedSnapshots[0])
                   : ""
               }
-              onYes={onOfferSimilarYes}
-              onNo={() =>
-                enterOfferRule(simFlow.seedSnapshots, simFlow.categoryId, [], [])
+              similarCount={similarForSeeds(simFlow.seedSnapshots).length}
+              rulePreview={ruleDraft?.plainEnglish || ""}
+              ruleWarning={ruleDraft?.warning ?? null}
+              ruleMatchCount={
+                ruleDraft
+                  ? countRuleMatches(items, {
+                      match_field: ruleDraft.match_field,
+                      match_type: ruleDraft.match_type,
+                      match_value: ruleDraft.match_value,
+                      institution_scope: ruleDraft.institution_scope || null,
+                      onlyWithoutOverride: true,
+                    })
+                  : 0
               }
+              busy={bulkBusy || ruleBusy}
+              isReadOnly={isReadOnly}
+              canSaveRule={Boolean(ruleDraft?.match_value.trim())}
+              onReview={onReviewSimilar}
+              onApplySimilar={() => void onApplyAllSimilar()}
+              onSaveRule={() =>
+                void (similarForSeeds(simFlow.seedSnapshots).length > 0
+                  ? onApplyAndSaveRule()
+                  : saveOfferedRule())
+              }
+              onDismiss={() => {
+                setRuleDraft(null);
+                setSimFlow(IDLE_SIM);
+                setFocusIds(null);
+              }}
             />
           )}
           {simFlow.phase === "reviewing_similar" && (
@@ -1349,29 +1744,7 @@ export function NewEtCategorizePage() {
               isReadOnly={isReadOnly}
               onAssign={() => void onAssignSimilarSelected()}
               onCancel={() => {
-                setSelected(new Set());
-                enterOfferRule(simFlow.seedSnapshots, simFlow.categoryId, [], []);
-              }}
-            />
-          )}
-          {simFlow.phase === "offer_rule" && ruleDraft && (
-            <OfferRuleCard
-              plainEnglish={ruleDraft.plainEnglish}
-              warning={ruleDraft.warning}
-              previewCount={countRuleMatches(items, {
-                match_field: ruleDraft.match_field,
-                match_type: ruleDraft.match_type,
-                match_value: ruleDraft.match_value,
-                institution_scope: ruleDraft.institution_scope || null,
-                onlyWithoutOverride: true,
-              })}
-              busy={ruleBusy}
-              isReadOnly={isReadOnly}
-              canSave={Boolean(ruleDraft.match_value.trim())}
-              onSave={() => void saveOfferedRule()}
-              onDismiss={() => {
-                setRuleDraft(null);
-                setSimFlow(IDLE_SIM);
+                enterNextSteps(simFlow.seedSnapshots, simFlow.categoryId, [], []);
               }}
             />
           )}
@@ -1520,7 +1893,7 @@ export function NewEtCategorizePage() {
           </div>
 
           {someSelected && (
-            <div className="sticky top-16 z-20 flex flex-col gap-3 rounded-xl border border-brand/30 bg-surface-raised/95 p-3 shadow-lg backdrop-blur-md sm:flex-row sm:items-center">
+            <div className="flex flex-col gap-3 rounded-xl border border-brand/30 bg-surface-raised/95 p-3 sm:flex-row sm:items-center">
               <div className="text-sm font-medium text-ink">
                 {selected.size} selected
               </div>
@@ -1563,18 +1936,24 @@ export function NewEtCategorizePage() {
             </div>
           )}
 
+          {grokAwaitingClick ? (
+            <p className="text-sm text-ink-faint">
+              Click a vendor in the Grok list to see its transactions.
+            </p>
+          ) : (
           <div ref={txTableRef} className="scroll-mt-28 text-xs text-ink-faint">
             {filtered.length} shown
             {total !== filtered.length ? ` · ${total} from server` : ""}
             {hasActiveScope ? " · filtered" : ""}
           </div>
+          )}
 
-          {filtered.length === 0 ? (
+          {!grokAwaitingClick && filtered.length === 0 ? (
             <EmptyState
               title="No transactions match these filters"
               description="Clear filters or widen the date range."
             />
-          ) : (
+          ) : !grokAwaitingClick ? (
             <div className="card overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[760px] text-left text-sm">
@@ -1731,7 +2110,7 @@ export function NewEtCategorizePage() {
                 </table>
               </div>
             </div>
-          )}
+          ) : null}
         </>
       )}
 

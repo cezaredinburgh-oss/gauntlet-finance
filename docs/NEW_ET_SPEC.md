@@ -40,22 +40,19 @@ Modes: **Review | Rules | Categories**. “Groups” in product language = **Cat
 
 - Full ledger (no latest-import banner).
 - Filters: dates, category, search, currency, hide transfers, expenses only, **income only**. Chips + clear. No life-domain / fixed / transfer-leak / missing-FX.
-- Review: coverage, top uncategorized, Uncategorized 30d, Expenses 30d, **Uncategorized All**, **AI cluster desk**, guided similar→rule, undo (~20s).
+- Review: coverage, top uncategorized, Uncategorized 30d, Expenses 30d, **Uncategorized All**, **By vendor** rollup (×N, mass-assign or click to list). After assign: **Review similar | Apply to similar | Apply + save rule**. Undo (~20s). No AI desk.
 - Workbench: select, select-uncategorized, per-row assign/clear, bulk assign/clear, sort, USD+CZK, Internal transfer sets `is_internal_transfer`.
 - Rules: table, edit, remove, **manual create**, institution scope, set-internal-transfer. No starter pack / apply-rules buttons (import still applies rules).
 - Categories: list, create, edit name/necessity/life domain, parent/child, income + transfer flags, sort order, delete + optional reassign. No restore-defaults.
 
-## Review overlay (AI-first)
+## Review overlay (assign → similar → rule)
 
-Clusters are **created by Grok**, not `buildSmartGroups`. New ET does **not** use lab/sandbox heuristic fallback.
+Primary Review path is **manual assign → similar → rule**. No Grok desk, no presets, no chat.
 
-- Hard gate: `AI_ENABLED` + `XAI_API_KEY`. Otherwise a setup card; no fake piles.
-- `POST /ai/categorize-clusters` is suggest-only. Sends minimized residual rows (id, date, merchant, short description, sign, currency, rounded amount, institution). No account numbers.
-- Piles: title, kind (`vendor` | `near_identical` | `internal_transfer` | `income` | `fee` | `other`), tx ids, optional category, confidence, reason, `needs_human`.
-- Prompt: start with large obvious groups, identical/near vendors, obvious pot-to-pot.
-- Click pile → focus table. Apply → same guided path as row/bulk assign.
+- After a row or bulk assign, one card offers **Review similar**, **Apply to N similar**, and **Apply + save rule** (one click).
+- Similar = same vendor key + same money direction + residual only. Rule is the existing client suggestion (`merchant contains …`).
 - Guided card sits **above the table**. Undo toast ~20s.
-- Pot-to-pot: import matcher unchanged; AI may return `internal_transfer` piles; apply sets Internal transfer + `is_internal_transfer`; hide-transfers default on. No silent auto-flag.
+- Internal transfer category still sets `is_internal_transfer`. Hide-transfers default on.
 
 Old `/expenses/categorize` and `/ai/categorize-suggest` stay frozen.
 

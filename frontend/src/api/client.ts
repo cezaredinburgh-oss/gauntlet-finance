@@ -1,5 +1,4 @@
 import type {
-  AiCategorizeClustersResult,
   AiCategorizeSuggestResult,
   AiColumnMap,
   AiMapStatementResult,
@@ -569,22 +568,6 @@ export const api = {
 
   aiStatus: () => request<AiStatus>("/ai/status"),
 
-  aiCategorizeClusters: (body: {
-    limit?: number;
-    date_from?: string;
-    date_to?: string;
-    exclude_transaction_ids?: string[];
-  } = {}) =>
-    request<AiCategorizeClustersResult>("/ai/categorize-clusters", {
-      method: "POST",
-      body: JSON.stringify({
-        limit: body.limit ?? null,
-        date_from: body.date_from || null,
-        date_to: body.date_to || null,
-        exclude_transaction_ids: body.exclude_transaction_ids || [],
-      }),
-    }),
-
   aiCategorizeSuggest: (body: {
     source_file_ids?: string[];
     limit?: number;
@@ -593,6 +576,7 @@ export const api = {
     hint?: string;
     date_from?: string;
     date_to?: string;
+    web_search?: boolean;
   } = {}) =>
     request<AiCategorizeSuggestResult>("/ai/categorize-suggest", {
       method: "POST",
@@ -604,6 +588,34 @@ export const api = {
         hint: body.hint ?? null,
         date_from: body.date_from || null,
         date_to: body.date_to || null,
+        web_search: body.web_search ?? false,
+      }),
+    }),
+
+  aiVendorSuggestPlus: (
+    body: { exclude_merchant_keys?: string[]; limit?: number } = {},
+  ) =>
+    request<AiCategorizeSuggestResult>("/ai/vendor-suggest-plus", {
+      method: "POST",
+      body: JSON.stringify({
+        exclude_merchant_keys: body.exclude_merchant_keys || [],
+        limit: body.limit ?? 12,
+      }),
+    }),
+
+  aiVendorSuggest: (body: {
+    limit?: number;
+    date_from?: string;
+    date_to?: string;
+    exclude_merchant_keys?: string[];
+  } = {}) =>
+    request<AiCategorizeSuggestResult>("/ai/vendor-suggest", {
+      method: "POST",
+      body: JSON.stringify({
+        limit: body.limit ?? 10,
+        date_from: body.date_from || null,
+        date_to: body.date_to || null,
+        exclude_merchant_keys: body.exclude_merchant_keys || [],
       }),
     }),
 

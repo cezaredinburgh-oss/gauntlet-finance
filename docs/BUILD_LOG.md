@@ -4,6 +4,97 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-13 — Ask Grok+ hybrid: local sort, then leftover Grok
+
+- Residual vendors are compiled in memory (not disk files).
+- Cheap rules map pots/FX/ATM/loans/fees and known shops first.
+- Grok sees leftovers only (no web_search tools); unmatched stay empty and show as **Unmatched**.
+- Local matches survive a Grok timeout.
+
+## 2026-08-13 — Ask Grok+ timeout: short knowledge batches
+
+- Root cause: `chat/completions` 422s on `web_search` tools, then one huge plus payload hit a 60s ReadTimeout.
+- Plus is now 12 searchable vendors per call, no tools, 45s, knowledge prompt (do not browse).
+- UI runs 3 sequential batches and paints the category table after each; a later timeout keeps earlier matches.
+
+## 2026-08-13 — Ask Grok+: category table, then vendors, then txs
+
+- **Ask Grok+** still matches full-ledger uncategorized vendors to your categories.
+- UI is now a **category table** (name + comma-separated vendors). Click a category to expand vendors; click a vendor to load transactions.
+
+## 2026-08-13 — Ask Grok+: categories with assigned vendors
+
+- Shortcuts **Ask Grok+** researches up to 80 full-ledger uncategorized vendors and lists them **under each category**.
+- Same Apply / Apply + rule / Apply all per category. Table stays empty until a vendor is clicked.
+
+## 2026-08-13 — Ask Grok: hide table until click; full-ledger vendors; unstick filters
+
+- Transaction table stays empty in Ask Grok until a vendor row is clicked.
+- `/ai/vendor-suggest` ignores page date/filter and ranks uncategorized vendors across the whole ledger.
+- Active-filter and bulk-assign bars no longer stick on scroll.
+
+## 2026-08-13 — Vendor lists: Apply all / Apply all + rules, then next 10
+
+- Both By vendor and Grok cards have **Apply all** and **Apply all + rules** for the current 10 with a category.
+- After the batch (or the last remaining row) Grok fetches the next 10; By vendor just shows the next residual merchants.
+
+## 2026-08-13 — Ask Grok: route was missing; list now appears immediately
+
+- Start-App had loaded the API *before* `/api/ai/vendor-suggest` existed, so the button 404’d with no list.
+- UI now shows the top searchable merchants immediately, falls back to `/ai/categorize-suggest` on 404, and Grok retries without web-search tools if search times out.
+
+## 2026-08-13 — Ask Grok looks up merchants, not pot-to-pot narratives
+
+- Prompt is now: web-search what the business is, then pick from the app category list. Not “assign a category to a blob.”
+- Send-set drops vault / pocket / exchanged-to / incoming-payment rows and prefers named merchants (Lime, Rohlik, …).
+
+## 2026-08-13 — New ET Ask Grok vendors + Apply & rule
+
+- Shortcuts **Ask Grok**: top 10 residual vendors, Grok web search, suggested category + reason. Suggest-only; no lab heuristic.
+- **By vendor** and Grok lists: 10 at a time (next/prev). Each row has **Apply** and **Apply + rule**.
+
+## 2026-08-13 — Coverage counter is full-ledger, not the 3k table page
+
+- Review table still loads newest 3,000 (hide-transfers). The widget counted that page, so ~2,700 uncategorized looked like the whole book.
+- `coverage_stats` now returns `tx_categorized` / `tx_uncategorized` over the full ledger (internals skipped). Widget uses those, with an optimistic nudge on assign.
+
+## 2026-08-13 — New ET coverage widget is live
+
+- Widget was last-180d expense $ from the API, so assigning a vendor pile (often older than 180d) looked frozen.
+- Coverage now counts the loaded list: live % plus **categorized / uncategorized** tx counts. Top uncategorized is the same residual vendor rollup.
+
+## 2026-08-13 — New ET vendor pick no longer re-renders the table
+
+- Cause: vendor category `<select>` wrote parent state, so one change reconciled ~3k table rows × every category `<option>`.
+- Fix: each vendor row owns its pick locally (`React.memo`). Apply enables in the same paint.
+
+## 2026-08-13 — New ET Shortcuts: By vendor rollup
+
+- Shortcuts **By vendor** lists residual merchants as one row each (`McDonalds ×18`), count-desc.
+- Click the name to focus those rows in the table. Category + **Apply ×N** mass-assigns the pile, then the usual next-steps card.
+
+## 2026-08-13 — New ET: drop AI desk, flatten assign → similar → rule
+
+- Removed New ET Review AI (Suggest clusters, presets, chat). Old `/expenses/categorize` AI unchanged.
+- After assigning a category, one **Next steps** card shows three actions side by side: **Review similar**, **Apply to N similar**, **Apply + save rule**.
+- High-confidence path is one click: apply remaining residual matches and write the suggested rule.
+
+## 2026-08-13 — New ET easy-pile shortcuts (chat removed)
+
+- Dropped the Review chat box. Next to **Suggest clusters**: **Top 5 vendors** (by residual tx count), **Internal transfers**, **Fees / ATM**, **Uncategorized income**.
+- `POST /ai/categorize-presets` is deterministic (no Grok). Bundles matching rows so Show / Apply work even when they sit outside the newest-3000 table.
+- Internal shortcut apply still sets `is_internal_transfer`. Already-flagged internals are skipped.
+
+## 2026-08-13 — New ET “Ask Grok” chat + grocery-biased residual search
+
+- Review had a chat box (`POST /ai/categorize-ask`). Query tokens + grocery/food hints rank residuals; large unique transfers are not the default send-set. **Superseded:** chat UI removed; endpoint unused by New ET.
+- Default Suggest also down-ranks transfer-like vendor groups (Revolut/Raiffeisen/top-up).
+
+## 2026-08-13 — Cluster easy vendors first; Show merges rows into the table
+
+- Residual send-set is ranked by **repeat vendor count**, not largest amount. Prompt tells Grok the same.
+- **Show transactions** merges hydrated/bundled rows into `items` and matches focus ids case-insensitively (empty table bug).
+
 ## 2026-08-13 — New ET cluster apply by id (not table page)
 
 - Cluster **Apply** posts UUIDs to bulk-override even when rows are outside the newest-3000 table.

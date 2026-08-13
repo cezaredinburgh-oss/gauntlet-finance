@@ -168,6 +168,228 @@ def test_suggest_with_mock_chat():
     assert str(t1.id) in r.suggestions[0].transaction_ids
 
 
+def test_suggest_web_search_passes_tool_and_caps_ten():
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    for i in range(12):
+        repo.upsert_rows("Transactions", [tx(merchant=f"Shop {i}")])
+
+    seen: dict[str, object] = {}
+
+    def fake_chat(**kwargs) -> ChatResult:
+        seen["tools"] = kwargs.get("tools")
+        seen["system"] = kwargs.get("system") or ""
+        seen["user"] = kwargs.get("user") or ""
+        return ChatResult(
+            content=json.dumps({"suggestions": []}),
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+            model="grok-test",
+        )
+
+    r = ai_categorize.suggest_categories(
+        repo,
+        principal="e:search@x",
+        settings=_settings(),
+        limit=10,
+        web_search=True,
+        chat_fn=fake_chat,
+    )
+    assert seen.get("tools") is None
+    assert "Identify each VENDOR" in seen["user"]
+    assert "APP CATEGORIES" in seen["user"]
+    assert "do not try to browse the web" in seen["system"].lower()
+    assert "AI provider" in seen["system"]
+    assert r.merchants_considered == 10
+
+
+def test_plus_is_one_small_knowledge_call():
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    for i in range(15):
+        repo.upsert_rows("Transactions", [tx(merchant=f"Shop {i}")])
+    calls: list[object] = []
+
+    def fake_chat(**kwargs) -> ChatResult:
+        calls.append(kwargs.get("tools"))
+        n = str(kwargs.get("user") or "").count("merchant_key=")
+        assert n <= 12
+        assert kwargs.get("timeout") == 45.0
+        return ChatResult(
+            content=json.dumps({"suggestions": []}),
+            prompt_tokens=4,
+            completion_tokens=2,
+            total_tokens=6,
+            model="grok-test",
+        )
+
+    r = ai_categorize.suggest_categories(
+        repo,
+        principal="e:plus-batch@x",
+        settings=_settings(),
+        limit=80,
+        plus=True,
+        chat_fn=fake_chat,
+    )
+    assert calls == [None]
+    assert r.merchants_considered == 15
+
+
+def test_plus_caps_at_twelve_searchable_vendors():
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    for i in range(15):
+        repo.upsert_rows("Transactions", [tx(merchant=f"Shop {i}")])
+    keys_seen = 0
+
+    def fake_chat(**kwargs) -> ChatResult:
+        nonlocal keys_seen
+        keys_seen += str(kwargs.get("user") or "").count("merchant_key=")
+        return ChatResult(
+            content=json.dumps({"suggestions": []}),
+            prompt_tokens=5,
+            completion_tokens=5,
+            total_tokens=10,
+            model="grok-test",
+        )
+
+    r = ai_categorize.suggest_categories(
+        repo,
+        principal="e:plus@x",
+        settings=_settings(),
+        limit=80,
+        plus=True,
+        chat_fn=fake_chat,
+    )
+    assert keys_seen == 12
+    assert r.merchants_considered == 15
+
+
+def test_plus_local_rules_skip_grok_for_known_and_pots():
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    repo.upsert_rows(
+        "Transactions",
+        [
+            tx(merchant="Albert"),
+            tx(merchant="Lime"),
+            tx(description="To pocket CZK Purchase vault from CZK"),
+        ],
+    )
+    called = {"n": 0}
+
+    def fake_chat(**kwargs) -> ChatResult:
+        called["n"] += 1
+        return ChatResult(
+            content=json.dumps({"suggestions": []}),
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+            model="grok-test",
+        )
+
+    r = ai_categorize.suggest_categories(
+        repo,
+        principal="e:plus-local@x",
+        settings=_settings(),
+        plus=True,
+        chat_fn=fake_chat,
+    )
+    assert called["n"] == 0
+    names = {s.label: s.category_name for s in r.suggestions if s.category_id}
+    assert names["Albert"] == "Groceries"
+    assert names["Lime"] == "Taxi / rideshare"
+    assert any("pocket" in s.label.lower() for s in r.suggestions if s.category_name == "Internal transfer")
+
+
+def test_plus_keeps_local_when_grok_times_out():
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    repo.upsert_rows(
+        "Transactions",
+        [tx(merchant="Albert"), tx(merchant="Obscure XYZ s.r.o.")],
+    )
+
+    def fake_chat(**kwargs) -> ChatResult:
+        raise RuntimeError("Grok API timed out")
+
+    r = ai_categorize.suggest_categories(
+        repo,
+        principal="e:plus-timeout@x",
+        settings=_settings(),
+        plus=True,
+        chat_fn=fake_chat,
+    )
+    assert any(s.label == "Albert" and s.category_name == "Groceries" for s in r.suggestions)
+    assert any(s.label == "Obscure XYZ s.r.o." and s.needs_human for s in r.suggestions)
+    assert "Local matches kept" in (r.message or "")
+
+
+def test_searchable_vendors_skip_pockets_prefer_merchants():
+    pockets = ai_categorize.MerchantCluster(
+        merchant_key="d:to pocket czk purchase vault from czk",
+        label="To pocket CZK Purchase vault from CZK",
+        amount_sign="mixed",
+        currency="CZK",
+        sample_count=1090,
+    )
+    fx = ai_categorize.MerchantCluster(
+        merchant_key="d:exchanged to eur",
+        label="Exchanged to EUR",
+        amount_sign="mixed",
+        currency="EUR",
+        sample_count=1018,
+    )
+    lime = ai_categorize.MerchantCluster(
+        merchant_key="m:lime",
+        label="Lime",
+        amount_sign="out",
+        currency="CZK",
+        sample_count=241,
+        description_sample="LIM*RIDE COST",
+    )
+    rohlik = ai_categorize.MerchantCluster(
+        merchant_key="m:rohlik.cz",
+        label="Rohlik.cz",
+        amount_sign="out",
+        currency="CZK",
+        sample_count=188,
+    )
+    picked = ai_categorize.select_searchable_vendor_clusters(
+        [pockets, fx, lime, rohlik], limit=10
+    )
+    assert [c.label for c in picked] == ["Lime", "Rohlik.cz"]
+
+
+def test_lookup_never_sends_web_search_tools():
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    repo.upsert_rows("Transactions", [tx(merchant="Rohlik.cz")])
+    calls: list[object] = []
+
+    def fake_chat(**kwargs) -> ChatResult:
+        calls.append(kwargs.get("tools"))
+        return ChatResult(
+            content=json.dumps({"suggestions": []}),
+            prompt_tokens=8,
+            completion_tokens=4,
+            total_tokens=12,
+            model="grok-test",
+        )
+
+    r = ai_categorize.suggest_categories(
+        repo,
+        principal="e:retry@x",
+        settings=_settings(),
+        limit=10,
+        web_search=True,
+        chat_fn=fake_chat,
+    )
+    assert calls == [None]
+    assert r.message is None or "no valid" in (r.message or "").lower() or r.merchants_considered >= 1
+
+
 def test_quota_blocks_second_call():
     repo = InMemorySheetsRepository()
     repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))

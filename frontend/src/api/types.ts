@@ -966,6 +966,10 @@ export type CategoryRule = {
 
 export type CategoryCoverage = {
   days: number;
+  /** Full-ledger residual counts (excludes internals). */
+  tx_categorized?: number;
+  tx_uncategorized?: number;
+  tx_total?: number;
   expense_usd_total: string;
   expense_usd_categorized: string;
   uncategorized_expense_usd?: string;
@@ -1066,6 +1070,14 @@ export type AiCategorizeSuggestResult = {
   quota_used: number;
   quota_cap: number;
   message?: string | null;
+  system_prompt?: string;
+  user_prompt?: string;
+  vendors_sent?: Array<{
+    merchant_key: string;
+    label: string;
+    count: number;
+    amount_sign?: string;
+  }>;
 };
 
 /** New ET: Grok-built residual work piles (suggest-only). */
@@ -1103,4 +1115,5 @@ export type AiCategorizeClustersResult = {
   quota_used: number;
   quota_cap: number;
   message?: string | null;
+  reply?: string;
 };

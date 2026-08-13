@@ -9,6 +9,7 @@ import pytest
 
 from backend.config import Settings
 from backend.schema.default_categories import (
+    CAT_BANK_FEES,
     CAT_GROCERIES,
     CAT_INTERNAL,
     DEFAULT_CATEGORIES,
@@ -153,6 +154,31 @@ def test_validate_clusters_normalizes_uuid_case():
     assert out[0].transaction_ids == [tid]
 
 
+def test_select_residual_for_query_finds_groceries_not_whale():
+    cats = list(DEFAULT_CATEGORIES)
+    whale = tx(merchant="Raiffeisen", description="Revolut top-up", amount="-210000")
+    lidls = [tx(merchant="Lidl", description="potraviny", amount="-15") for _ in range(4)]
+    rows = ai_clusters.select_residual_for_query(
+        [whale, *lidls],
+        cats,
+        "grocery related transactions",
+        limit=10,
+    )
+    labels = {r.merchant for r in rows}
+    assert "Lidl" in labels
+    assert "Raiffeisen" not in labels
+
+
+def test_select_residual_prefers_repeat_vendors_over_large_one_off():
+    cats = list(DEFAULT_CATEGORIES)
+    whale = tx(merchant="Raiffeisen", amount="-210000")
+    lidls = [tx(merchant="Lidl", amount="-12") for _ in range(6)]
+    rows = ai_clusters.select_residual_rows([whale, *lidls], cats, limit=6)
+    labels = [r.merchant for r in rows]
+    assert labels.count("Lidl") >= 5
+    assert "Raiffeisen" not in labels
+
+
 def test_select_residual_excludes_before_limit():
     cats = list(DEFAULT_CATEGORIES)
     big = tx(merchant="OldBig", amount="-210000")
@@ -233,6 +259,116 @@ def test_suggest_clusters_mocked_chat():
     assert r.tokens_used == 30
     dumped_ids = {row["id"] for row in r.transactions}
     assert dumped_ids == {str(t1.id), str(t2.id)}
+
+
+def test_preset_top_vendors_ranks_by_count_not_amount():
+    cats = list(DEFAULT_CATEGORIES)
+    whale = tx(merchant="Raiffeisen", amount="-210000")
+    lidls = [tx(merchant="Lidl", amount="-12") for _ in range(5)]
+    piles, used = ai_clusters.build_preset_piles(
+        [whale, *lidls], cats, "top_vendors"
+    )
+    assert piles
+    assert piles[0].title.startswith("Lidl")
+    assert piles[0].sample_count == 5
+    assert {t.merchant for t in used} >= {"Lidl"}
+
+
+def test_preset_internal_uses_transfer_wording():
+    cats = list(DEFAULT_CATEGORIES)
+    hit = tx(merchant="Revolut", description="Top-up from Raiffeisen", amount="-500")
+    miss = tx(merchant="Lidl", amount="-20")
+    already = tx(
+        merchant="Revolut",
+        description="Transfer to savings",
+        amount="-80",
+        is_internal_transfer=True,
+    )
+    piles, used = ai_clusters.build_preset_piles(
+        [hit, miss, already], cats, "internal"
+    )
+    assert len(piles) == 1
+    assert piles[0].kind == "internal_transfer"
+    assert piles[0].category_id == str(CAT_INTERNAL)
+    assert str(hit.id) in piles[0].transaction_ids
+    assert str(miss.id) not in piles[0].transaction_ids
+    assert str(already.id) not in piles[0].transaction_ids
+    assert used == [hit]
+
+
+def test_preset_fees_matches_atm_wording():
+    cats = list(DEFAULT_CATEGORIES)
+    hit = tx(merchant="Raiffeisen", description="ATM cash withdraw", amount="-2000")
+    miss = tx(merchant="Lidl", amount="-40")
+    piles, used = ai_clusters.build_preset_piles([hit, miss], cats, "fees")
+    assert len(piles) == 1
+    assert piles[0].kind == "fee"
+    assert piles[0].category_id == str(CAT_BANK_FEES)
+    assert str(hit.id) in piles[0].transaction_ids
+    assert used == [hit]
+
+
+def test_preset_income_only_positive_residuals():
+    cats = list(DEFAULT_CATEGORIES)
+    pay = tx(merchant="Employer", description="Salary", amount="4200")
+    spend = tx(merchant="Lidl", amount="-18")
+    piles, used = ai_clusters.build_preset_piles([pay, spend], cats, "income")
+    assert len(piles) == 1
+    assert piles[0].kind == "income"
+    assert piles[0].needs_human is True
+    assert str(pay.id) in piles[0].transaction_ids
+    assert str(spend.id) not in piles[0].transaction_ids
+    assert used == [pay]
+
+
+def test_preset_unknown_kind_raises():
+    with pytest.raises(ValueError, match="unknown preset"):
+        ai_clusters.build_preset_piles([], list(DEFAULT_CATEGORIES), "groceries")
+
+
+def test_ask_clusters_mocked_chat():
+    repo = InMemorySheetsRepository()
+    for c in DEFAULT_CATEGORIES:
+        repo.upsert_rows("Categories", [c])
+    lidl = tx(merchant="Lidl", amount="-18")
+    whale = tx(merchant="Raiffeisen", description="Revolut top-up", amount="-210000")
+    repo.upsert_rows("Transactions", [lidl, whale])
+
+    def fake_chat(**kwargs):
+        import json
+
+        payload = {
+            "reply": "Found 1 grocery pile.",
+            "clusters": [
+                {
+                    "title": "Lidl groceries",
+                    "kind": "vendor",
+                    "transaction_ids": [str(lidl.id)],
+                    "category_id": str(CAT_GROCERIES),
+                    "confidence": 0.9,
+                    "reason": "supermarket",
+                }
+            ],
+        }
+        return ChatResult(
+            content=json.dumps(payload),
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+            model="grok-test",
+        )
+
+    r = ai_clusters.ask_clusters(
+        repo,
+        principal="e:test@x",
+        question="grocery related transactions",
+        settings=_settings(),
+        chat_fn=fake_chat,
+    )
+    assert r.reply == "Found 1 grocery pile."
+    assert len(r.clusters) == 1
+    assert r.clusters[0].transaction_ids == [str(lidl.id)]
+    assert {row["id"] for row in r.transactions} == {str(lidl.id)}
 
 
 def test_payload_has_no_account_numbers():

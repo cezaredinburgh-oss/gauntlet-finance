@@ -43,6 +43,7 @@ class CategorizeSuggestRequest(BaseModel):
     hint: str | None = None
     date_from: str | None = None
     date_to: str | None = None
+    web_search: bool = False
 
 
 class CategorySuggestionItem(BaseModel):
@@ -68,6 +69,9 @@ class CategorizeSuggestResponse(BaseModel):
     quota_used: int
     quota_cap: int
     message: str | None = None
+    system_prompt: str = ""
+    user_prompt: str = ""
+    vendors_sent: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def _is_writable_sandbox(user) -> bool:
@@ -127,6 +131,15 @@ class ClusterSuggestResponse(BaseModel):
     quota_used: int
     quota_cap: int
     message: str | None = None
+    reply: str = ""
+
+
+class ClusterAskRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=400)
+    limit: int | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    exclude_transaction_ids: list[str] = Field(default_factory=list)
 
 
 @router.post("/categorize-clusters", response_model=ClusterSuggestResponse)
@@ -163,6 +176,197 @@ def categorize_clusters(
         quota_used=result.quota_used,
         quota_cap=result.quota_cap,
         message=result.message,
+        reply=result.reply,
+    )
+
+
+class PresetRequest(BaseModel):
+    kind: str = Field(..., min_length=1, max_length=40)
+    date_from: str | None = None
+    date_to: str | None = None
+    exclude_transaction_ids: list[str] = Field(default_factory=list)
+
+
+@router.post("/categorize-presets", response_model=ClusterSuggestResponse)
+def categorize_presets(
+    body: PresetRequest,
+    user: WritableUserDep,
+    repo: RepoDep,
+) -> ClusterSuggestResponse:
+    """Deterministic easy-win piles (no Grok)."""
+    from backend.services import ai_clusters
+
+    try:
+        result = ai_clusters.preset_piles(
+            repo,
+            kind=body.kind,
+            date_from=body.date_from or "",
+            date_to=body.date_to or "",
+            exclude_transaction_ids=body.exclude_transaction_ids or None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ClusterSuggestResponse(
+        enabled=result.enabled,
+        configured=result.configured,
+        model=result.model,
+        clusters=[
+            ClusterSuggestionItem(**ai_clusters.cluster_to_dict(c)) for c in result.clusters
+        ],
+        transactions=result.transactions,
+        txs_considered=result.txs_considered,
+        clusters_suggested=result.clusters_suggested,
+        tokens_used=result.tokens_used,
+        quota_used=result.quota_used,
+        quota_cap=result.quota_cap,
+        message=result.message,
+        reply=result.reply,
+    )
+
+
+@router.post("/categorize-ask", response_model=ClusterSuggestResponse)
+def categorize_ask(
+    body: ClusterAskRequest,
+    user: WritableUserDep,
+    repo: RepoDep,
+    settings: SettingsDep,
+) -> ClusterSuggestResponse:
+    """New ET chat: find residual txs matching a natural-language ask."""
+    from backend.services import ai_clusters
+
+    principal = ai_quota.principal_key(user.user_id, user.email)
+    result = ai_clusters.ask_clusters(
+        repo,
+        principal=principal,
+        question=body.message,
+        settings=settings,
+        limit=body.limit,
+        date_from=body.date_from,
+        date_to=body.date_to,
+        exclude_transaction_ids=body.exclude_transaction_ids or None,
+    )
+    return ClusterSuggestResponse(
+        enabled=result.enabled,
+        configured=result.configured,
+        model=result.model,
+        clusters=[
+            ClusterSuggestionItem(**ai_clusters.cluster_to_dict(c)) for c in result.clusters
+        ],
+        transactions=result.transactions,
+        txs_considered=result.txs_considered,
+        clusters_suggested=result.clusters_suggested,
+        tokens_used=result.tokens_used,
+        quota_used=result.quota_used,
+        quota_cap=result.quota_cap,
+        message=result.message,
+        reply=result.reply,
+    )
+
+
+@router.post("/vendor-suggest-plus", response_model=CategorizeSuggestResponse)
+def vendor_suggest_plus(
+    body: CategorizeSuggestRequest,
+    user: WritableUserDep,
+    repo: RepoDep,
+    settings: SettingsDep,
+) -> CategorizeSuggestResponse:
+    """Full-ledger residual vendors, 12 at a time. UI loops batches. Suggest-only."""
+    principal = ai_quota.principal_key(user.user_id, user.email)
+    result = ai_categorize.suggest_categories(
+        repo,
+        principal=principal,
+        settings=settings,
+        source_file_ids=body.source_file_ids or None,
+        limit=min(body.limit or 12, 12),
+        exclude_merchant_keys=body.exclude_merchant_keys or None,
+        merchant_key=body.merchant_key,
+        hint=body.hint,
+        date_from="",
+        date_to="",
+        sandbox=False,
+        web_search=False,
+        plus=True,
+    )
+    return CategorizeSuggestResponse(
+        enabled=result.enabled,
+        configured=result.configured,
+        model=result.model,
+        suggestions=[
+            CategorySuggestionItem(
+                merchant_key=s.merchant_key,
+                label=s.label,
+                category_id=s.category_id,
+                category_name=s.category_name,
+                confidence=s.confidence,
+                reason=s.reason,
+                transaction_ids=s.transaction_ids,
+                sample_count=s.sample_count,
+                needs_human=bool(s.needs_human),
+            )
+            for s in result.suggestions
+        ],
+        merchants_considered=result.merchants_considered,
+        merchants_suggested=result.merchants_suggested,
+        tokens_used=result.tokens_used,
+        quota_used=result.quota_used,
+        quota_cap=result.quota_cap,
+        message=result.message,
+        system_prompt=result.system_prompt,
+        user_prompt=result.user_prompt,
+        vendors_sent=result.vendors_sent,
+    )
+
+
+@router.post("/vendor-suggest", response_model=CategorizeSuggestResponse)
+def vendor_suggest(
+    body: CategorizeSuggestRequest,
+    user: WritableUserDep,
+    repo: RepoDep,
+    settings: SettingsDep,
+) -> CategorizeSuggestResponse:
+    """New ET: top residual vendors → Grok web search → category guesses. Suggest-only."""
+    principal = ai_quota.principal_key(user.user_id, user.email)
+    result = ai_categorize.suggest_categories(
+        repo,
+        principal=principal,
+        settings=settings,
+        source_file_ids=body.source_file_ids or None,
+        limit=min(body.limit or 10, 10),
+        exclude_merchant_keys=body.exclude_merchant_keys or None,
+        merchant_key=body.merchant_key,
+        hint=body.hint,
+        date_from="",
+        date_to="",
+        sandbox=False,
+        web_search=True,
+    )
+    return CategorizeSuggestResponse(
+        enabled=result.enabled,
+        configured=result.configured,
+        model=result.model,
+        suggestions=[
+            CategorySuggestionItem(
+                merchant_key=s.merchant_key,
+                label=s.label,
+                category_id=s.category_id,
+                category_name=s.category_name,
+                confidence=s.confidence,
+                reason=s.reason,
+                transaction_ids=s.transaction_ids,
+                sample_count=s.sample_count,
+                needs_human=bool(s.needs_human),
+            )
+            for s in result.suggestions
+        ],
+        merchants_considered=result.merchants_considered,
+        merchants_suggested=result.merchants_suggested,
+        tokens_used=result.tokens_used,
+        quota_used=result.quota_used,
+        quota_cap=result.quota_cap,
+        message=result.message,
+        system_prompt=result.system_prompt,
+        user_prompt=result.user_prompt,
+        vendors_sent=result.vendors_sent,
     )
 
 
@@ -191,6 +395,7 @@ def categorize_suggest(
         date_from=body.date_from,
         date_to=body.date_to,
         sandbox=_is_writable_sandbox(user),
+        web_search=bool(body.web_search),
     )
     return CategorizeSuggestResponse(
         enabled=result.enabled,
@@ -216,6 +421,9 @@ def categorize_suggest(
         quota_used=result.quota_used,
         quota_cap=result.quota_cap,
         message=result.message,
+        system_prompt=result.system_prompt,
+        user_prompt=result.user_prompt,
+        vendors_sent=result.vendors_sent,
     )
 
 

@@ -37,9 +37,10 @@ def _default_transport(
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, headers=headers, json=body)
         if resp.status_code >= 400:
-            # Safe detail — no body dump with possible echoed secrets
+            snippet = (resp.text or "").strip().replace("\n", " ")[:180]
             raise RuntimeError(
-                f"Grok API error HTTP {resp.status_code}. Check key and model access."
+                f"Grok API error HTTP {resp.status_code}"
+                + (f": {snippet}" if snippet else ". Check key and model access.")
             )
         data = resp.json()
         if not isinstance(data, dict):
@@ -56,6 +57,7 @@ def chat_json(
     user: str,
     timeout: float = 60.0,
     transport: ChatTransport | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> ChatResult:
     """
     Chat completion expecting a JSON object in the assistant message.
@@ -72,8 +74,11 @@ def chat_json(
             {"role": "user", "content": user},
         ],
         "temperature": 0.1,
-        "response_format": {"type": "json_object"},
     }
+    if tools:
+        body["tools"] = tools
+    else:
+        body["response_format"] = {"type": "json_object"}
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
