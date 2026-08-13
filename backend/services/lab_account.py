@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from backend.api.auth import SessionUser
@@ -20,10 +21,25 @@ _LAB_REPOS: dict[str, DiskBackedSheetsRepository] = {}
 
 
 def lab_data_dir(settings: Settings) -> Path:
+    """
+    Directory for the lab disk ledger.
+
+    Prefer explicit ``LAB_DATA_DIR``. Otherwise use ``/data/lab`` when a
+    Railway (or similar) volume is mounted at ``/data``, else project ``data/lab``.
+    """
     raw = (settings.lab_data_dir or "").strip()
     if raw:
         p = Path(raw)
         return p if p.is_absolute() else project_root() / p
+    volume = Path("/data")
+    if volume.is_dir():
+        try:
+            if volume.exists() and (os.access(volume, os.W_OK) if hasattr(os, "access") else True):
+                return volume / "lab"
+        except OSError:
+            pass
+        # Volume present but permission check failed — still prefer it
+        return volume / "lab"
     return project_root() / "data" / "lab"
 
 
