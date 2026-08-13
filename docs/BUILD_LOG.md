@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Async statement upload (proxy timeout fix)
+
+- `POST /upload` accepts file, stores bytes, starts in-process background job; returns `job_id` immediately.
+- Client polls `GET /upload/jobs/{id}` until done — avoids Railway/proxy `upstream error` on long crypto/stock FIFO+Sheets imports.
+- Retry uses the same async pattern; clear non-JSON/proxy error messages retained.
+- Upload UI shows “Processing…” after file transfer while the job runs.
+
 ## 2026-08-12 — Categorize reliability polish
 
 - **In-mode workbench:** Groups/AI keep the tx table + guided flow without trapping the user in Review; focus clears on done.

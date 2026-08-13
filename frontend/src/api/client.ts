@@ -29,6 +29,8 @@ import type {
   SheetsStatus,
   TickerDigestsResponse,
   Transaction,
+  UploadAccepted,
+  UploadJobStatus,
   UploadResult,
   UsdCzkSeries,
   AdminJob,
@@ -355,8 +357,12 @@ export const api = {
       `/statement-files${qs(params)}`,
     ),
 
+  /** Starts background retry; poll with uploadJob until done. */
   retryStatementFile: (id: string) =>
-    request<UploadResult>(`/statement-files/${id}/retry`, { method: "POST" }),
+    request<UploadAccepted>(`/statement-files/${id}/retry`, { method: "POST" }),
+
+  uploadJob: (jobId: string) =>
+    request<UploadJobStatus>(`/upload/jobs/${encodeURIComponent(jobId)}`),
 
   dashboard: (params: {
     date_from?: string;
@@ -692,39 +698,150 @@ export const api = {
   } = {}) =>
     request<Paginated<Record<string, unknown>>>(`/investments${qs(params)}`),
 
+  /**
+   * Upload statement: short POST accepts the file (async job), then poll until done.
+   * Avoids reverse-proxy timeouts on long crypto/stock FIFO+Sheets imports.
+   *
+   * onProgress: 0–25 file transfer, 25–95 processing (time-based estimate), 100 done.
+   */
   upload: async (file: File, onProgress?: (pct: number) => void) => {
-    // fetch doesn't support upload progress easily; use XHR
-    return new Promise<UploadResult>((resolve, reject) => {
+    const accepted = await new Promise<UploadAccepted>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", `${API_BASE}/upload`);
       xhr.withCredentials = true;
+      // Accept phase is quick (store + start job); 2 min is enough
+      xhr.timeout = 2 * 60 * 1000;
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable && onProgress) {
-          onProgress(Math.round((e.loaded / e.total) * 100));
+          onProgress(Math.round((e.loaded / e.total) * 25));
         }
       };
       xhr.onload = () => {
-        try {
-          const body = JSON.parse(xhr.responseText) as { detail?: unknown };
-          if (xhr.status >= 200 && xhr.status < 300) resolve(body as UploadResult);
-          else {
-            if (xhr.status === 401) notifyUnauthorized();
+        const raw = (xhr.responseText || "").trim();
+        let body: UploadAccepted | { detail?: unknown } | null = null;
+        if (raw) {
+          try {
+            body = JSON.parse(raw) as UploadAccepted;
+          } catch {
+            const lower = raw.toLowerCase();
+            const isUpstream =
+              lower.includes("upstream") ||
+              lower.includes("timeout") ||
+              lower.includes("gateway") ||
+              xhr.status === 502 ||
+              xhr.status === 504;
+            reject(
+              new ApiError(
+                xhr.status || 502,
+                isUpstream
+                  ? "Server/proxy interrupted the upload handshake. Retry once. " +
+                      `Server said: ${raw.slice(0, 120)}`
+                  : `Upload failed (non-JSON response, HTTP ${xhr.status}): ${raw.slice(0, 200)}`,
+              ),
+            );
+            return;
+          }
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          if (!body || !(body as UploadAccepted).job_id) {
             reject(
               new ApiError(
                 xhr.status,
-                formatApiDetail(body.detail ?? body, xhr.statusText || "Upload failed"),
+                "Upload accepted but no job_id returned — redeploy may be required",
               ),
             );
+            return;
           }
-        } catch (err) {
-          reject(err);
+          resolve(body as UploadAccepted);
+          return;
         }
+        if (xhr.status === 401) notifyUnauthorized();
+        reject(
+          new ApiError(
+            xhr.status,
+            formatApiDetail(
+              (body as { detail?: unknown } | null)?.detail ?? body ?? raw,
+              xhr.statusText || "Upload failed",
+            ),
+          ),
+        );
       };
-      xhr.onerror = () => reject(new ApiError(0, "Network error"));
+      xhr.onerror = () => reject(new ApiError(0, "Network error during upload"));
+      xhr.ontimeout = () =>
+        reject(new ApiError(0, "Upload handshake timed out — check API / network."));
       const fd = new FormData();
       fd.append("file", file);
       xhr.send(fd);
     });
+
+    onProgress?.(28);
+    const started = Date.now();
+    const maxWaitMs = 15 * 60 * 1000;
+    const pollMs = 1500;
+
+    while (Date.now() - started < maxWaitMs) {
+      await new Promise((r) => setTimeout(r, pollMs));
+      const elapsed = Date.now() - started;
+      // Ease toward 95% while processing
+      const processPct = Math.min(95, 28 + Math.floor((elapsed / maxWaitMs) * 67));
+      onProgress?.(processPct);
+
+      let job: UploadJobStatus;
+      try {
+        job = await api.uploadJob(accepted.job_id);
+      } catch (e) {
+        // Transient poll errors — keep waiting
+        if (e instanceof ApiError && e.status === 404) {
+          throw new ApiError(
+            404,
+            "Import job lost (server restart?). Re-upload the file.",
+          );
+        }
+        continue;
+      }
+
+      if (job.status === "done") {
+        onProgress?.(100);
+        if (!job.result) {
+          throw new ApiError(500, "Import finished but returned no result payload");
+        }
+        return job.result;
+      }
+      if (job.status === "error") {
+        throw new ApiError(
+          500,
+          job.error || "Import failed in the background",
+        );
+      }
+    }
+    throw new ApiError(
+      0,
+      "Import is still running after 15 minutes. Check Statement history later, or retry.",
+    );
+  },
+
+  /** Poll until a background upload/retry job finishes; returns UploadResult. */
+  waitUploadJob: async (
+    jobId: string,
+    opts?: { onTick?: (status: UploadJobStatus) => void; maxWaitMs?: number },
+  ): Promise<UploadResult> => {
+    const maxWaitMs = opts?.maxWaitMs ?? 15 * 60 * 1000;
+    const started = Date.now();
+    while (Date.now() - started < maxWaitMs) {
+      const job = await api.uploadJob(jobId);
+      opts?.onTick?.(job);
+      if (job.status === "done") {
+        if (!job.result) {
+          throw new ApiError(500, "Import finished but returned no result payload");
+        }
+        return job.result;
+      }
+      if (job.status === "error") {
+        throw new ApiError(500, job.error || "Import failed in the background");
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    throw new ApiError(0, "Import still running after wait limit — check history.");
   },
 
   refreshPrices: (force = false) =>

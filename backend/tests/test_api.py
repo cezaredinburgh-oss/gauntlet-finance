@@ -53,6 +53,21 @@ def test_health(client: TestClient):
         assert body["auth_mode"] == "dev"
 
 
+def _poll_upload_job(client: TestClient, job_id: str, *, timeout_s: float = 30.0):
+    import time
+
+    deadline = time.time() + timeout_s
+    last = None
+    while time.time() < deadline:
+        j = client.get(f"/api/upload/jobs/{job_id}")
+        assert j.status_code == 200, j.text
+        last = j.json()
+        if last["status"] in {"done", "error"}:
+            return last
+        time.sleep(0.05)
+    raise AssertionError(f"upload job {job_id} did not finish: {last}")
+
+
 def test_upload_and_list_transactions(client: TestClient):
     path = FIXTURES / "raiffeisen_sample.csv"
     with path.open("rb") as f:
@@ -61,21 +76,27 @@ def test_upload_and_list_transactions(client: TestClient):
             files={"file": ("raiffeisen_sample.csv", f, "text/csv")},
         )
     assert r.status_code == 200, r.text
-    body = r.json()
+    accepted = r.json()
+    assert accepted.get("job_id")
+    job = _poll_upload_job(client, accepted["job_id"])
+    assert job["status"] == "done", job
+    body = job["result"]
     assert body["status"] in {"imported", "already_imported"}
     if body["status"] == "imported":
         assert body["rows_parsed"] == 4
         assert body["transactions_written"] >= 1
         assert body["parser_key"] == "raiffeisen_cz"
 
-    # re-upload → already_imported
+    # re-upload → already_imported (async job still)
     with path.open("rb") as f:
         r2 = client.post(
             "/api/upload",
             files={"file": ("raiffeisen_sample.csv", f, "text/csv")},
         )
     assert r2.status_code == 200
-    assert r2.json()["status"] == "already_imported"
+    job2 = _poll_upload_job(client, r2.json()["job_id"])
+    assert job2["status"] == "done", job2
+    assert job2["result"]["status"] == "already_imported"
 
     r3 = client.get("/api/transactions")
     assert r3.status_code == 200

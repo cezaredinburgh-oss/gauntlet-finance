@@ -696,6 +696,28 @@ export type UploadResult = {
   ai_map_eligible?: boolean;
 };
 
+/** Immediate response from async POST /upload */
+export type UploadAccepted = {
+  job_id: string;
+  status: string;
+  filename: string;
+  content_sha256: string;
+  message: string;
+};
+
+/** Polled GET /upload/jobs/{id} */
+export type UploadJobStatus = {
+  job_id: string;
+  status: string; // running | done | error
+  kind?: string;
+  filename?: string | null;
+  content_sha256?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+  result?: UploadResult | null;
+};
+
 export type AiColumnMap = {
   institution: string;
   default_currency?: string | null;

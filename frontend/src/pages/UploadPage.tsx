@@ -40,6 +40,8 @@ type BatchProgress = {
   fileName: string;
   /** Overall 0–100 across the whole batch */
   pct: number;
+  /** Server-side import running after file accepted */
+  phase?: "uploading" | "processing";
 };
 
 function isStatementFile(file: File): boolean {
@@ -123,6 +125,7 @@ export function UploadPage() {
                 total: files.length,
                 fileName: file.name,
                 pct: Math.round(((i + filePct / 100) / files.length) * 100),
+                phase: filePct < 28 ? "uploading" : "processing",
               });
             });
             next.push({
@@ -152,7 +155,8 @@ export function UploadPage() {
     setRetryingId(row.id);
     setBatchError(null);
     try {
-      const r = await api.retryStatementFile(row.id);
+      const accepted = await api.retryStatementFile(row.id);
+      const r = await api.waitUploadJob(accepted.job_id);
       setOutcomes([{ fileName: row.original_filename, result: r }]);
       await loadHistory();
     } catch (e) {
@@ -345,7 +349,8 @@ export function UploadPage() {
           <div className="mt-2 w-full max-w-sm">
             <div className="mb-1 flex justify-between gap-2 text-xs text-ink-muted">
               <span className="truncate">
-                Uploading {batchProgress.index + 1} of {batchProgress.total}
+                {batchProgress.phase === "processing" ? "Processing" : "Uploading"}{" "}
+                {batchProgress.index + 1} of {batchProgress.total}
                 {" · "}
                 {batchProgress.fileName}
               </span>

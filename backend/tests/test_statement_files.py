@@ -38,6 +38,21 @@ def client(monkeypatch, tmp_path):
     get_settings.cache_clear()
 
 
+def _poll_upload_job(client: TestClient, job_id: str, *, timeout_s: float = 30.0):
+    import time
+
+    deadline = time.time() + timeout_s
+    last = None
+    while time.time() < deadline:
+        j = client.get(f"/api/upload/jobs/{job_id}")
+        assert j.status_code == 200, j.text
+        last = j.json()
+        if last["status"] in {"done", "error"}:
+            return last
+        time.sleep(0.05)
+    raise AssertionError(f"upload job {job_id} did not finish: {last}")
+
+
 def test_statement_files_after_upload(client: TestClient):
     path = FIXTURES / "raiffeisen_sample.csv"
     with path.open("rb") as f:
@@ -46,6 +61,10 @@ def test_statement_files_after_upload(client: TestClient):
             files={"file": ("raiffeisen_sample.csv", f, "text/csv")},
         )
     assert r.status_code == 200, r.text
+    accepted = r.json()
+    assert accepted.get("job_id")
+    job = _poll_upload_job(client, accepted["job_id"])
+    assert job["status"] == "done", job
 
     hist = client.get("/api/statement-files")
     assert hist.status_code == 200

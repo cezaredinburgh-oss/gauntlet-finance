@@ -35,6 +35,30 @@ class UploadResponse(BaseModel):
     ai_map_eligible: bool = False
 
 
+class UploadAcceptedResponse(BaseModel):
+    """Immediate response after accepting a statement for background import."""
+
+    job_id: str
+    status: str = "running"
+    filename: str = ""
+    content_sha256: str = ""
+    message: str = "Import started in the background. Poll job status until done."
+
+
+class UploadJobResponse(BaseModel):
+    """Polled status for a background statement import."""
+
+    job_id: str
+    status: str  # running | done | error
+    kind: str = "statement-import"
+    filename: str | None = None
+    content_sha256: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+    result: UploadResponse | None = None
+
+
 class CategoryOverrideRequest(BaseModel):
     transaction_id: UUID
 
