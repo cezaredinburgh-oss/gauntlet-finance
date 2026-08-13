@@ -1,4 +1,4 @@
-import type { Transaction } from "../api/types";
+import type { Category, Transaction } from "../api/types";
 
 export type RuleSuggestion = {
   match_field: "merchant" | "description" | "original_description" | "counterparty_name" | "source_institution";
@@ -63,13 +63,40 @@ export function sameVendorTransactionIds(
 }
 
 /**
+ * Residual / still-to-categorize: null, missing cat, Other, Uncategorized,
+ * or life_domain Other. Real assigned categories are not residual.
+ */
+export function isResidualCategory(
+  t: Transaction,
+  catMap: Map<string, Category>,
+): boolean {
+  if (!t.category_id) return true;
+  const c = catMap.get(t.category_id);
+  if (!c) return true;
+  const name = (c.name || "").toLowerCase();
+  if (name === "other" || name === "uncategorized") return true;
+  if ((c.life_domain || "").toLowerCase() === "other") return true;
+  return false;
+}
+
+/**
  * Similar txs for guided review: same vendor key, optionally same amount sign.
  * Excludes seed ids. Does not require a target category.
+ *
+ * residualOnly (default true with catMap): omit already-categorized rows so
+ * the review list is work remaining, not false positives already done.
+ * Results sorted A–Z by vendor display name for fast untick of outliers.
  */
 export function findSimilarTransactions(
   pool: Transaction[],
   seeds: Transaction[],
-  opts: { sameAmountSign?: boolean; limit?: number } = {},
+  opts: {
+    sameAmountSign?: boolean;
+    limit?: number;
+    residualOnly?: boolean;
+    catMap?: Map<string, Category>;
+    sortAlpha?: boolean;
+  } = {},
 ): Transaction[] {
   const keys = new Set<string>();
   const seedIds = new Set(seeds.map((s) => s.id));
@@ -89,11 +116,15 @@ export function findSimilarTransactions(
   }
   if (!keys.size) return [];
 
+  const residualOnly = opts.residualOnly !== false && opts.catMap != null;
   const out: Transaction[] = [];
   for (const t of pool) {
     if (seedIds.has(t.id)) continue;
     const k = vendorKey(t);
     if (!k || !keys.has(k)) continue;
+    if (residualOnly && opts.catMap && !isResidualCategory(t, opts.catMap)) {
+      continue;
+    }
     if (opts.sameAmountSign && seedSign && seedSign !== "mixed" && seedSign !== "zero") {
       const n = Number(
         t.amount_usd != null && t.amount_usd !== "" ? t.amount_usd : t.amount,
@@ -104,6 +135,13 @@ export function findSimilarTransactions(
     }
     out.push(t);
     if (opts.limit != null && out.length >= opts.limit) break;
+  }
+  if (opts.sortAlpha !== false) {
+    out.sort((a, b) =>
+      vendorDisplayName(a).localeCompare(vendorDisplayName(b), undefined, {
+        sensitivity: "base",
+      }),
+    );
   }
   return out;
 }

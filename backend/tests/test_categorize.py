@@ -381,6 +381,36 @@ def test_manual_override_and_engine_batch():
     result = engine.categorize_many([t1, t2, t3])
     by_desc = {t.description: t for t in result.transactions}
     assert by_desc["Bad Jeffs Barbecue"].category_id == cat_food.id
-    assert by_desc["Mystery"].category_id == cat_other.id  # fallback
+    assert by_desc["Mystery"].category_id == cat_other.id  # explicit fallback
     assert by_desc["Spotify"].category_override is True
     assert result.skipped_override == 1
+
+
+def test_import_engine_leaves_unmatched_uncategorized():
+    """Fresh import: no rule match → null, not Other."""
+    cat_food = category(
+        name="Food",
+        necessity=Necessity.VARIABLE_NECESSITY,
+        life_domain=LifeDomain.FOOD,
+    )
+    cat_other = category(name="Other", life_domain=LifeDomain.OTHER)
+    engine = CategoryEngine(
+        rules=[
+            rule(
+                priority=10,
+                category_id=cat_food.id,
+                match_field=MatchField.MERCHANT,
+                match_type=MatchType.CONTAINS,
+                match_value="BILLA",
+            )
+        ],
+        categories=[cat_food, cat_other],
+        # no fallback_category_id — production import path
+    )
+    matched = tx(merchant="BILLA Praha", amount="-100")
+    blank = tx(merchant="Mystery Shop", amount="-50")
+    result = engine.categorize_many([matched, blank])
+    by_m = {t.merchant: t for t in result.transactions}
+    assert by_m["BILLA Praha"].category_id == cat_food.id
+    assert by_m["Mystery Shop"].category_id is None
+    assert result.unmatched == 1

@@ -97,7 +97,12 @@ def apply_category_rules(
 
 
 class CategoryEngine:
-    """Batch categorizer with optional fallback category (e.g. life_domain Other)."""
+    """Batch categorizer with optional explicit fallback category.
+
+    Import and normal runs leave unmatched rows as ``category_id=None``
+    (uncategorized). Callers may still pass ``fallback_category_id`` for
+    legacy repair scripts — never auto-pick Other by default.
+    """
 
     def __init__(
         self,
@@ -108,11 +113,11 @@ class CategoryEngine:
     ) -> None:
         self.rules = list(rules or [])
         self.categories = list(categories or [])
+        # Explicit only — do not default to Other (Other is a real category).
         self.fallback_category_id = fallback_category_id
-        if self.fallback_category_id is None:
-            self.fallback_category_id = self._default_fallback()
 
     def _default_fallback(self) -> UUID | None:
+        """Legacy helper: resolve Other/Uncategorized id if a caller needs it."""
         for c in self.categories:
             if c.name.lower() in {"other", "uncategorized"} and not c.archived:
                 return c.id

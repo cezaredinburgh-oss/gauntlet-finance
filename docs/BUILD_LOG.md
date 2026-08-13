@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-13 — Upload / categorize polish (focus, residual similar, prices)
+
+- **Upload:** outcome card collapses stats/SHA under “Import details”; always show filename + status.
+- **Prices:** kick `refreshPrices` after investment import; Layout soft tick on wealth mount; PriceStatusBanner shows fetching + ETA estimate.
+- **Import categories:** `CategoryEngine` no longer auto-falls back to Other — unmatched stay `category_id=null`.
+- **Categorize:** group/AI focus **wins** over filters (empty Groups table fix); similar-review residual-only + A–Z; clear/reset category via restore-assignments; guided similar CTA above Groups/AI panels.
+
 ## 2026-08-13 — Categories cleanup must not wipe statement data
 
 - **Bug:** Settings cleanup scope `categories` used `replace_all_rows` on **Transactions** to null `category_id`. On Google Sheets that is **clear + full rewrite**; a failed/partial write (or huge tab) can destroy cash history while the user only asked to delete rules/categories.

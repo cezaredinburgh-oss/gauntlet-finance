@@ -382,9 +382,9 @@ export function Layout() {
   }, []);
 
   /**
-   * Soft live marks (~60s) on Dashboard + Investments so portfolio MV tracks
+   * Soft live marks (~90s) on Dashboard + Investments so portfolio MV tracks
    * the same cadence as 1D charts. Uses force=false (server quote TTL).
-   * Manual header “Update prices” was removed — soft refresh only.
+   * Immediate tick on mount so post-import Holdings is not empty for a full minute.
    */
   useEffect(() => {
     const path = location.pathname;
@@ -402,6 +402,11 @@ export function Layout() {
         return;
       }
       busy = true;
+      window.dispatchEvent(
+        new CustomEvent("prices-refresh-start", {
+          detail: { reason: "soft", etaSeconds: 12 },
+        }),
+      );
       try {
         const r = await api.refreshPrices(false);
         // Skip fan-out when marks did not move — avoids snapshot/history thrash.
@@ -415,10 +420,11 @@ export function Layout() {
         /* quiet soft refresh */
       } finally {
         busy = false;
+        window.dispatchEvent(new CustomEvent("prices-refresh-end"));
       }
     };
 
-    // Soft desk marks; full force of Yahoo history is no longer every tick.
+    void tick();
     const id = window.setInterval(() => void tick(), 90_000);
     const onVis = () => {
       if (document.visibilityState === "visible") void tick();

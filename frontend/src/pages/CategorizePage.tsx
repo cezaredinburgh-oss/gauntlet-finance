@@ -469,13 +469,10 @@ export function CategorizePage() {
   const filtered = useMemo(() => {
     let rows = items;
 
-    // Similar-review: show seed + candidates only (ignore category filters so
-    // just-assigned seeds stay visible under "uncategorized" scope).
-    if (
-      simFlow.phase === "reviewing_similar" &&
-      focusIds &&
-      focusIds.length > 0
-    ) {
+    // Focus wins (groups / similar-review): show exactly the focused ids.
+    // Do not intersect with category/search filters — that caused empty tables
+    // when a group badge > 0 but Uncategorized (or search) was still on.
+    if (focusIds && focusIds.length > 0) {
       const allow = new Set(focusIds);
       return rows.filter((t) => allow.has(t.id));
     }
@@ -562,12 +559,6 @@ export function CategorizePage() {
       });
     }
 
-    // Groups / AI focus: intersect allowlist with filtered rows
-    if (focusIds && focusIds.length > 0) {
-      const allow = new Set(focusIds);
-      rows = rows.filter((t) => allow.has(t.id));
-    }
-
     return rows;
   }, [
     items,
@@ -580,11 +571,19 @@ export function CategorizePage() {
     filterFlag,
     catMap,
     focusIds,
-    simFlow.phase,
   ]);
 
   const sortedRows = useMemo(() => {
     const rows = filtered.slice();
+    // Similar review: A–Z by description/merchant for fast false-positive untick
+    if (simFlow.phase === "reviewing_similar") {
+      rows.sort((a, b) =>
+        txSortDescription(a).localeCompare(txSortDescription(b), undefined, {
+          sensitivity: "base",
+        }),
+      );
+      return rows;
+    }
     const dir = sortDir === "asc" ? 1 : -1;
     rows.sort((a, b) => {
       let cmp = 0;
@@ -622,7 +621,7 @@ export function CategorizePage() {
       return a.id.localeCompare(b.id);
     });
     return rows;
-  }, [filtered, sortKey, sortDir, catMap]);
+  }, [filtered, sortKey, sortDir, catMap, simFlow.phase]);
 
   function toggleSort(key: TxSortKey) {
     if (sortKey === key) {
@@ -721,7 +720,13 @@ export function CategorizePage() {
   }
 
   function selectUncategorizedInView() {
-    setSelected(new Set(filtered.filter((t) => !t.category_id).map((t) => t.id)));
+    setSelected(
+      new Set(
+        filtered
+          .filter((t) => !txHasRealCategory(t, catMap))
+          .map((t) => t.id),
+      ),
+    );
   }
 
   const smartGroups = useMemo(
@@ -914,9 +919,12 @@ export function CategorizePage() {
     if (!seeds.length) return;
     const similar = findSimilarTransactions(items, seeds, {
       sameAmountSign: true,
+      residualOnly: true,
+      catMap,
+      sortAlpha: true,
     });
     if (similar.length === 0) {
-      // Nothing similar in the loaded list — go straight to rule offer
+      // Nothing residual similar in the loaded list — go straight to rule offer
       enterOfferRule(seeds, simFlow.categoryId, [], []);
       return;
     }
@@ -927,7 +935,7 @@ export function CategorizePage() {
     const seedIds = seeds.map((t) => t.id);
     const similarIds = similar.map((t) => t.id);
     setFocusIds([...seedIds, ...similarIds]);
-    // Pre-select similar candidates (not seeds)
+    // Pre-select residual similar candidates (not seeds)
     setSelected(new Set(similarIds));
     setSimFlow((prev) => ({
       ...prev,
@@ -1028,8 +1036,74 @@ export function CategorizePage() {
     }
   }
 
+  async function onClearCategory(txId: string) {
+    const prev = items.find((t) => t.id === txId);
+    if (!prev) return;
+    if (!prev.category_id && !prev.category_override) return;
+    setSavingId(txId);
+    try {
+      pushUndo("Cleared category", [prev]);
+      await api.restoreAssignments([
+        {
+          transaction_id: txId,
+          category_id: null,
+          category_override: false,
+          is_internal_transfer: prev.is_internal_transfer,
+        },
+      ]);
+      const nextItems = items.map((t) =>
+        t.id === txId
+          ? { ...t, category_id: null, category_override: false }
+          : t,
+      );
+      setItems(nextItems);
+      void refreshCoverage();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Clear category failed");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  async function onClearSelectedCategories() {
+    if (selected.size === 0) return;
+    const previousTxs = items.filter(
+      (t) =>
+        selected.has(t.id) && (t.category_id != null || t.category_override),
+    );
+    if (!previousTxs.length) return;
+    setBulkBusy(true);
+    try {
+      pushUndo(`Cleared category on ${previousTxs.length}`, previousTxs);
+      await api.restoreAssignments(
+        previousTxs.map((t) => ({
+          transaction_id: t.id,
+          category_id: null,
+          category_override: false,
+          is_internal_transfer: t.is_internal_transfer,
+        })),
+      );
+      const idSet = new Set(previousTxs.map((t) => t.id));
+      setItems((prev) =>
+        prev.map((t) =>
+          idSet.has(t.id)
+            ? { ...t, category_id: null, category_override: false }
+            : t,
+        ),
+      );
+      void refreshCoverage();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Clear categories failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   async function onOverride(txId: string, categoryId: string) {
-    if (!categoryId) return;
+    if (!categoryId) {
+      await onClearCategory(txId);
+      return;
+    }
     // During similar review, row category changes shouldn't restart the flow
     if (simFlow.phase === "reviewing_similar") {
       setSavingId(txId);
@@ -1392,7 +1466,8 @@ export function CategorizePage() {
 
   function openGroupFocus(ids: string[]) {
     if (!ids.length) return;
-    // Stay on Groups mode — workbench embeds when focusIds is set
+    // Stay on Groups mode — workbench embeds when focusIds is set.
+    // Focus wins over category/search filters (see filtered useMemo).
     setFocusIds(ids);
     setSelected(new Set(ids));
     window.setTimeout(() => {
@@ -1749,6 +1824,79 @@ export function CategorizePage() {
       )}
 
       {/* Groups mode */}
+      {/* Guided next-steps above Groups/AI/Rules so assign → similar stays on-screen */}
+      {simFlow.phase === "offer_similar" && (
+        <div className="card space-y-3 border-brand/25 p-4">
+          <div className="flex items-start gap-2">
+            <span className="rounded-lg bg-brand/15 p-2 text-brand">
+              <Sparkles className="h-4 w-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="font-semibold">Look for other transactions like this?</h2>
+              <p className="text-sm text-ink-muted">
+                You assigned{" "}
+                <span className="font-medium text-ink">{guidedCategoryName}</span>
+                {simFlow.seedSnapshots[0]
+                  ? ` to ${vendorDisplayName(simFlow.seedSnapshots[0])}`
+                  : ""}
+                . We can find similar residual rows (same merchant, same money direction)
+                for you to review before applying.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn-ghost p-2"
+              aria-label="Dismiss"
+              onClick={onOfferSimilarNo}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn-primary" onClick={onOfferSimilarYes}>
+              Yes
+            </button>
+            <button type="button" className="btn-secondary" onClick={onOfferSimilarNo}>
+              No, just this
+            </button>
+          </div>
+        </div>
+      )}
+
+      {simFlow.phase === "reviewing_similar" && (
+        <div className="sticky top-14 z-30 card space-y-3 border-brand/40 bg-slate-950/95 p-4 shadow-lg backdrop-blur-md">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="font-semibold text-brand">Reviewing similar transactions</h2>
+              <p className="text-sm text-ink-muted">
+                Seed plus residual (uncategorized/Other) candidates, A–Z. Uncheck false
+                positives, then assign{" "}
+                <span className="font-medium text-ink">{guidedCategoryName}</span>.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={bulkBusy || isReadOnly}
+              onClick={() => void onAssignSimilarSelected()}
+            >
+              {bulkBusy ? <Spinner className="h-4 w-4 border-t-slate-900" /> : null}
+              Assign {guidedCategoryName} to {similarSelectedCount} selected
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={bulkBusy}
+              onClick={onCancelSimilarReview}
+            >
+              Cancel review
+            </button>
+          </div>
+        </div>
+      )}
+
       {mode === "groups" && (
         <div className="card space-y-4 p-4">
           <div className="flex items-start gap-2">
@@ -1759,7 +1907,7 @@ export function CategorizePage() {
               <h2 className="font-semibold">Smart groups</h2>
               <p className="text-sm text-ink-muted">
                 Triage clusters from the loaded ledger. Click a group or cluster to review
-                those transactions.
+                those transactions (focus ignores other category filters).
               </p>
             </div>
           </div>
@@ -2056,88 +2204,6 @@ export function CategorizePage() {
             setToolsMsg={setToolsMsg}
             isReadOnly={isReadOnly}
           />
-        </div>
-      )}
-
-      {/* Guided flow cards (visible across modes when active) */}
-      {simFlow.phase === "offer_similar" && (
-        <div className="card space-y-3 border-brand/25 p-4">
-          <div className="flex items-start gap-2">
-            <span className="rounded-lg bg-brand/15 p-2 text-brand">
-              <Sparkles className="h-4 w-4" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h2 className="font-semibold">Look for other transactions like this?</h2>
-              <p className="text-sm text-ink-muted">
-                You assigned{" "}
-                <span className="font-medium text-ink">{guidedCategoryName}</span>
-                {simFlow.seedSnapshots[0]
-                  ? ` to ${vendorDisplayName(simFlow.seedSnapshots[0])}`
-                  : ""}
-                . We can find similar rows (same merchant, same money direction) for you
-                to review before applying.
-              </p>
-            </div>
-            <button
-              type="button"
-              className="btn-ghost p-2"
-              aria-label="Dismiss"
-              onClick={onOfferSimilarNo}
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={onOfferSimilarYes}
-            >
-              Yes
-            </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={onOfferSimilarNo}
-            >
-              No, just this
-            </button>
-          </div>
-        </div>
-      )}
-
-      {simFlow.phase === "reviewing_similar" && (
-        <div className="sticky top-14 z-30 card space-y-3 border-brand/40 bg-slate-950/95 p-4 shadow-lg backdrop-blur-md">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <h2 className="font-semibold text-brand">Reviewing similar transactions</h2>
-              <p className="text-sm text-ink-muted">
-                Table is filtered to the seed plus similar candidates. Uncheck false
-                positives, then assign{" "}
-                <span className="font-medium text-ink">{guidedCategoryName}</span> to
-                the selected rows.
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={bulkBusy || isReadOnly}
-              onClick={() => void onAssignSimilarSelected()}
-            >
-              {bulkBusy ? <Spinner className="h-4 w-4 border-t-slate-900" /> : null}
-              Assign {guidedCategoryName} to {similarSelectedCount} selected
-            </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              disabled={bulkBusy}
-              onClick={onCancelSimilarReview}
-            >
-              Cancel review
-            </button>
-          </div>
         </div>
       )}
 
@@ -2501,6 +2567,15 @@ export function CategorizePage() {
               </button>
               <button
                 type="button"
+                className="btn-secondary text-sm"
+                disabled={bulkBusy || isReadOnly || selected.size === 0}
+                onClick={() => void onClearSelectedCategories()}
+                title="Reset selected rows to uncategorized (keeps filters and focus)"
+              >
+                Clear category
+              </button>
+              <button
+                type="button"
                 className="btn-ghost text-sm"
                 onClick={() => setSelected(new Set())}
               >
@@ -2520,9 +2595,11 @@ export function CategorizePage() {
             <EmptyState
               title="No transactions match these filters"
               description={
-                simFlow.phase === "offer_similar" || simFlow.phase === "offer_rule"
-                  ? "Rows may have left this filter after assign — continue with the guided steps above."
-                  : "Clear filters or widen the date range."
+                focusIds && focusIds.length > 0
+                  ? "Focus list is empty in the current load — clear focus or widen the date / batch scope."
+                  : simFlow.phase === "offer_similar" || simFlow.phase === "offer_rule"
+                    ? "Rows may have left this filter after assign — continue with the guided steps above."
+                    : "Clear filters or widen the date range."
               }
             />
           ) : (
@@ -2649,7 +2726,7 @@ export function CategorizePage() {
                             )}
                           </td>
                           <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <select
                                 className="input max-w-[11rem] py-1.5 text-xs"
                                 value={t.category_id || ""}
@@ -2663,6 +2740,17 @@ export function CategorizePage() {
                                   </option>
                                 ))}
                               </select>
+                              {(t.category_id || t.category_override) && (
+                                <button
+                                  type="button"
+                                  className="btn-ghost px-1.5 py-1 text-[10px] text-ink-muted"
+                                  disabled={savingId === t.id || isReadOnly}
+                                  title="Reset to uncategorized"
+                                  onClick={() => void onClearCategory(t.id)}
+                                >
+                                  Reset
+                                </button>
+                              )}
                               {savingId === t.id && <Spinner className="h-3.5 w-3.5" />}
                             </div>
                             {cat && (

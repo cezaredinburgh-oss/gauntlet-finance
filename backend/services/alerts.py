@@ -380,7 +380,7 @@ def build_alerts(
                 "body": (
                     f"{len(missing)} open ticker(s) have no quote: "
                     f"{', '.join(missing[:8])}{'…' if len(missing) > 8 else ''}. "
-                    f"Use Update prices on Investments."
+                    f"Open Investments — marks refresh automatically on that page."
                 ),
                 "href": "/investments?focus=prices",
             }

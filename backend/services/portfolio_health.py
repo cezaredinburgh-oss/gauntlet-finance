@@ -351,7 +351,10 @@ def price_status_from_snapshot(
     missing = list(missing_quotes or [])
     if quote_count <= 0 or open_ticker_count <= 0:
         mode = "empty"
-        note = "No market quotes — showing cost basis where needed. Use Update prices."
+        note = (
+            "No market quotes — showing cost basis where needed. "
+            "Quotes refresh automatically on Home / Investments."
+        )
     elif missing:
         mode = "partial"
         note = (

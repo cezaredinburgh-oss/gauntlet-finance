@@ -142,6 +142,35 @@ export function UploadPage() {
           setOutcomes([...next]);
         }
         await loadHistory();
+        // Kick market quotes when investments were written so Holdings is not blank
+        const needPrices = next.some(
+          (o) =>
+            (o.result?.lots_written ?? 0) > 0 ||
+            (o.result?.events_written ?? 0) > 0,
+        );
+        if (needPrices) {
+          window.dispatchEvent(
+            new CustomEvent("prices-refresh-start", {
+              detail: { reason: "upload", etaSeconds: 15 },
+            }),
+          );
+          try {
+            const r = await api.refreshPrices(true);
+            window.dispatchEvent(
+              new CustomEvent("prices-updated", {
+                detail: {
+                  quote_count: r.quote_count,
+                  as_of: r.as_of,
+                  soft: false,
+                },
+              }),
+            );
+          } catch {
+            /* soft — holdings will soft-refresh on visit */
+          } finally {
+            window.dispatchEvent(new CustomEvent("prices-refresh-end"));
+          }
+        }
       } finally {
         inFlight.current = false;
         setBusy(false);
@@ -588,34 +617,51 @@ function OutcomeCard({
           <div className="text-lg font-semibold capitalize">
             {result.status.replaceAll("_", " ")}
           </div>
-          <p className="text-sm text-ink-muted">{result.message}</p>
+          {!ok && result.message ? (
+            <p className="text-sm text-ink-muted">{result.message}</p>
+          ) : null}
         </div>
       </div>
 
-      <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-        <Stat label="Institution" value={result.institution || "—"} />
-        <Stat label="Parser" value={result.parser_key || "—"} />
-        <Stat label="Rows parsed" value={String(result.rows_parsed)} />
-        <Stat label="Transactions" value={String(result.transactions_written)} />
-        <Stat label="Events" value={String(result.events_written)} />
-        <Stat label="Lots" value={String(result.lots_written)} />
-        <Stat label="Transfer pairs" value={String(result.transfer_pairs_linked)} />
-        <Stat label="Tx deduped" value={String(result.transactions_deduped)} />
-        <Stat label="Events deduped" value={String(result.events_deduped)} />
-      </dl>
-
-      <div className="mt-4 flex items-center gap-2 text-xs text-ink-faint">
-        <Copy className="h-3.5 w-3.5 shrink-0" />
-        <span className="font-mono break-all">SHA-256 {result.content_sha256}</span>
-      </div>
-
-      {result.errors?.length > 0 && (
-        <ul className="mt-3 list-disc pl-5 text-sm text-danger">
-          {result.errors.map((e) => (
-            <li key={e}>{e}</li>
-          ))}
-        </ul>
-      )}
+      <details
+        className="group mt-1"
+        open={!ok || (result.errors?.length ?? 0) > 0}
+      >
+        <summary className="cursor-pointer list-none text-xs font-medium text-ink-faint hover:text-ink-muted [&::-webkit-details-marker]:hidden">
+          <span className="inline-flex items-center gap-1">
+            Import details
+            <span className="text-ink-faint group-open:hidden">▸</span>
+            <span className="hidden text-ink-faint group-open:inline">▾</span>
+          </span>
+        </summary>
+        <div className="mt-3 space-y-3">
+          {ok && result.message ? (
+            <p className="text-sm text-ink-muted">{result.message}</p>
+          ) : null}
+          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+            <Stat label="Institution" value={result.institution || "—"} />
+            <Stat label="Parser" value={result.parser_key || "—"} />
+            <Stat label="Rows parsed" value={String(result.rows_parsed)} />
+            <Stat label="Transactions" value={String(result.transactions_written)} />
+            <Stat label="Events" value={String(result.events_written)} />
+            <Stat label="Lots" value={String(result.lots_written)} />
+            <Stat label="Transfer pairs" value={String(result.transfer_pairs_linked)} />
+            <Stat label="Tx deduped" value={String(result.transactions_deduped)} />
+            <Stat label="Events deduped" value={String(result.events_deduped)} />
+          </dl>
+          <div className="flex items-center gap-2 text-xs text-ink-faint">
+            <Copy className="h-3.5 w-3.5 shrink-0" />
+            <span className="font-mono break-all">SHA-256 {result.content_sha256}</span>
+          </div>
+          {result.errors?.length > 0 && (
+            <ul className="list-disc pl-5 text-sm text-danger">
+              {result.errors.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </details>
 
       {canMap && (
         <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
