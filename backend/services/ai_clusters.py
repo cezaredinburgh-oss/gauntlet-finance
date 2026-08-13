@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Callable
+from uuid import UUID
 
 from backend.config import Settings, get_settings
 from backend.schema.models import Category, Transaction
@@ -55,6 +56,7 @@ Rules:
 - If unsure, needs_human=true and omit category_id. Never use Other or Uncategorized.
 - Do not invent categories. Do not include account numbers or personal data not in the input.
 - Order clusters by how obvious/large they are (best first).
+- Return at most 8 clusters. Skip leftovers. Do not try to cover every row.
 """
 
 _Q2 = Decimal("0.01")
@@ -98,6 +100,7 @@ class ClusterResult:
     quota_used: int = 0
     quota_cap: int = 0
     message: str | None = None
+    transactions: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _sanitize_text(s: str, *, limit: int = 80) -> str:
@@ -111,6 +114,17 @@ def _round_abs(amount: Decimal) -> str:
     return str(abs(amount).quantize(_Q2, rounding=ROUND_HALF_UP))
 
 
+def canonical_tx_id(raw: object) -> str | None:
+    """Normalize Grok / client ids to hyphenated lowercase UUID strings."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        return str(UUID(text))
+    except ValueError:
+        return None
+
+
 def select_residual_rows(
     transactions: list[Transaction],
     categories: list[Category],
@@ -118,13 +132,17 @@ def select_residual_rows(
     limit: int,
     date_from: str = "",
     date_to: str = "",
+    exclude_ids: set[str] | None = None,
 ) -> list[ResidualRow]:
     cat_by_id = {c.id: c for c in categories if not c.archived}
     df = (date_from or "").strip()[:10]
     dt = (date_to or "").strip()[:10]
+    skip = {canonical_tx_id(x) or str(x) for x in (exclude_ids or set()) if x}
     scored: list[tuple[Decimal, str, Transaction]] = []
     for t in transactions:
         if t.archived or t.is_internal_transfer:
+            continue
+        if canonical_tx_id(t.id) in skip or str(t.id) in skip:
             continue
         if not is_blank_category(t, cat_by_id):
             continue
@@ -189,6 +207,7 @@ def validate_clusters(
     items = raw.get("clusters")
     if not isinstance(items, list):
         return []
+    sent_canon = {canonical_tx_id(s) or s for s in sent_ids}
     seen_tx: set[str] = set()
     out: list[ClusterSuggestion] = []
     for i, item in enumerate(items):
@@ -202,8 +221,8 @@ def validate_clusters(
             continue
         ids: list[str] = []
         for raw_id in raw_ids:
-            tid = str(raw_id or "").strip()
-            if not tid or tid not in sent_ids or tid in seen_tx:
+            tid = canonical_tx_id(raw_id) or str(raw_id or "").strip()
+            if not tid or tid not in sent_canon or tid in seen_tx:
                 continue
             ids.append(tid)
             seen_tx.add(tid)
@@ -300,16 +319,24 @@ def suggest_clusters(
 
     categories = [c for c in repo.list_rows("Categories") if isinstance(c, Category)]
     txs = [t for t in repo.list_rows("Transactions") if isinstance(t, Transaction)]
-    default_n = min(60, max(20, s.ai_max_merchants_per_request * 2))
+    # Keep the first batch small: grok-4.5 can reason longer than 60s on 60 rows.
+    default_n = min(20, max(12, s.ai_max_merchants_per_request // 2 or 12))
     max_n = limit if limit is not None else default_n
-    max_n = max(8, min(max_n, 80))
+    max_n = max(8, min(max_n, 40))
 
+    exclude = {
+        canonical_tx_id(x) or str(x)
+        for x in (exclude_transaction_ids or [])
+        if x
+    }
     rows = select_residual_rows(
-        txs, categories, limit=max_n, date_from=date_from or "", date_to=date_to or ""
+        txs,
+        categories,
+        limit=max_n,
+        date_from=date_from or "",
+        date_to=date_to or "",
+        exclude_ids=exclude,
     )
-    exclude = {str(x) for x in (exclude_transaction_ids or []) if x}
-    if exclude:
-        rows = [r for r in rows if r.id not in exclude]
     if not rows:
         return _empty(
             enabled=True,
@@ -334,6 +361,14 @@ def suggest_clusters(
         )
 
     user_payload = build_user_payload(rows, catalog)
+    timeout = max(float(s.ai_request_timeout_seconds), 180.0)
+    logger.info(
+        "AI cluster request txs=%s payload_chars=%s timeout_s=%.0f model=%s",
+        len(rows),
+        len(user_payload),
+        timeout,
+        s.ai_model,
+    )
     estimate = max(900, (len(SYSTEM_PROMPT) + len(user_payload)) // 3 + 500)
     try:
         ai_quota.check_and_reserve(
@@ -361,7 +396,7 @@ def suggest_clusters(
             model=s.ai_model,
             system=SYSTEM_PROMPT,
             user=user_payload,
-            timeout=s.ai_request_timeout_seconds,
+            timeout=timeout,
             transport=transport,
         )
     except Exception as exc:
@@ -391,6 +426,12 @@ def suggest_clusters(
         clusters = []
         msg = "Grok returned unusable clusters. Try again."
 
+    used_ids = {tid for c in clusters for tid in c.transaction_ids}
+    tx_dumps: list[dict[str, Any]] = []
+    for t in txs:
+        if str(t.id) in used_ids:
+            tx_dumps.append(t.model_dump(mode="json"))
+
     snap = ai_quota.snapshot(
         principal, cap=s.ai_daily_token_cap, global_cap=s.ai_global_daily_token_cap
     )
@@ -405,6 +446,7 @@ def suggest_clusters(
         quota_used=snap.used,
         quota_cap=snap.cap,
         message=msg,
+        transactions=tx_dumps,
     )
 
 

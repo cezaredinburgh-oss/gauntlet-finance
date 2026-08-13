@@ -428,6 +428,9 @@ export const api = {
     source_file_ids?: string;
     /** Only txs from latest multi-file import batch (~15m) */
     latest_import_batch?: boolean | string;
+    /** Comma-separated transaction UUIDs */
+    ids?: string;
+    tx_ids?: string;
     limit?: number;
     offset?: number;
   } = {}) =>
@@ -693,12 +696,17 @@ export const api = {
       },
     ),
 
-  bulkOverrideCategory: (categoryId: string, transactionIds: string[]) =>
+  bulkOverrideCategory: (
+    categoryId: string,
+    transactionIds: string[],
+    opts?: { is_internal_transfer?: boolean },
+  ) =>
     request<BulkOverrideResult>("/categories/bulk-override", {
       method: "POST",
       body: JSON.stringify({
         category_id: categoryId,
         transaction_ids: transactionIds,
+        is_internal_transfer: opts?.is_internal_transfer ?? null,
       }),
     }),
 

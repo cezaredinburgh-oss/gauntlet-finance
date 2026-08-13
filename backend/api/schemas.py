@@ -72,6 +72,7 @@ class CategoryOverrideResponse(BaseModel):
 class BulkCategoryOverrideRequest(BaseModel):
     category_id: UUID
     transaction_ids: list[UUID] = Field(default_factory=list, min_length=1)
+    is_internal_transfer: bool | None = None
 
 
 class BulkCategoryOverrideResponse(BaseModel):

@@ -422,6 +422,8 @@ async def bulk_override_category(
     updated_rows: list[Transaction] = []
     updated_ids: list[UUID] = []
     force_internal = _category_implies_internal_transfer(cat)
+    if body.is_internal_transfer is True:
+        force_internal = True
     for tid in ids:
         tx = by_id.get(tid)
         if tx is None or tx.archived:

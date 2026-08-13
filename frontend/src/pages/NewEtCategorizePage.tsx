@@ -192,6 +192,9 @@ export function NewEtCategorizePage() {
   const [aiPicks, setAiPicks] = useState<Record<string, string>>({});
   const loadGen = useRef(0);
   const txTableRef = useRef<HTMLDivElement | null>(null);
+  const clusterTxRef = useRef<Map<string, Transaction>>(new Map());
+  const appliedClusterIdsRef = useRef<string[]>([]);
+  const skippedClusterIdsRef = useRef<string[]>([]);
 
   const dateFrom = searchParams.get("date_from") || "";
   const dateTo = searchParams.get("date_to") || "";
@@ -738,7 +741,10 @@ export function NewEtCategorizePage() {
       const r = await api.aiCategorizeClusters({
         date_from: dateFrom || undefined,
         date_to: dateTo || undefined,
-        exclude_transaction_ids: aiClusters.flatMap((c) => c.transaction_ids),
+        exclude_transaction_ids: [
+          ...appliedClusterIdsRef.current,
+          ...skippedClusterIdsRef.current,
+        ],
       });
       setAiStatus((prev) =>
         prev
@@ -750,6 +756,24 @@ export function NewEtCategorizePage() {
         setAiMsg(r.message || "AI is not configured.");
         return;
       }
+      const bundled = r.transactions ?? [];
+      for (const t of bundled) {
+        clusterTxRef.current.set(normTxId(t.id), t);
+      }
+      if (bundled.length) {
+        setItems((prev) => {
+          const seen = new Set(prev.map((t) => normTxId(t.id)));
+          const next = prev.slice();
+          for (const t of bundled) {
+            const key = normTxId(t.id);
+            if (!seen.has(key)) {
+              next.push(t);
+              seen.add(key);
+            }
+          }
+          return next;
+        });
+      }
       setAiClusters(r.clusters);
       setAiMsg(r.message || null);
     } catch (e) {
@@ -759,43 +783,137 @@ export function NewEtCategorizePage() {
     }
   }
 
-  function focusCluster(c: AiClusterSuggestion) {
-    setFocusIds(c.transaction_ids);
-    setSelected(new Set(c.transaction_ids));
+  function normTxId(id: string): string {
+    return id.trim().toLowerCase();
+  }
+
+  async function ensureClusterRows(ids: string[]): Promise<Transaction[]> {
+    const want = [...new Set(ids.map(normTxId).filter(Boolean))];
+    const have = new Map(items.map((t) => [normTxId(t.id), t]));
+    for (const [key, t] of clusterTxRef.current) {
+      if (!have.has(key)) have.set(key, t);
+    }
+    const missing = want.filter((id) => !have.has(id));
+    if (missing.length) {
+      try {
+        const extra = await api.transactions({
+          tx_ids: missing.join(","),
+          limit: Math.max(missing.length, 1),
+        });
+        const matched = extra.items.filter((t) => want.includes(normTxId(t.id)));
+        setItems((prev) => {
+          const seen = new Set(prev.map((t) => normTxId(t.id)));
+          const next = prev.slice();
+          for (const t of matched) {
+            const key = normTxId(t.id);
+            have.set(key, t);
+            clusterTxRef.current.set(key, t);
+            if (!seen.has(key)) {
+              next.push(t);
+              seen.add(key);
+            }
+          }
+          return next;
+        });
+        for (const t of matched) have.set(normTxId(t.id), t);
+      } catch (e) {
+        setAiMsg(e instanceof Error ? e.message : "Could not load cluster rows");
+      }
+    }
+    return want.map((id) => have.get(id)).filter((t): t is Transaction => t != null);
+  }
+
+  async function focusCluster(c: AiClusterSuggestion) {
+    const rows = await ensureClusterRows(c.transaction_ids);
+    if (!rows.length) {
+      setAiMsg(
+        `Could not open “${c.title}” — those rows are not in the loaded ledger. Try clearing date filters.`,
+      );
+      return;
+    }
+    const rowIds = rows.map((t) => t.id);
+    setFocusIds(rowIds);
+    setSelected(new Set(rowIds));
+    setAiMsg(`Showing ${rows.length} transaction${rows.length === 1 ? "" : "s"} from “${c.title}”.`);
     window.setTimeout(() => {
       txTableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 60);
+    }, 80);
   }
 
   async function applyCluster(c: AiClusterSuggestion) {
-    const categoryId =
+    const ids = [...new Set(c.transaction_ids.map(normTxId).filter(Boolean))];
+    if (!ids.length) {
+      setAiMsg(`“${c.title}” has no transaction ids to apply.`);
+      return;
+    }
+    const internalCat = catsSorted.find((cat) => {
+      const name = cat.name.toLowerCase();
+      return cat.is_transfer && name.includes("internal") && !name.includes("external");
+    });
+    let categoryId =
       c.needs_human || !c.category_id ? aiPicks[c.cluster_key] || "" : c.category_id;
-    if (!categoryId) return;
-    const ids = c.transaction_ids.filter((id) => items.some((t) => t.id === id));
-    if (!ids.length) return;
+    const forceInternal = c.kind === "internal_transfer";
+    if (forceInternal && internalCat) {
+      categoryId = internalCat.id;
+    }
+    if (!categoryId) {
+      setAiMsg("Pick a category before applying this cluster.");
+      return;
+    }
     setBulkBusy(true);
     try {
-      const previousTxs = items.filter((t) => ids.includes(t.id));
-      const catName = catMap.get(categoryId)?.name || c.category_name || "category";
-      pushUndo(`Assigned ${catName} to ${ids.length}`, previousTxs);
-      const forceInternal =
-        c.kind === "internal_transfer" || categoryImpliesInternal(categoryId);
-      const r = await api.bulkOverrideCategory(categoryId, ids);
-      const idSet = new Set(r.transaction_ids);
+      const snapshotRows = await ensureClusterRows(ids);
+      if (snapshotRows.length) {
+        const catName = catMap.get(categoryId)?.name || c.category_name || "category";
+        pushUndo(`Assigned ${catName} to ${snapshotRows.length}`, snapshotRows);
+      }
+      const r = await api.bulkOverrideCategory(categoryId, ids, {
+        is_internal_transfer:
+          forceInternal || categoryImpliesInternal(categoryId) ? true : undefined,
+      });
+      if (r.updated === 0) {
+        setAiMsg(
+          `Could not apply “${c.title}” — server found none of ${ids.length} row(s).`,
+        );
+        return;
+      }
+      const updatedIds = (r.transaction_ids || []).map((id) => String(id));
+      appliedClusterIdsRef.current.push(...updatedIds.map(normTxId));
+      const idSet = new Set(updatedIds.map(normTxId));
       const patch = {
         category_id: categoryId,
         category_override: true as const,
-        ...(forceInternal ? { is_internal_transfer: true } : {}),
+        ...(forceInternal || categoryImpliesInternal(categoryId)
+          ? { is_internal_transfer: true }
+          : {}),
       };
-      const nextItems = items.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t));
-      setItems(nextItems);
-      const seeds = previousTxs
-        .filter((t) => idSet.has(t.id))
+      const hydrated = await ensureClusterRows(updatedIds);
+      setItems((prev) => {
+        const seen = new Set(prev.map((t) => normTxId(t.id)));
+        const next = prev.map((t) =>
+          idSet.has(normTxId(t.id)) ? { ...t, ...patch } : t,
+        );
+        for (const t of hydrated) {
+          if (!seen.has(normTxId(t.id))) {
+            next.push({ ...t, ...patch });
+            seen.add(normTxId(t.id));
+          }
+        }
+        return next;
+      });
+      const seeds = hydrated
+        .filter((t) => idSet.has(normTxId(t.id)))
         .map((t) => ({ ...t, ...patch }));
       setAiClusters((prev) => prev.filter((x) => x.cluster_key !== c.cluster_key));
-      setSelected(new Set());
-      setFocusIds(null);
+      setSelected(new Set(updatedIds));
+      setFocusIds(updatedIds);
+      if (forceInternal) {
+        patchParams({ hide_transfers: "0" });
+      }
       void refreshCoverage();
+      const miss =
+        r.missing > 0 ? ` · ${r.missing} id(s) not on the ledger` : "";
+      setAiMsg(`Applied ${r.updated} from “${c.title}”${miss}.`);
       if (seeds.length) startGuidedAfterAssign(seeds, categoryId);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Apply cluster failed");
@@ -1192,15 +1310,19 @@ export function NewEtCategorizePage() {
             clusters={aiClusters}
             message={aiMsg}
             busy={aiBusy}
+            applyBusy={bulkBusy}
             isReadOnly={isReadOnly}
             catsSorted={catsSorted}
             categoryPicks={aiPicks}
             onSuggest={() => void fetchAiClusters()}
-            onFocus={focusCluster}
+            onFocus={(c) => void focusCluster(c)}
             onApply={(c) => void applyCluster(c)}
-            onSkip={(c) =>
-              setAiClusters((prev) => prev.filter((x) => x.cluster_key !== c.cluster_key))
-            }
+            onSkip={(c) => {
+              skippedClusterIdsRef.current.push(
+                ...c.transaction_ids.map(normTxId).filter(Boolean),
+              );
+              setAiClusters((prev) => prev.filter((x) => x.cluster_key !== c.cluster_key));
+            }}
             onPick={(key, categoryId) =>
               setAiPicks((prev) => ({ ...prev, [key]: categoryId }))
             }

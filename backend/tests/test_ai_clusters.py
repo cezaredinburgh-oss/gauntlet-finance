@@ -134,6 +134,40 @@ def test_validate_clusters_keeps_known_ids_and_kinds():
     assert out[0].needs_human is False
 
 
+def test_validate_clusters_normalizes_uuid_case():
+    tid = "87e9b76c-9b0d-48f4-8b96-982795907090"
+    raw = {
+        "clusters": [
+            {
+                "title": "Top-up",
+                "kind": "internal_transfer",
+                "transaction_ids": [tid.replace("-", "").upper()],
+                "category_id": str(CAT_INTERNAL),
+                "confidence": 0.9,
+                "reason": "pot",
+            }
+        ]
+    }
+    out = ai_clusters.validate_clusters(raw, {tid}, list(DEFAULT_CATEGORIES))
+    assert len(out) == 1
+    assert out[0].transaction_ids == [tid]
+
+
+def test_select_residual_excludes_before_limit():
+    cats = list(DEFAULT_CATEGORIES)
+    big = tx(merchant="OldBig", amount="-210000")
+    newer = [tx(merchant=f"Small{i}", amount="-10") for i in range(5)]
+    rows = ai_clusters.select_residual_rows(
+        [big, *newer],
+        cats,
+        limit=3,
+        exclude_ids={str(big.id)},
+    )
+    labels = {r.merchant for r in rows}
+    assert "OldBig" not in labels
+    assert len(rows) == 3
+
+
 def test_validate_needs_human_when_no_category():
     raw = {
         "clusters": [
@@ -197,6 +231,8 @@ def test_suggest_clusters_mocked_chat():
     assert r.clusters[0].kind == "vendor"
     assert r.clusters[0].sample_count == 2
     assert r.tokens_used == 30
+    dumped_ids = {row["id"] for row in r.transactions}
+    assert dumped_ids == {str(t1.id), str(t2.id)}
 
 
 def test_payload_has_no_account_numbers():

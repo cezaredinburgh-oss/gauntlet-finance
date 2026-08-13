@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-13 — New ET cluster apply by id (not table page)
+
+- Cluster **Apply** posts UUIDs to bulk-override even when rows are outside the newest-3000 table.
+- Residual exclude happens **before** top-N rank; Grok ids are UUID-normalized.
+- `is_internal_transfer` can be forced on bulk-override (pot-to-pot piles).
+- Next Suggest no longer excludes leftover unapplied piles.
+
 ## 2026-08-13 — New ET Review: AI clusters + guided assign
 
 - **AI-first:** New `POST /ai/categorize-clusters` asks Grok to pile residual txs (not merchant-key grouping, not `buildSmartGroups`). **No lab heuristic fallback** — requires `AI_ENABLED` + `XAI_API_KEY`.

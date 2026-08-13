@@ -32,6 +32,14 @@ async def list_transactions(
         False,
         description="If true, only txs from the latest import batch (~15m window)",
     ),
+    ids: str | None = Query(
+        None,
+        description="Comma-separated transaction UUIDs (allowlist; ignores date paging)",
+    ),
+    tx_ids: str | None = Query(
+        None,
+        description="Alias of ids — comma-separated transaction UUIDs",
+    ),
     limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
@@ -48,21 +56,40 @@ async def list_transactions(
             "uploaded_at_max": batch["uploaded_at_max"],
         }
     elif source_file_ids:
-        ids: list[UUID] = []
+        file_ids: list[UUID] = []
         for part in source_file_ids.split(","):
             p = part.strip()
             if not p:
                 continue
             try:
-                ids.append(UUID(p))
+                file_ids.append(UUID(p))
             except ValueError:
                 continue
-        file_id_set = set(ids) if ids else set()
+        file_id_set = set(file_ids) if file_ids else set()
+
+    id_set: set[UUID] | None = None
+    raw_ids = tx_ids or ids
+    if raw_ids:
+        parsed: list[UUID] = []
+        for part in raw_ids.split(","):
+            p = part.strip()
+            if not p:
+                continue
+            try:
+                parsed.append(UUID(p))
+            except ValueError:
+                continue
+        id_set = set(parsed) if parsed else set()
 
     rows = [r for r in repo.list_rows("Transactions") if isinstance(r, Transaction)]
     out: list[Transaction] = []
     for t in rows:
         if t.archived:
+            continue
+        if id_set is not None:
+            if t.id not in id_set:
+                continue
+            out.append(t)
             continue
         if date_from and t.booking_date < date_from:
             continue

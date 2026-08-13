@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -119,6 +120,7 @@ class ClusterSuggestResponse(BaseModel):
     configured: bool
     model: str | None = None
     clusters: list[ClusterSuggestionItem]
+    transactions: list[dict[str, Any]] = Field(default_factory=list)
     txs_considered: int
     clusters_suggested: int
     tokens_used: int
@@ -154,6 +156,7 @@ def categorize_clusters(
         clusters=[
             ClusterSuggestionItem(**ai_clusters.cluster_to_dict(c)) for c in result.clusters
         ],
+        transactions=result.transactions,
         txs_considered=result.txs_considered,
         clusters_suggested=result.clusters_suggested,
         tokens_used=result.tokens_used,

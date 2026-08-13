@@ -17,6 +17,7 @@ export function AiDesk({
   clusters,
   message,
   busy,
+  applyBusy,
   isReadOnly,
   catsSorted,
   categoryPicks,
@@ -31,6 +32,7 @@ export function AiDesk({
   clusters: AiClusterSuggestion[];
   message: string | null;
   busy: boolean;
+  applyBusy?: boolean;
   isReadOnly: boolean;
   catsSorted: Category[];
   categoryPicks: Record<string, string>;
@@ -67,7 +69,7 @@ export function AiDesk({
             onClick={onSuggest}
           >
             <Sparkles className="h-3.5 w-3.5" />
-            {busy ? "Clustering…" : "Suggest clusters"}
+            {busy ? "Clustering… (can take ~1–2 min)" : "Suggest clusters"}
           </button>
         )}
       </div>
@@ -154,22 +156,24 @@ export function AiDesk({
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    className="btn-primary text-[11px]"
-                    disabled={isReadOnly || (needsPick && !pick)}
-                    onClick={() => onApply(c)}
-                  >
-                    Review &amp; apply
-                  </button>
-                  <button
-                    type="button"
                     className="btn-secondary text-[11px]"
+                    disabled={busy || applyBusy}
                     onClick={() => onFocus(c)}
                   >
                     Show transactions
                   </button>
                   <button
                     type="button"
+                    className="btn-primary text-[11px]"
+                    disabled={isReadOnly || busy || applyBusy || (needsPick && !pick)}
+                    onClick={() => onApply(c)}
+                  >
+                    Apply
+                  </button>
+                  <button
+                    type="button"
                     className="btn-ghost text-[11px]"
+                    disabled={busy || applyBusy}
                     onClick={() => onSkip(c)}
                   >
                     Skip

@@ -1095,6 +1095,8 @@ export type AiCategorizeClustersResult = {
   configured: boolean;
   model?: string | null;
   clusters: AiClusterSuggestion[];
+  /** Full ledger rows for cluster ids (may be older than the table page). */
+  transactions?: Transaction[];
   txs_considered: number;
   clusters_suggested: number;
   tokens_used: number;

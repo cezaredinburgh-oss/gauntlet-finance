@@ -103,6 +103,29 @@ def test_upload_and_list_transactions(client: TestClient):
     assert r3.json()["total"] >= 1
 
 
+def test_list_transactions_by_ids(client: TestClient):
+    path = FIXTURES / "raiffeisen_sample.csv"
+    with path.open("rb") as f:
+        r = client.post(
+            "/api/upload",
+            files={"file": ("raiffeisen_sample.csv", f, "text/csv")},
+        )
+    assert r.status_code == 200, r.text
+    job = _poll_upload_job(client, r.json()["job_id"])
+    assert job["status"] == "done", job
+
+    listed = client.get("/api/transactions?limit=50")
+    assert listed.status_code == 200
+    items = listed.json()["items"]
+    assert len(items) >= 2
+    want = [items[0]["id"], items[1]["id"]]
+    fetched = client.get("/api/transactions", params={"ids": ",".join(want)})
+    assert fetched.status_code == 200
+    got = {row["id"] for row in fetched.json()["items"]}
+    assert got == set(want)
+    assert fetched.json()["total"] == 2
+
+
 def test_categories_and_dashboard(client: TestClient):
     r = client.get("/api/categories")
     assert r.status_code == 200
@@ -208,6 +231,37 @@ def test_bulk_override_category(client: TestClient):
     assert items[str(t1.id)]["category_id"] == cat_id
     assert items[str(t1.id)]["category_override"] is True
     assert items[str(t2.id)]["category_override"] is True
+
+
+def test_bulk_override_can_force_internal_transfer(client: TestClient):
+    import backend.api.deps as deps
+    from backend.schema.default_categories import CAT_GROCERIES
+    from backend.tests.helpers import tx as make_tx
+
+    r = client.post("/api/categories/ensure-defaults")
+    assert r.status_code == 200
+    repo = deps._DEV_MEMORY_REPO
+    assert repo is not None
+    t1 = make_tx(merchant="Raiffeisen", description="Revolut top-up", amount="-210000")
+    repo.upsert_rows("Transactions", [t1])
+
+    r = client.post(
+        "/api/categories/bulk-override",
+        json={
+            "category_id": str(CAT_GROCERIES),
+            "transaction_ids": [str(t1.id)],
+            "is_internal_transfer": True,
+        },
+    )
+    assert r.status_code == 200, r.text
+    items = {
+        str(t["id"]): t
+        for t in client.get(
+            "/api/transactions", params={"tx_ids": str(t1.id), "limit": 1}
+        ).json()["items"]
+    }
+    assert items[str(t1.id)]["is_internal_transfer"] is True
+    assert items[str(t1.id)]["category_id"] == str(CAT_GROCERIES)
 
 
 def test_restore_assignments_undo(client: TestClient):
