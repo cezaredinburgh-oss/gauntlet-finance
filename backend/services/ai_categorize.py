@@ -402,6 +402,8 @@ def suggest_categories(
     exclude_merchant_keys: list[str] | None = None,
     merchant_key: str | None = None,
     hint: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     transport: ChatTransport | None = None,
     chat_fn: Callable[..., ChatResult] | None = None,
     sandbox: bool = False,
@@ -449,6 +451,22 @@ def suggest_categories(
         allowed = {x for x in source_file_ids if x}
         if allowed:
             txs = [t for t in txs if (t.source_file_id or "") in allowed]
+    # Optional booking_date window (YYYY-MM-DD) from spending drilldown / filters
+    df = (date_from or "").strip()[:10]
+    dt = (date_to or "").strip()[:10]
+    if df or dt:
+        filtered: list[Transaction] = []
+        for t in txs:
+            bd = t.booking_date
+            if bd is None:
+                continue
+            bd_s = bd.isoformat() if hasattr(bd, "isoformat") else str(bd)[:10]
+            if df and bd_s < df:
+                continue
+            if dt and bd_s > dt:
+                continue
+            filtered.append(t)
+        txs = filtered
 
     # Default batch is smaller for better quality (caller can raise up to cap).
     default_batch = min(12, s.ai_max_merchants_per_request)

@@ -565,6 +565,8 @@ export const api = {
     exclude_merchant_keys?: string[];
     merchant_key?: string;
     hint?: string;
+    date_from?: string;
+    date_to?: string;
   } = {}) =>
     request<AiCategorizeSuggestResult>("/ai/categorize-suggest", {
       method: "POST",
@@ -574,6 +576,8 @@ export const api = {
         exclude_merchant_keys: body.exclude_merchant_keys || [],
         merchant_key: body.merchant_key ?? null,
         hint: body.hint ?? null,
+        date_from: body.date_from || null,
+        date_to: body.date_to || null,
       }),
     }),
 

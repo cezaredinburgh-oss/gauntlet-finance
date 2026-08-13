@@ -133,6 +133,30 @@ function txIsExpense(t: Transaction): boolean {
   return Number.isFinite(n) && n < 0;
 }
 
+/** Match backend `merchant_key`: `m:{merchant lower}` or `d:{desc first 48 lower}`. */
+function merchantKeyFromTx(t: Transaction): string | null {
+  const merchant = (t.merchant || "").trim().replace(/\s+/g, " ");
+  if (merchant) return `m:${merchant.toLowerCase()}`;
+  const desc = (t.description || "").trim().replace(/\s+/g, " ");
+  if (!desc) return null;
+  const d = desc.length > 48 ? desc.slice(0, 48) : desc;
+  return `d:${d.toLowerCase()}`;
+}
+
+/** True when tx has a real category (not blank / Other residual). */
+function txHasRealCategory(
+  t: Transaction,
+  catMap: Map<string, Category>,
+): boolean {
+  if (!t.category_id) return false;
+  const cat = catMap.get(t.category_id);
+  if (!cat) return false;
+  if (cat.life_domain === "Other") return false;
+  const name = (cat.name || "").trim().toLowerCase();
+  if (name === "other" || name === "uncategorized") return false;
+  return true;
+}
+
 type TxSortKey = "date" | "description" | "category" | "source" | "amount";
 type SortDir = "asc" | "desc";
 
@@ -184,8 +208,9 @@ export function CategorizePage() {
   const [toolsBusy, setToolsBusy] = useState<string | null>(null);
   const [toolsMsg, setToolsMsg] = useState<string | null>(null);
   const [aiSuggestions, setAiSuggestions] = useState<AiCategorySuggestion[]>([]);
-
   const [aiSkippedKeys, setAiSkippedKeys] = useState<string[]>([]);
+  /** Merchant keys already assigned via AI/guided flow — excluded from future suggest. */
+  const [aiAppliedKeys, setAiAppliedKeys] = useState<string[]>([]);
   const [aiHints, setAiHints] = useState<Record<string, string>>({});
   const [aiCategoryPicks, setAiCategoryPicks] = useState<Record<string, string>>(
     {},
@@ -306,7 +331,7 @@ export function CategorizePage() {
     }
   }
 
-  const load = useCallback(async (opts?: { quiet?: boolean }) => {
+  const load = useCallback(async (opts?: { quiet?: boolean }): Promise<Transaction[] | undefined> => {
     const quiet = opts?.quiet ?? false;
     const gen = ++loadGen.current;
     // Keep existing UI visible while refreshing (avoids full-page blank on reloads)
@@ -331,7 +356,7 @@ export function CategorizePage() {
         api.categoryCoverage(180),
         api.categoryRules(),
       ]);
-      if (gen !== loadGen.current) return;
+      if (gen !== loadGen.current) return undefined;
       setItems(t.items);
       setTotal(t.total);
       setCats(c.items);
@@ -348,11 +373,13 @@ export function CategorizePage() {
         setLatestBatchLabel(null);
       }
       setError(null);
+      return t.items;
     } catch (e) {
-      if (gen !== loadGen.current) return;
+      if (gen !== loadGen.current) return undefined;
       // Quiet refresh failures must not blank a loaded workspace
-      if (quiet) return;
+      if (quiet) return undefined;
       setError(e instanceof Error ? e.message : "Failed to load");
+      return undefined;
     } finally {
       if (gen !== loadGen.current) return;
       if (!quiet) setLoading(false);
@@ -367,6 +394,15 @@ export function CategorizePage() {
     useLatestBatch,
     showAllLedger,
   ]);
+
+  async function refreshCoverage() {
+    try {
+      const cov = await api.categoryCoverage(180);
+      setCoverage(cov);
+    } catch {
+      // Best-effort; mutations already succeeded
+    }
+  }
 
   useEffect(() => {
     void load();
@@ -707,6 +743,46 @@ export function CategorizePage() {
     setUndoEntry(createUndoEntry(label, previous));
   }
 
+  /**
+   * Drop AI suggestions whose clusters are fully categorized (not Other), or
+   * whose merchant_key was just assigned. Returns keys marked applied.
+   */
+  function pruneAiSuggestions(
+    assignedTxIds: string[],
+    itemsAfter: Transaction[],
+  ): string[] {
+    const assignedSet = new Set(assignedTxIds);
+    const removeKeys = new Set<string>();
+    for (const id of assignedSet) {
+      const t = itemsAfter.find((x) => x.id === id);
+      const k = t ? merchantKeyFromTx(t) : null;
+      if (k) removeKeys.add(k);
+    }
+    const byId = new Map(itemsAfter.map((t) => [t.id, t]));
+    for (const s of aiSuggestions) {
+      if (removeKeys.has(s.merchant_key)) continue;
+      if (s.transaction_ids.length === 0) continue;
+      const allFilled = s.transaction_ids.every((id) => {
+        const t = byId.get(id);
+        if (!t) return false;
+        return txHasRealCategory(t, catMap);
+      });
+      if (allFilled) removeKeys.add(s.merchant_key);
+    }
+    if (removeKeys.size === 0) return [];
+    setAiSuggestions((prev) =>
+      prev.filter((s) => !removeKeys.has(s.merchant_key)),
+    );
+    setAiAppliedKeys((prev) => {
+      const next = [...prev];
+      for (const k of removeKeys) {
+        if (!next.includes(k)) next.push(k);
+      }
+      return next;
+    });
+    return [...removeKeys];
+  }
+
   async function performUndo() {
     if (!undoEntry || !isUndoValid(undoEntry)) {
       setUndoEntry(null);
@@ -738,6 +814,7 @@ export function CategorizePage() {
       setSimFlow(IDLE_SIM);
       setRuleDraft(null);
       setFocusIds(null);
+      void refreshCoverage();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Undo failed");
     } finally {
@@ -815,7 +892,7 @@ export function CategorizePage() {
   }
 
   function startGuidedAfterAssign(seeds: Transaction[], categoryId: string) {
-    setWorkspaceMode("review");
+    // Stay on current mode (groups/ai/review) — workbench embeds when needed
     setRuleDraft(null);
     setRuleMsg(null);
     setSimFlow({
@@ -919,15 +996,23 @@ export function CategorizePage() {
         category_override: true as const,
         ...(forceInternal ? { is_internal_transfer: true } : {}),
       };
-      setItems((prev) =>
-        prev.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t)),
+      const nextItems = items.map((t) =>
+        idSet.has(t.id) ? { ...t, ...patch } : t,
       );
+      setItems(nextItems);
       const accepted = previousTxs
         .filter((t) => idSet.has(t.id))
         .map((t) => ({ ...t, ...patch }));
 
+      pruneAiSuggestions(
+        [...toAssign.filter((id) => idSet.has(id)), ...simFlow.seedIds],
+        nextItems,
+      );
+      void refreshCoverage();
+
       restoreFilterSnapshot(simFlow.filterSnapshot);
       setSelected(new Set());
+      // Stay on current mode; enterOfferRule clears focus
       enterOfferRule(
         simFlow.seedSnapshots,
         simFlow.categoryId,
@@ -956,9 +1041,12 @@ export function CategorizePage() {
           category_override: true as const,
           ...(forceInternal ? { is_internal_transfer: true } : {}),
         };
-        setItems((prevItems) =>
-          prevItems.map((t) => (t.id === txId ? { ...t, ...patch } : t)),
+        const nextItems = items.map((t) =>
+          t.id === txId ? { ...t, ...patch } : t,
         );
+        setItems(nextItems);
+        pruneAiSuggestions([txId], nextItems);
+        void refreshCoverage();
       } catch (e) {
         alert(e instanceof Error ? e.message : "Override failed");
       } finally {
@@ -982,9 +1070,12 @@ export function CategorizePage() {
         category_override: true as const,
         ...(forceInternal ? { is_internal_transfer: true } : {}),
       };
-      setItems((prevItems) =>
-        prevItems.map((t) => (t.id === txId ? { ...t, ...patch } : t)),
+      const nextItems = items.map((t) =>
+        t.id === txId ? { ...t, ...patch } : t,
       );
+      setItems(nextItems);
+      pruneAiSuggestions([txId], nextItems);
+      void refreshCoverage();
       if (tx) {
         startGuidedAfterAssign([{ ...tx, ...patch }], categoryId);
       }
@@ -1017,13 +1108,19 @@ export function CategorizePage() {
         category_override: true as const,
         ...(forceInternal ? { is_internal_transfer: true } : {}),
       };
-      setItems((prev) =>
-        prev.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t)),
+      const nextItems = items.map((t) =>
+        idSet.has(t.id) ? { ...t, ...patch } : t,
       );
+      setItems(nextItems);
       const affected = previousTxs
         .filter((t) => idSet.has(t.id))
         .map((t) => ({ ...t, ...patch }));
       setSelected(new Set());
+      pruneAiSuggestions(
+        affected.map((t) => t.id),
+        nextItems,
+      );
+      void refreshCoverage();
       if (affected.length) {
         startGuidedAfterAssign(affected, bulkCategoryId);
       }
@@ -1038,6 +1135,8 @@ export function CategorizePage() {
     if (!ruleDraft || !ruleDraft.match_value.trim() || !ruleDraft.category_id) return;
     setRuleBusy(true);
     setRuleMsg(null);
+    const assignedIds = [...simFlow.seedIds, ...simFlow.acceptedSimilarIds];
+    const finishMode = mode;
     try {
       await api.createCategoryRule({
         priority: 100,
@@ -1051,10 +1150,11 @@ export function CategorizePage() {
         notes: "Created from Categorize workspace",
       });
       let applyNote = "";
+      let loadedItems: Transaction[] | undefined;
       if (alsoApply === "blanks") {
         const applied = await api.applyRules();
         applyNote = ` · filled ${applied.filled} blank tx(s) only`;
-        await load({ quiet: true });
+        loadedItems = await load({ quiet: true });
       } else if (alsoApply === "all_matching") {
         const r = await api.applyMatch({
           category_id: ruleDraft.category_id,
@@ -1068,15 +1168,23 @@ export function CategorizePage() {
         applyNote =
           ` · reclassified ${r.updated} matching tx(s) across the full ledger` +
           ` (${r.matched} matched, ${r.skipped_override} overrides skipped)`;
-        await load({ quiet: true });
+        loadedItems = await load({ quiet: true });
       } else {
-        await load({ quiet: true });
+        loadedItems = await load({ quiet: true });
       }
+      const itemsForPrune = loadedItems ?? items;
       setRuleMsg(`Rule saved${applyNote}.`);
       setTimeout(() => {
         setRuleDraft(null);
         setRuleMsg(null);
         setSimFlow(IDLE_SIM);
+        setFocusIds(null);
+        const removed = pruneAiSuggestions(assignedIds, itemsForPrune);
+        if (finishMode === "ai") {
+          void fetchAiSuggestions({
+            excludeKeys: [...aiSkippedKeys, ...aiAppliedKeys, ...removed],
+          });
+        }
       }, 1800);
     } catch (e) {
       setRuleMsg(e instanceof Error ? e.message : "Could not save rule");
@@ -1086,9 +1194,18 @@ export function CategorizePage() {
   }
 
   function dismissRuleOffer() {
+    const assignedIds = [...simFlow.seedIds, ...simFlow.acceptedSimilarIds];
     setRuleDraft(null);
     setRuleMsg(null);
     setSimFlow(IDLE_SIM);
+    setFocusIds(null);
+    setSelected(new Set());
+    const removed = pruneAiSuggestions(assignedIds, items);
+    if (mode === "ai") {
+      void fetchAiSuggestions({
+        excludeKeys: [...aiSkippedKeys, ...aiAppliedKeys, ...removed],
+      });
+    }
   }
 
   // Recompute plain-English + warning when advanced match fields change
@@ -1156,11 +1273,15 @@ export function CategorizePage() {
     setToolsBusy("ai");
     setAiMsg(null);
     try {
+      const exclude =
+        opts?.excludeKeys ?? [...aiSkippedKeys, ...aiAppliedKeys];
       const r = await api.aiCategorizeSuggest({
         limit: 12,
-        exclude_merchant_keys: opts?.excludeKeys ?? aiSkippedKeys,
+        exclude_merchant_keys: exclude,
         merchant_key: opts?.merchant_key,
         hint: opts?.hint,
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
       });
       if (opts?.merchant_key) {
         // Re-suggest single merchant: replace or prepend that suggestion
@@ -1205,10 +1326,9 @@ export function CategorizePage() {
   }
 
   function showAiTransactions(s: AiCategorySuggestion) {
+    // Focus only — do not force uncategorized filter or leave AI mode
     setQ(s.label);
-    patchParams({ category_id: "uncategorized", category_ids: null, q: s.label });
     setFocusIds(s.transaction_ids.length ? s.transaction_ids : null);
-    setWorkspaceMode("review");
     window.setTimeout(() => {
       txTableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 80);
@@ -1217,6 +1337,7 @@ export function CategorizePage() {
   /**
    * AI Review & apply: open guided similar-review with the cluster pre-selected.
    * Nothing is written until the user confirms group assign (can uncheck false positives).
+   * Stays in AI mode; workbench embeds below the queue.
    */
   function reviewAndApplyAi(s: AiCategorySuggestion) {
     const needsPick = Boolean(s.needs_human) || !s.category_id;
@@ -1248,7 +1369,6 @@ export function CategorizePage() {
       search: searchParams.toString(),
       q,
     };
-    setWorkspaceMode("review");
     setRuleDraft(null);
     setRuleMsg(null);
     setFocusIds(similarIds);
@@ -1270,9 +1390,9 @@ export function CategorizePage() {
 
   function openGroupFocus(ids: string[]) {
     if (!ids.length) return;
+    // Stay on Groups mode — workbench embeds when focusIds is set
     setFocusIds(ids);
     setSelected(new Set(ids));
-    setWorkspaceMode("review");
     window.setTimeout(() => {
       txTableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 80);
@@ -1313,6 +1433,12 @@ export function CategorizePage() {
     const seedSet = new Set(simFlow.seedIds);
     return [...selected].filter((id) => !seedSet.has(id)).length;
   }, [simFlow.phase, simFlow.seedIds, selected]);
+
+  /** Review always; Groups/AI embed table when focused or mid guided flow. */
+  const showWorkbench =
+    mode === "review" ||
+    ((mode === "groups" || mode === "ai") &&
+      (Boolean(focusIds?.length) || simFlow.phase !== "idle"));
 
   if (loading && items.length === 0) {
     return <PageLoader label="Loading categorize workspace…" />;
@@ -1463,6 +1589,9 @@ export function CategorizePage() {
               >
                 {coverage.coverage_pct.toFixed(0)}%
               </div>
+              <p className="mt-0.5 text-[10px] text-ink-faint">
+                Expense coverage (income assigns do not change this).
+              </p>
               <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-white/10">
                 <div
                   className={cn(
@@ -1593,7 +1722,7 @@ export function CategorizePage() {
                   title={
                     isReadOnly
                       ? "Read-only demo"
-                      : "Apply your saved rules only to uncategorized transactions"
+                      : "Apply your saved rules to blank and Other residual transactions"
                   }
                   onClick={() =>
                     void runTool("apply", async () => {
@@ -1602,10 +1731,13 @@ export function CategorizePage() {
                     })
                   }
                 >
-                  {toolsBusy === "apply" ? "Working…" : "Fill blanks from my rules"}
+                  {toolsBusy === "apply"
+                    ? "Working…"
+                    : "Apply my rules (blanks & Other)"}
                 </button>
                 <p className="mt-0.5 text-[10px] text-ink-faint">
-                  Runs active rules on blank rows only — never overwrites overrides.
+                  Other is residual and will be reclassified when rules match —
+                  never overwrites manual overrides.
                 </p>
               </div>
             </div>
@@ -1698,6 +1830,11 @@ export function CategorizePage() {
                   nothing is saved until you confirm.
                   {isSandboxDemo ? " Sandbox may use local demo heuristics." : ""}
                 </p>
+                {(dateFrom || dateTo) && (
+                  <p className="mt-1 text-xs text-brand">
+                    Suggestions limited to {dateFrom || "…"} → {dateTo || "…"}
+                  </p>
+                )}
               </div>
             </div>
             <button
@@ -1861,7 +1998,8 @@ export function CategorizePage() {
                 <h2 className="font-semibold">Category rules</h2>
                 <p className="text-sm text-ink-muted">
                   Saved match patterns that auto-fill categories on import and when you
-                  fill blanks.
+                  apply rules. Other is residual and will be reclassified when rules
+                  match.
                 </p>
               </div>
             </div>
@@ -1887,6 +2025,7 @@ export function CategorizePage() {
                 type="button"
                 className="btn-secondary text-xs"
                 disabled={!!toolsBusy || isReadOnly}
+                title="Apply your saved rules to blank and Other residual transactions"
                 onClick={() =>
                   void runTool("apply", async () => {
                     const r: ApplyRulesResult = await api.applyRules();
@@ -1894,7 +2033,9 @@ export function CategorizePage() {
                   })
                 }
               >
-                {toolsBusy === "apply" ? "Working…" : "Fill blanks from my rules"}
+                {toolsBusy === "apply"
+                  ? "Working…"
+                  : "Apply my rules (blanks & Other)"}
               </button>
             </div>
           </div>
@@ -2191,8 +2332,8 @@ export function CategorizePage() {
         </div>
       )}
 
-      {/* Review mode: filters + table */}
-      {mode === "review" && (
+      {/* Filters + table (review always; groups/ai when focused or guided) */}
+      {showWorkbench && (
         <>
           {(categoryFilterLabel || dateFrom || dateTo || expensesOnly) && (
             <div className="flex flex-wrap items-center gap-2 rounded-xl border border-brand/25 bg-brand/10 px-3 py-2 text-sm text-ink">
@@ -2551,22 +2692,6 @@ export function CategorizePage() {
         </>
       )}
 
-      {/* When guided cards show under non-review modes, still show offer cards above */}
-      {mode !== "review" &&
-        (simFlow.phase === "offer_similar" || simFlow.phase === "offer_rule") && (
-          <p className="text-xs text-ink-faint">
-            Guided steps are ready — switch to{" "}
-            <button
-              type="button"
-              className="font-medium text-brand hover:underline"
-              onClick={() => setWorkspaceMode("review")}
-            >
-              Review
-            </button>{" "}
-            to see the full table.
-          </p>
-        )}
-
       {/* Undo toast */}
       {undoVisible && undoEntry && (
         <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-white/15 bg-slate-950/95 px-4 py-3 shadow-2xl backdrop-blur-md">
@@ -2620,7 +2745,7 @@ type RulesTableProps = {
   >;
   ruleActionBusy: string | null;
   setRuleActionBusy: (id: string | null) => void;
-  load: (opts?: { quiet?: boolean }) => Promise<void>;
+  load: (opts?: { quiet?: boolean }) => Promise<Transaction[] | undefined>;
   setToolsMsg: (msg: string | null) => void;
   isReadOnly: boolean;
 };

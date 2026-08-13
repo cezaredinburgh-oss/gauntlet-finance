@@ -357,19 +357,7 @@ SEED_CATEGORY_RULES: list[CategoryRule] = [
         created_at=SEED_TS,
         updated_at=SEED_TS,
     ),
-    CategoryRule(
-        id=UUID("aa100001-0000-4000-8000-000000000003"),
-        priority=30,
-        match_field=MatchField.MERCHANT,
-        match_type=MatchType.CONTAINS,
-        match_value="Allianz",
-        category_id=CAT_INSURANCE,
-        set_internal_transfer=False,
-        institution_scope=Institution.RAIFFEISEN.value,
-        is_active=True,
-        created_at=SEED_TS,
-        updated_at=SEED_TS,
-    ),
+    # Allianz not seeded by default (clean new accounts; add via starter if desired).
     CategoryRule(
         id=UUID("aa100001-0000-4000-8000-000000000004"),
         priority=40,

@@ -41,6 +41,25 @@ function absAmount(t: Transaction): number {
   return Number.isFinite(n) ? Math.abs(n) : 0;
 }
 
+/** Newest booking_date first (ISO date strings sort lexicographically). */
+function sortNewestFirst(ids: string[], byId: Map<string, Transaction>): string[] {
+  return ids.slice().sort((a, b) => {
+    const da = byId.get(a)?.booking_date || "";
+    const db = byId.get(b)?.booking_date || "";
+    if (da !== db) return db.localeCompare(da);
+    return a.localeCompare(b);
+  });
+}
+
+function clusterLatestDate(ids: string[], byId: Map<string, Transaction>): string {
+  let best = "";
+  for (const id of ids) {
+    const d = byId.get(id)?.booking_date || "";
+    if (d > best) best = d;
+  }
+  return best;
+}
+
 function signedAmount(t: Transaction): number {
   const raw =
     t.amount_usd != null && t.amount_usd !== "" ? t.amount_usd : t.amount;
@@ -91,15 +110,22 @@ export function buildSmartGroups(
   const largeMinAbs = opts.largeMinAbs ?? 150;
   const nearIdenticalMin = opts.nearIdenticalMin ?? 2;
   const catMap = new Map(categories.map((c) => [c.id, c]));
+  const byId = new Map(pool.map((t) => [t.id, t]));
 
   const expenses = pool.filter((t) => isExpense(t) && !t.is_internal_transfer);
+  // Prefer recent large spends: among top abs, sort newest first
   const byAbs = expenses
     .slice()
-    .sort((a, b) => absAmount(b) - absAmount(a));
+    .sort((a, b) => {
+      const da = absAmount(a) - absAmount(b);
+      if (Math.abs(da) > 0.01) return absAmount(b) - absAmount(a);
+      return (b.booking_date || "").localeCompare(a.booking_date || "");
+    });
   const largeCut = byAbs.filter((t) => absAmount(t) >= largeMinAbs);
-  const largeIds = (largeCut.length >= 5 ? largeCut : byAbs)
-    .slice(0, largeTopN)
-    .map((t) => t.id);
+  const largeIds = sortNewestFirst(
+    (largeCut.length >= 5 ? largeCut : byAbs).slice(0, largeTopN).map((t) => t.id),
+    byId,
+  );
 
   // Near-identical: same vendor key + similar amount (2% or exact)
   const nearBuckets = new Map<string, Transaction[]>();
@@ -126,7 +152,16 @@ export function buildSmartGroups(
       hint: `${txs.length}× same amount`,
     });
   }
-  nearClusters.sort((a, b) => b.transactionIds.length - a.transactionIds.length);
+  for (const c of nearClusters) {
+    c.transactionIds = sortNewestFirst(c.transactionIds, byId);
+  }
+  nearClusters.sort((a, b) => {
+    const ld = clusterLatestDate(b.transactionIds, byId).localeCompare(
+      clusterLatestDate(a.transactionIds, byId),
+    );
+    if (ld !== 0) return ld;
+    return b.transactionIds.length - a.transactionIds.length;
+  });
 
   // Suspected internal transfers (not already flagged)
   const suspected = pool.filter((t) => {
@@ -191,7 +226,6 @@ export function buildSmartGroups(
       hint: `${months.size} months · ~same amount`,
     });
   }
-  recurringClusters.sort((a, b) => b.transactionIds.length - a.transactionIds.length);
 
   // Top merchants by count (blank/other preferred in sort)
   const merchantCounts = new Map<string, { label: string; ids: string[]; blank: number }>();
@@ -225,6 +259,21 @@ export function buildSmartGroups(
     return FEE_ATM_HINT.test(text);
   });
 
+  for (const c of recurringClusters) {
+    c.transactionIds = sortNewestFirst(c.transactionIds, byId);
+  }
+  recurringClusters.sort((a, b) => {
+    const ld = clusterLatestDate(b.transactionIds, byId).localeCompare(
+      clusterLatestDate(a.transactionIds, byId),
+    );
+    if (ld !== 0) return ld;
+    return b.transactionIds.length - a.transactionIds.length;
+  });
+
+  for (const c of topMerchants) {
+    c.transactionIds = sortNewestFirst(c.transactionIds, byId);
+  }
+
   const groups: SmartGroup[] = [
     {
       id: "large_amounts",
@@ -244,21 +293,30 @@ export function buildSmartGroups(
       id: "suspected_transfers",
       title: "Suspected internal transfers",
       description: "Look like account-to-account moves but are not flagged internal yet.",
-      transactionIds: suspected.map((t) => t.id),
+      transactionIds: sortNewestFirst(
+        suspected.map((t) => t.id),
+        byId,
+      ),
       clusters: [],
     },
     {
       id: "uncategorized_income",
       title: "Uncategorized income",
       description: "Money in without a clear category (salary, refunds, transfers in).",
-      transactionIds: uncatIncome.map((t) => t.id),
+      transactionIds: sortNewestFirst(
+        uncatIncome.map((t) => t.id),
+        byId,
+      ),
       clusters: [],
     },
     {
       id: "stuck_other",
       title: "Stuck in Other",
       description: "Tagged Other / Uncategorized — they still hurt spending coverage.",
-      transactionIds: stuckOther.map((t) => t.id),
+      transactionIds: sortNewestFirst(
+        stuckOther.map((t) => t.id),
+        byId,
+      ),
       clusters: [],
     },
     {
@@ -279,7 +337,10 @@ export function buildSmartGroups(
       id: "fees_atm",
       title: "Fees & ATM / cash",
       description: "Bank fees, ATM withdrawals, and similar charge patterns.",
-      transactionIds: feesAtm.map((t) => t.id),
+      transactionIds: sortNewestFirst(
+        feesAtm.map((t) => t.id),
+        byId,
+      ),
       clusters: [],
     },
   ];

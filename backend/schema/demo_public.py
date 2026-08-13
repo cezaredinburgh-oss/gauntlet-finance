@@ -200,20 +200,7 @@ DEMO_TOUR_RULES: list[CategoryRule] = [
         created_at=_TS,
         updated_at=_TS,
     ),
-    CategoryRule(
-        id=UUID("aa200001-0000-4000-8000-000000000003"),
-        priority=30,
-        match_field=MatchField.MERCHANT,
-        match_type=MatchType.CONTAINS,
-        match_value="Allianz",
-        category_id=CAT_INSURANCE,
-        set_internal_transfer=False,
-        institution_scope=None,
-        is_active=True,
-        notes="demo:insurance",
-        created_at=_TS,
-        updated_at=_TS,
-    ),
+    # Allianz intentionally omitted from clean public seeds (not a default residual rule).
     CategoryRule(
         id=UUID("aa200001-0000-4000-8000-000000000004"),
         priority=40,

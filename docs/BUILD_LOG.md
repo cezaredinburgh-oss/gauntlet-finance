@@ -4,6 +4,16 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Categorize reliability polish
+
+- **In-mode workbench:** Groups/AI keep the tx table + guided flow without trapping the user in Review; focus clears on done.
+- **AI queue:** prune applied merchants; exclude applied keys; pass `date_from`/`date_to`; show-txs no longer forces empty Uncategorized filter.
+- **Coverage:** refresh after assign/undo; label clarifies expense-only (income does not move %).
+- **Apply rules:** fills **blanks and Other/Uncategorized** (import residual), so starter install can move coverage.
+- **Starter pack:** skips personal lifestyle (moto/biz/local haunts); fuel → Fuel (car); sandbox bootstrap uses public ensure.
+- **Clean seeds:** Allianz rule removed from public demo + owner minimal seed defaults.
+- **Groups:** newest booking_date first; **sandbox hints** map wellness/spa → Fitness, hotel → Going out.
+
 ## 2026-08-12 — Categorize workspace redesign (guided flow + AI + groups)
 
 - **Guided assign:** after manual category assign → offer find-similar → filter to similar (same vendor + amount sign) → group-assign with uncheck exclusions → restore filters → plain-English rule offer (exclusion warnings via `ruleExplain`).

@@ -194,6 +194,43 @@ def test_quota_blocks_second_call():
     assert r2.message and "limit" in r2.message.lower()
 
 
+def test_apply_rules_reclassifies_other():
+    from backend.schema.default_categories import CAT_GROCERIES, CAT_OTHER
+    from backend.schema.models import CategoryRule, MatchField, MatchType
+    from backend.services.categorization import apply_rules_fill_blanks
+    from backend.common.timeutil import utc_now
+
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    t = tx(merchant="Lidl", category_id=CAT_OTHER)
+    repo.upsert_rows("Transactions", [t])
+    now = utc_now()
+    repo.upsert_rows(
+        "CategoryRules",
+        [
+            CategoryRule(
+                id=uuid4(),
+                priority=10,
+                match_field=MatchField.MERCHANT,
+                match_type=MatchType.CONTAINS,
+                match_value="Lidl",
+                category_id=CAT_GROCERIES,
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        ],
+    )
+    r = apply_rules_fill_blanks(repo)
+    assert r["filled"] == 1
+    from backend.schema.models import Transaction
+
+    updated = next(
+        x for x in repo.list_rows("Transactions") if isinstance(x, Transaction)
+    )
+    assert updated.category_id == CAT_GROCERIES
+
+
 def test_parse_json_object_fence():
     raw = '```json\n{"suggestions":[]}\n```'
     data = ai_client.parse_json_object(raw)
@@ -291,6 +328,61 @@ def test_sandbox_heuristic_no_other_dump():
     assert by_key["m:obscure xyz"].category_id == ""
     assert by_key["m:lidl"].needs_human is False
     assert by_key["m:lidl"].category_id == str(CAT_GROCERIES)
+
+
+def test_suggest_respects_date_window():
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    old = tx(merchant="Old Shop", booking_date="2020-01-15")
+    new = tx(merchant="New Shop", booking_date="2026-08-01")
+    repo.upsert_rows("Transactions", [old, new])
+
+    keys_seen: list[str] = []
+
+    def fake_chat(**kwargs) -> ChatResult:
+        keys_seen.append(kwargs["user"])
+        return ChatResult(
+            content=json.dumps({"suggestions": []}),
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
+            model="grok-4.3",
+        )
+
+    r = ai_categorize.suggest_categories(
+        repo,
+        principal="e:dates@x",
+        settings=_settings(),
+        chat_fn=fake_chat,
+        date_from="2026-01-01",
+        date_to="2026-12-31",
+    )
+    assert r.merchants_considered == 1
+    assert "new shop" in keys_seen[0].lower() or "New Shop" in keys_seen[0]
+    assert "Old Shop" not in keys_seen[0]
+
+
+def test_sandbox_hint_wellness_maps_fitness():
+    from backend.services.ai_sandbox_fallback import suggest_merchants_heuristic
+
+    cats = list(DEFAULT_CATEGORIES)
+    clusters = [
+        ai_categorize.MerchantCluster(
+            merchant_key="m:hotel olsanka",
+            label="Hotel Olsanka",
+            amount_sign="out",
+            currency="CZK",
+            sample_count=1,
+            transaction_ids=["h1"],
+        )
+    ]
+    out = suggest_merchants_heuristic(
+        clusters, cats, hint="wellness", hint_merchant_key="m:hotel olsanka"
+    )
+    assert len(out) == 1
+    assert out[0].needs_human is False
+    assert out[0].category_name  # Fitness or similar
+    assert "wellness" in out[0].reason.lower() or "fitness" in out[0].category_name.lower()
 
 
 def test_suggest_hint_and_exclude():

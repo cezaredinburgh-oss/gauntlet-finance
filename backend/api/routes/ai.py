@@ -40,6 +40,8 @@ class CategorizeSuggestRequest(BaseModel):
     exclude_merchant_keys: list[str] = Field(default_factory=list)
     merchant_key: str | None = None
     hint: str | None = None
+    date_from: str | None = None
+    date_to: str | None = None
 
 
 class CategorySuggestionItem(BaseModel):
@@ -112,6 +114,8 @@ def categorize_suggest(
         exclude_merchant_keys=body.exclude_merchant_keys or None,
         merchant_key=body.merchant_key,
         hint=body.hint,
+        date_from=body.date_from,
+        date_to=body.date_to,
         sandbox=_is_writable_sandbox(user),
     )
     return CategorizeSuggestResponse(

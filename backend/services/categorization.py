@@ -22,6 +22,7 @@ from backend.schema.default_categories import (
     CAT_ELECTRONICS,
     CAT_EXTERNAL_XFER,
     CAT_FITNESS,
+    CAT_FUEL_CAR,
     CAT_GOING_OUT,
     CAT_GROCERIES,
     CAT_INSURANCE,
@@ -299,17 +300,39 @@ def apply_match_to_all_transactions(
     }
 
 
+def _is_blank_or_other_category(
+    tx: Transaction,
+    cats: dict[UUID, Category],
+) -> bool:
+    """True when rules may still improve this row (null / Other / Uncategorized)."""
+    if tx.category_id is None:
+        return True
+    cat = cats.get(tx.category_id)
+    if cat is None:
+        return True
+    name = (cat.name or "").strip().lower()
+    if name in {"other", "uncategorized"}:
+        return True
+    if cat.life_domain is not None and cat.life_domain.value == "Other":
+        return True
+    return False
+
+
 def apply_rules_fill_blanks(repo: SheetsRepository) -> dict[str, Any]:
     """
-    Apply active rules only to transactions with empty category_id.
+    Apply active rules to blank *and* residual Other/Uncategorized rows.
 
-    Never touches category_override=True rows.
+    Never touches category_override=True rows. Import often assigns Other as a
+    fallback; treating only null as blank left coverage stuck after starter install.
     """
     rules = [
         r
         for r in repo.list_rows("CategoryRules")
         if isinstance(r, CategoryRule) and r.is_active and not r.archived
     ]
+    cats = {
+        c.id: c for c in repo.list_rows("Categories") if isinstance(c, Category)
+    }
     txs = [t for t in repo.list_rows("Transactions") if isinstance(t, Transaction) and not t.archived]
     now = utc_now()
     dirty: list[Transaction] = []
@@ -324,11 +347,17 @@ def apply_rules_fill_blanks(repo: SheetsRepository) -> dict[str, Any]:
         if tx.category_override:
             skipped_override += 1
             continue
-        if tx.category_id is not None:
+        if not _is_blank_or_other_category(tx, cats):
             skipped_already += 1
             continue
         updated = apply_category_rules(tx, rules, fallback_category_id=None)
-        if updated.category_id is not None:
+        if (
+            updated.category_id is not None
+            and (
+                updated.category_id != tx.category_id
+                or updated.is_internal_transfer != tx.is_internal_transfer
+            )
+        ):
             dirty.append(updated.model_copy(update={"updated_at": now}))
             filled += 1
         else:
@@ -717,16 +746,140 @@ def _rule_key(field: MatchField, value: str, category_id: UUID) -> str:
     return f"{field.value}|{value.lower().strip()}|{category_id}"
 
 
+# Needles / notes that encode personal lifestyle (moto, 3D print, local haunts).
+# Starter install skips these so new accounts get a generic pack only.
+_PERSONAL_STARTER_FRAGMENTS: frozenset[str] = frozenset(
+    {
+        "harley",
+        "ducati",
+        "yamaha",
+        "honda moto",
+        "4ride",
+        "chrome burnout",
+        "hein gericke",
+        "moto",
+        "motorcycl",
+        "prusa",
+        "prusament",
+        "bambu",
+        "filament",
+        "elegoo",
+        "anycubic",
+        "esun",
+        "sunlu",
+        "polymaker",
+        "3d print",
+        "resin",
+        "hell's barber",
+        "hells barber",
+        "artic bakehouse",
+        "bakehouse",
+        "hoxton",
+        "ilunch",
+        "bon fresh",
+        "active people",
+        "form factory",
+        "world class",
+        "anytime fitness",
+        "bestfit",
+        "best fit",
+        "moto fuel",
+        "moto_",
+        "biz_",
+        "business",
+        "self-education",
+        "cezary",
+    }
+)
+
+# Lifestyle category targets — never install via generic starter.
+_PERSONAL_STARTER_CATEGORY_IDS: frozenset[UUID] = frozenset()
+
+
+def _remap_generic_starter_category(cat_id: UUID) -> UUID | None:
+    """
+    Map lifestyle category targets to neutral ones for starter install.
+    Returns None if the rule should be skipped entirely.
+    """
+    from backend.schema.default_categories import (
+        CAT_BIZ_MATERIALS,
+        CAT_BIZ_TOOLS,
+        CAT_BIZ_SHIPPING,
+        CAT_BIZ_OTHER,
+        CAT_BIZ_INCOME,
+        CAT_FUEL_CAR,
+        CAT_MOTORCYCLING,
+        CAT_MOTO_FUEL,
+        CAT_MOTO_GEAR,
+        CAT_MOTO_SERVICE,
+        CAT_MOTO_INSURANCE,
+        CAT_MOTO_OTHER,
+    )
+
+    if cat_id == CAT_MOTO_FUEL:
+        return CAT_FUEL_CAR
+    personal_skip = {
+        CAT_BIZ_MATERIALS,
+        CAT_BIZ_TOOLS,
+        CAT_BIZ_SHIPPING,
+        CAT_BIZ_OTHER,
+        CAT_BIZ_INCOME,
+        CAT_MOTORCYCLING,
+        CAT_MOTO_GEAR,
+        CAT_MOTO_SERVICE,
+        CAT_MOTO_INSURANCE,
+        CAT_MOTO_OTHER,
+    }
+    if cat_id in personal_skip:
+        return None
+    return cat_id
+
+
+def _is_personal_starter_rule(
+    needle: str,
+    notes: str,
+    cat_id: UUID,
+) -> bool:
+    """True when needle/notes encode owner lifestyle (after category remap)."""
+    blob = f"{needle} {notes}".lower()
+    # Fuel brands are generic — keep if remapped to car fuel
+    if any(
+        f in blob
+        for f in (
+            "shell",
+            "omv",
+            "benzina",
+            "orlen",
+            "eurooil",
+            "tank ono",
+            "amic",
+            "hunsgas",
+        )
+    ):
+        return False
+    if any(frag in blob for frag in _PERSONAL_STARTER_FRAGMENTS):
+        return True
+    return False
+
+
 def bootstrap_rules_from_data(
     repo: SheetsRepository,
     *,
     also_apply: bool = False,
+    public_demo: bool = False,
 ) -> dict[str, Any]:
     """
-    Ensure categories, add keyword + merchant-derived rules (no duplicates),
-    optionally fill-blank apply.
+    Ensure categories, add generic keyword + merchant-derived rules (no duplicates),
+    optionally apply to blanks & Other.
+
+    public_demo=True uses public category ensure (no owner self-education rule).
     """
-    ensure_stats = ensure_default_categories(repo)
+    if public_demo:
+        from backend.schema.demo_public import ensure_public_demo_categories
+
+        ensure_stats = ensure_public_demo_categories(repo)
+    else:
+        ensure_stats = ensure_default_categories(repo)
     existing_rules = [
         r for r in repo.list_rows("CategoryRules") if isinstance(r, CategoryRule) and not r.archived
     ]
@@ -735,11 +888,20 @@ def bootstrap_rules_from_data(
     }
     now = utc_now()
     created: list[CategoryRule] = []
+    skipped_personal = 0
 
-    # 1) Keyword pack
+    # 1) Keyword pack (generic only)
     for needle, field, cat_id, prio, notes in _KEYWORD_RULES:
         # Skip loose CRYPTO keyword that is too aggressive for match_type contains on description
         if needle == "CRYPTO":
+            continue
+        remapped = _remap_generic_starter_category(cat_id)
+        if remapped is None:
+            skipped_personal += 1
+            continue
+        cat_id = remapped
+        if _is_personal_starter_rule(needle, notes, cat_id):
+            skipped_personal += 1
             continue
         key = _rule_key(field, needle, cat_id)
         if key in seen:
@@ -791,6 +953,14 @@ def bootstrap_rules_from_data(
         cat_id = _map_merchant_label(label)
         if cat_id is None:
             continue
+        remapped = _remap_generic_starter_category(cat_id)
+        if remapped is None:
+            skipped_personal += 1
+            continue
+        cat_id = remapped
+        if _is_personal_starter_rule(label, "merchant", cat_id):
+            skipped_personal += 1
+            continue
         key = _rule_key(MatchField.MERCHANT, label, cat_id)
         if key in seen:
             continue
@@ -826,6 +996,7 @@ def bootstrap_rules_from_data(
     return {
         "ensure": ensure_stats,
         "rules_created": len(created),
+        "rules_skipped_personal": skipped_personal,
         "rules_total_active": len(
             [
                 r
@@ -855,11 +1026,11 @@ def _map_merchant_label(label: str) -> UUID | None:
         ("BAKEHOUSE", CAT_GROCERIES),
         ("PEKARNA", CAT_GROCERIES),
         ("PEKÁRNA", CAT_GROCERIES),
-        ("SHELL", CAT_MOTO_FUEL),
-        ("OMV", CAT_MOTO_FUEL),
-        ("BENZINA", CAT_MOTO_FUEL),
-        ("MOL", CAT_MOTO_FUEL),
-        ("ORLEN", CAT_MOTO_FUEL),
+        ("SHELL", CAT_FUEL_CAR),
+        ("OMV", CAT_FUEL_CAR),
+        ("BENZINA", CAT_FUEL_CAR),
+        ("MOL", CAT_FUEL_CAR),
+        ("ORLEN", CAT_FUEL_CAR),
         ("UBER", CAT_TAXI),
         ("BOLT", CAT_TAXI),
         ("LIME", CAT_TAXI),

@@ -266,7 +266,10 @@ async def bootstrap_rules(
             ),
         )
     also = True if body is None else body.also_apply
-    return bootstrap_rules_from_data(repo, also_apply=also)
+    public_demo = bool(user.is_demo and getattr(user, "demo_kind", "") == "sandbox")
+    return bootstrap_rules_from_data(
+        repo, also_apply=also, public_demo=public_demo
+    )
 
 
 @router.post("/categories/apply-rules")
