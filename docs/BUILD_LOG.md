@@ -4,6 +4,24 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-13 — New ET Review: AI clusters + guided assign
+
+- **AI-first:** New `POST /ai/categorize-clusters` asks Grok to pile residual txs (not merchant-key grouping, not `buildSmartGroups`). **No lab heuristic fallback** — requires `AI_ENABLED` + `XAI_API_KEY`.
+- Payload: id/date/merchant/short desc/sign/currency/rounded amount/institution; IBANs and long digit strings redacted.
+- Review: AI desk + ubiquitous guided assign → similar → rule (row, bulk, cluster apply) + 20s undo.
+- Internal-transfer piles set `is_internal_transfer` on apply. Old `/ai/categorize-suggest` unchanged.
+
+## 2026-08-13 — New ET (lab-only Expense tracking fork)
+
+- **Why:** Rework categorization without touching Expense tracking for owner, sandbox, tour, or other tenants.
+- **Gate:** `demo_kind === "lab"` (password lab principal, default `LAB_EMAIL=testaccount@o2.pl`). Sandbox/tour/owner do not see nav; `/new-et/*` redirects them to `/expenses/spending`.
+- **Copy:** `/new-et/spending` is a UI copy of Spending (same dashboard API). Chart/footer links go to `/new-et/categorize`.
+- **Categorize:** Review | Rules | Categories. Full ledger. No Groups/AI/guided similar/undo/latest-import/starter-rules/apply-rules. New: Income only filter, Uncategorized All, Categories CRUD, manual rule create.
+- **Ledger:** same APIs and sheet tabs. Old `/expenses/*` unchanged.
+- **Spec:** `docs/NEW_ET_SPEC.md`.
+
+---
+
 ## 2026-08-13 — Upload / categorize polish (focus, residual similar, prices)
 
 - **Upload:** outcome card collapses stats/SHA under “Import details”; always show filename + status.

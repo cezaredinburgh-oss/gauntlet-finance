@@ -13,6 +13,9 @@ import { PageLoader } from "./components/Spinner";
 import { DashboardPage } from "./pages/DashboardPage";
 import { SpendingPage } from "./pages/SpendingPage";
 import { CategorizePage } from "./pages/CategorizePage";
+import { NewEtSpendingPage } from "./pages/NewEtSpendingPage";
+import { NewEtCategorizePage } from "./pages/NewEtCategorizePage";
+import { NewEtGate } from "./components/NewEtGate";
 import { InvestmentsPage } from "./pages/InvestmentsPage";
 import { InvestmentsAnalysisPage } from "./pages/InvestmentsAnalysisPage";
 import { InvestmentsDcaPage } from "./pages/InvestmentsDcaPage";
@@ -140,6 +143,25 @@ export default function App() {
                     to="/expenses/categorize"
                     extraParams={{ panel: "rules" }}
                   />
+                }
+              />
+            </Route>
+            <Route path="new-et">
+              <Route index element={<Navigate to="spending" replace />} />
+              <Route
+                path="spending"
+                element={
+                  <NewEtGate>
+                    <NewEtSpendingPage />
+                  </NewEtGate>
+                }
+              />
+              <Route
+                path="categorize"
+                element={
+                  <NewEtGate>
+                    <NewEtCategorizePage />
+                  </NewEtGate>
                 }
               />
             </Route>

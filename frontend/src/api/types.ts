@@ -1067,3 +1067,38 @@ export type AiCategorizeSuggestResult = {
   quota_cap: number;
   message?: string | null;
 };
+
+/** New ET: Grok-built residual work piles (suggest-only). */
+export type AiClusterKind =
+  | "vendor"
+  | "near_identical"
+  | "internal_transfer"
+  | "income"
+  | "fee"
+  | "other";
+
+export type AiClusterSuggestion = {
+  cluster_key: string;
+  title: string;
+  kind: AiClusterKind | string;
+  transaction_ids: string[];
+  category_id: string;
+  category_name: string;
+  confidence: number;
+  reason: string;
+  needs_human: boolean;
+  sample_count: number;
+};
+
+export type AiCategorizeClustersResult = {
+  enabled: boolean;
+  configured: boolean;
+  model?: string | null;
+  clusters: AiClusterSuggestion[];
+  txs_considered: number;
+  clusters_suggested: number;
+  tokens_used: number;
+  quota_used: number;
+  quota_cap: number;
+  message?: string | null;
+};

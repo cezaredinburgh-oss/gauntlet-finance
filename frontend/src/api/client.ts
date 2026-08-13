@@ -1,4 +1,5 @@
 import type {
+  AiCategorizeClustersResult,
   AiCategorizeSuggestResult,
   AiColumnMap,
   AiMapStatementResult,
@@ -564,6 +565,22 @@ export const api = {
     request<ApplyRulesResult>("/categories/apply-rules", { method: "POST" }),
 
   aiStatus: () => request<AiStatus>("/ai/status"),
+
+  aiCategorizeClusters: (body: {
+    limit?: number;
+    date_from?: string;
+    date_to?: string;
+    exclude_transaction_ids?: string[];
+  } = {}) =>
+    request<AiCategorizeClustersResult>("/ai/categorize-clusters", {
+      method: "POST",
+      body: JSON.stringify({
+        limit: body.limit ?? null,
+        date_from: body.date_from || null,
+        date_to: body.date_to || null,
+        exclude_transaction_ids: body.exclude_transaction_ids || [],
+      }),
+    }),
 
   aiCategorizeSuggest: (body: {
     source_file_ids?: string[];

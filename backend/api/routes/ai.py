@@ -94,6 +94,75 @@ def ai_status(user: UserDep, settings: SettingsDep) -> AiStatusResponse:
     )
 
 
+class ClusterSuggestRequest(BaseModel):
+    limit: int | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    exclude_transaction_ids: list[str] = Field(default_factory=list)
+
+
+class ClusterSuggestionItem(BaseModel):
+    cluster_key: str
+    title: str
+    kind: str
+    transaction_ids: list[str]
+    category_id: str
+    category_name: str
+    confidence: float
+    reason: str
+    needs_human: bool = False
+    sample_count: int
+
+
+class ClusterSuggestResponse(BaseModel):
+    enabled: bool
+    configured: bool
+    model: str | None = None
+    clusters: list[ClusterSuggestionItem]
+    txs_considered: int
+    clusters_suggested: int
+    tokens_used: int
+    quota_used: int
+    quota_cap: int
+    message: str | None = None
+
+
+@router.post("/categorize-clusters", response_model=ClusterSuggestResponse)
+def categorize_clusters(
+    body: ClusterSuggestRequest,
+    user: WritableUserDep,
+    repo: RepoDep,
+    settings: SettingsDep,
+) -> ClusterSuggestResponse:
+    """New ET: Grok builds residual work piles. Suggest-only. No heuristic fallback."""
+    from backend.services import ai_clusters
+
+    principal = ai_quota.principal_key(user.user_id, user.email)
+    result = ai_clusters.suggest_clusters(
+        repo,
+        principal=principal,
+        settings=settings,
+        limit=body.limit,
+        date_from=body.date_from,
+        date_to=body.date_to,
+        exclude_transaction_ids=body.exclude_transaction_ids or None,
+    )
+    return ClusterSuggestResponse(
+        enabled=result.enabled,
+        configured=result.configured,
+        model=result.model,
+        clusters=[
+            ClusterSuggestionItem(**ai_clusters.cluster_to_dict(c)) for c in result.clusters
+        ],
+        txs_considered=result.txs_considered,
+        clusters_suggested=result.clusters_suggested,
+        tokens_used=result.tokens_used,
+        quota_used=result.quota_used,
+        quota_cap=result.quota_cap,
+        message=result.message,
+    )
+
+
 @router.post("/categorize-suggest", response_model=CategorizeSuggestResponse)
 def categorize_suggest(
     body: CategorizeSuggestRequest,

@@ -12,6 +12,7 @@ import {
   Wallet,
   ChevronDown,
   Receipt,
+  FlaskConical,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -34,6 +35,7 @@ import {
   pruneSeenAlertKeys,
 } from "../lib/alertSeen";
 import { cn } from "../lib/cn";
+import { isNewEtUser } from "../lib/newEtAccess";
 
 type NavLeaf = {
   kind: "leaf";
@@ -57,36 +59,58 @@ type NavGroup = {
 
 type NavItem = NavLeaf | NavGroup;
 
-const nav: NavItem[] = [
-  { kind: "leaf", to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  {
-    kind: "group",
-    id: "expenses",
-    label: "Expense tracking",
-    icon: Wallet,
-    defaultTo: "/expenses/spending",
-    children: [
-      { kind: "leaf", to: "/expenses/spending", label: "Spending", icon: Wallet },
-      { kind: "leaf", to: "/expenses/categorize", label: "Categorize", icon: Tags },
-      { kind: "leaf", to: "/expenses/alerts", label: "Alerts", icon: Bell, badge: "alerts" },
-    ],
-  },
-  {
-    kind: "group",
-    id: "investments",
-    label: "Investments",
-    icon: LineChart,
-    defaultTo: "/investments",
-    children: [
-      { kind: "leaf", to: "/investments", label: "Holdings", icon: LineChart, end: true },
-      { kind: "leaf", to: "/investments/analysis", label: "Analysis", icon: LineChart },
-      { kind: "leaf", to: "/investments/dca", label: "DCA", icon: LineChart },
-      { kind: "leaf", to: "/investments/tax", label: "Tax", icon: Receipt },
-    ],
-  },
-  { kind: "leaf", to: "/upload", label: "Upload", icon: Upload },
-  { kind: "leaf", to: "/settings", label: "Settings", icon: Settings },
-];
+const expensesGroup: NavGroup = {
+  kind: "group",
+  id: "expenses",
+  label: "Expense tracking",
+  icon: Wallet,
+  defaultTo: "/expenses/spending",
+  children: [
+    { kind: "leaf", to: "/expenses/spending", label: "Spending", icon: Wallet },
+    { kind: "leaf", to: "/expenses/categorize", label: "Categorize", icon: Tags },
+    { kind: "leaf", to: "/expenses/alerts", label: "Alerts", icon: Bell, badge: "alerts" },
+  ],
+};
+
+const newEtGroup: NavGroup = {
+  kind: "group",
+  id: "new-et",
+  label: "New ET",
+  icon: FlaskConical,
+  defaultTo: "/new-et/spending",
+  children: [
+    { kind: "leaf", to: "/new-et/spending", label: "Spending", icon: Wallet },
+    { kind: "leaf", to: "/new-et/categorize", label: "Categorize", icon: Tags },
+  ],
+};
+
+const investmentsGroupDef: NavGroup = {
+  kind: "group",
+  id: "investments",
+  label: "Investments",
+  icon: LineChart,
+  defaultTo: "/investments",
+  children: [
+    { kind: "leaf", to: "/investments", label: "Holdings", icon: LineChart, end: true },
+    { kind: "leaf", to: "/investments/analysis", label: "Analysis", icon: LineChart },
+    { kind: "leaf", to: "/investments/dca", label: "DCA", icon: LineChart },
+    { kind: "leaf", to: "/investments/tax", label: "Tax", icon: Receipt },
+  ],
+};
+
+function buildNav(showNewEt: boolean): NavItem[] {
+  const items: NavItem[] = [
+    { kind: "leaf", to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+    expensesGroup,
+  ];
+  if (showNewEt) items.push(newEtGroup);
+  items.push(
+    investmentsGroupDef,
+    { kind: "leaf", to: "/upload", label: "Upload", icon: Upload },
+    { kind: "leaf", to: "/settings", label: "Settings", icon: Settings },
+  );
+  return items;
+}
 
 /** Primary destinations for the mobile bottom bar */
 const mobileBottom: Array<{
@@ -110,6 +134,7 @@ const mobileBottom: Array<{
 
 const EXPENSES_OPEN_KEY = "nav.expenses.open";
 const INVESTMENTS_OPEN_KEY = "nav.investments.open";
+const NEW_ET_OPEN_KEY = "nav.new-et.open";
 
 function pathInGroup(pathname: string, group: NavGroup): boolean {
   return group.children.some(
@@ -128,20 +153,26 @@ function leafActiveClass(isActive: boolean): string {
 
 /** Stable sidebar/drawer nav (not recreated inside Layout each render). */
 function NavItems({
+  items,
   pathname,
   expensesOpen,
   investmentsOpen,
+  newEtOpen,
   setExpensesOpen,
   setInvestmentsOpen,
+  setNewEtOpen,
   alertBadge,
   onNavigate,
   navigate,
 }: {
+  items: NavItem[];
   pathname: string;
   expensesOpen: boolean;
   investmentsOpen: boolean;
+  newEtOpen: boolean;
   setExpensesOpen: Dispatch<SetStateAction<boolean>>;
   setInvestmentsOpen: Dispatch<SetStateAction<boolean>>;
+  setNewEtOpen: Dispatch<SetStateAction<boolean>>;
   /** Unseen active alerts (all levels); only on Alerts leaf, not group header */
   alertBadge: number;
   onNavigate?: () => void;
@@ -173,7 +204,7 @@ function NavItems({
 
   return (
     <nav className="flex flex-col gap-1 p-3">
-      {nav.map((item) => {
+      {items.map((item) => {
         if (item.kind === "leaf") {
           return renderLeaf(item, { onNavigate });
         }
@@ -184,7 +215,9 @@ function NavItems({
             ? expensesOpen
             : item.id === "investments"
               ? investmentsOpen
-              : true;
+              : item.id === "new-et"
+                ? newEtOpen
+                : true;
         const groupActive = pathInGroup(pathname, item);
 
         return (
@@ -208,6 +241,7 @@ function NavItems({
                 onClick={() => {
                   if (item.id === "expenses") setExpensesOpen(true);
                   if (item.id === "investments") setInvestmentsOpen(true);
+                  if (item.id === "new-et") setNewEtOpen(true);
                   navigate(item.defaultTo);
                   onNavigate?.();
                 }}
@@ -231,6 +265,7 @@ function NavItems({
                 onClick={() => {
                   if (item.id === "expenses") setExpensesOpen((v) => !v);
                   if (item.id === "investments") setInvestmentsOpen((v) => !v);
+                  if (item.id === "new-et") setNewEtOpen((v) => !v);
                 }}
               >
                 <ChevronDown
@@ -264,16 +299,11 @@ export function Layout() {
   /** Always-current inventory for event-driven badge recompute (avoids empty-state race). */
   const alertItemsRef = useRef<AlertItem[]>([]);
 
-  const expensesGroup = useMemo(
-    () => nav.find((n): n is NavGroup => n.kind === "group" && n.id === "expenses")!,
-    [],
-  );
-  const investmentsGroup = useMemo(
-    () => nav.find((n): n is NavGroup => n.kind === "group" && n.id === "investments")!,
-    [],
-  );
+  const showNewEt = isNewEtUser(user);
+  const navItems = useMemo(() => buildNav(showNewEt), [showNewEt]);
   const expensesActive = pathInGroup(location.pathname, expensesGroup);
-  const investmentsActive = pathInGroup(location.pathname, investmentsGroup);
+  const investmentsActive = pathInGroup(location.pathname, investmentsGroupDef);
+  const newEtActive = pathInGroup(location.pathname, newEtGroup);
 
   const [expensesOpen, setExpensesOpen] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -299,6 +329,18 @@ export function Layout() {
     }
     return true;
   });
+  const [newEtOpen, setNewEtOpen] = useState(() => {
+    if (typeof window === "undefined") return true;
+    if (window.location.pathname.startsWith("/new-et")) return true;
+    try {
+      const stored = sessionStorage.getItem(NEW_ET_OPEN_KEY);
+      if (stored === "0") return false;
+      if (stored === "1") return true;
+    } catch {
+      /* ignore */
+    }
+    return true;
+  });
 
   useEffect(() => {
     if (expensesActive && !expensesOpen) setExpensesOpen(true);
@@ -306,6 +348,9 @@ export function Layout() {
   useEffect(() => {
     if (investmentsActive && !investmentsOpen) setInvestmentsOpen(true);
   }, [investmentsActive, investmentsOpen]);
+  useEffect(() => {
+    if (newEtActive && !newEtOpen) setNewEtOpen(true);
+  }, [newEtActive, newEtOpen]);
 
   useEffect(() => {
     try {
@@ -321,6 +366,13 @@ export function Layout() {
       /* ignore */
     }
   }, [investmentsOpen]);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(NEW_ET_OPEN_KEY, newEtOpen ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [newEtOpen]);
 
   const applyAlertItems = useCallback((items: AlertItem[]) => {
     pruneSeenAlertKeys(items);
@@ -452,11 +504,14 @@ export function Layout() {
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           <NavItems
+            items={navItems}
             pathname={location.pathname}
             expensesOpen={expensesOpen}
             investmentsOpen={investmentsOpen}
+            newEtOpen={newEtOpen}
             setExpensesOpen={setExpensesOpen}
             setInvestmentsOpen={setInvestmentsOpen}
+            setNewEtOpen={setNewEtOpen}
             alertBadge={alertBadge}
             navigate={navigate}
           />
@@ -517,11 +572,14 @@ export function Layout() {
             </div>
             <div className="flex-1 overflow-y-auto">
               <NavItems
+                items={navItems}
                 pathname={location.pathname}
                 expensesOpen={expensesOpen}
                 investmentsOpen={investmentsOpen}
+                newEtOpen={newEtOpen}
                 setExpensesOpen={setExpensesOpen}
                 setInvestmentsOpen={setInvestmentsOpen}
+                setNewEtOpen={setNewEtOpen}
                 alertBadge={alertBadge}
                 navigate={navigate}
                 onNavigate={() => setMobileOpen(false)}
