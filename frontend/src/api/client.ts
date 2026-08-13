@@ -562,13 +562,37 @@ export const api = {
   aiCategorizeSuggest: (body: {
     source_file_ids?: string[];
     limit?: number;
+    exclude_merchant_keys?: string[];
+    merchant_key?: string;
+    hint?: string;
   } = {}) =>
     request<AiCategorizeSuggestResult>("/ai/categorize-suggest", {
       method: "POST",
       body: JSON.stringify({
         source_file_ids: body.source_file_ids || [],
         limit: body.limit ?? null,
+        exclude_merchant_keys: body.exclude_merchant_keys || [],
+        merchant_key: body.merchant_key ?? null,
+        hint: body.hint ?? null,
       }),
+    }),
+
+  /** Undo category assigns — restore prior category_id / override flags. */
+  restoreAssignments: (
+    items: Array<{
+      transaction_id: string;
+      category_id: string | null;
+      category_override: boolean;
+      is_internal_transfer?: boolean | null;
+    }>,
+  ) =>
+    request<{
+      updated: number;
+      missing: number;
+      transaction_ids: string[];
+    }>("/categories/restore-assignments", {
+      method: "POST",
+      body: JSON.stringify({ items }),
     }),
 
   /** Map unknown cash CSV via Grok (preview). Prefer content_sha256 from failed upload. */

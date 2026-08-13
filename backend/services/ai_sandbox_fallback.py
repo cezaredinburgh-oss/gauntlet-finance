@@ -13,7 +13,6 @@ from uuid import UUID
 from backend.schema.default_categories import (
     CAT_COFFEE,
     CAT_GROCERIES,
-    CAT_OTHER,
     CAT_RESTAURANTS,
     CAT_SALARY,
     CAT_SOFTWARE,
@@ -60,35 +59,47 @@ _MERCHANT_HINTS: list[tuple[str, UUID]] = [
 def suggest_merchants_heuristic(
     clusters: list[MerchantCluster],
     categories: list[Category],
+    *,
+    hint: str | None = None,
+    hint_merchant_key: str | None = None,
 ) -> list[CategorySuggestion]:
+    """
+    Sandbox demo heuristics. Unknown merchants → needs_human (never Other).
+    """
     by_id = {str(c.id): c for c in categories if not c.archived}
-    # Prefer named defaults that exist in the tenant sheet
+    hint_l = (hint or "").strip().lower()
     out: list[CategorySuggestion] = []
     for cl in clusters:
         label_l = cl.label.lower()
+        blob = f"{label_l} {cl.description_sample.lower()}"
+        if hint_l and (not hint_merchant_key or hint_merchant_key == cl.merchant_key):
+            blob = f"{blob} {hint_l}"
         chosen: UUID | None = None
         reason = "sandbox demo match"
         for needle, cat_id in _MERCHANT_HINTS:
-            if needle in label_l and str(cat_id) in by_id:
+            if needle in blob and str(cat_id) in by_id:
                 chosen = cat_id
                 reason = f"sandbox demo · matched “{needle}”"
                 break
-        if chosen is None:
-            # income-looking positive clusters
-            if cl.amount_sign == "in" and str(CAT_SALARY) in by_id:
+        if chosen is None and cl.amount_sign == "in" and str(CAT_SALARY) in by_id:
+            # Only map to salary when label looks like payroll
+            if any(k in blob for k in ("salary", "payroll", "mzda", "wage")):
                 chosen = CAT_SALARY
-                reason = "sandbox demo · money-in → Salary"
-            elif str(CAT_OTHER) in by_id:
-                chosen = CAT_OTHER
-                reason = "sandbox demo · fallback Other"
-            else:
-                # any non-archived leaf-ish category
-                for c in categories:
-                    if not c.archived and c.parent_id is not None:
-                        chosen = c.id
-                        reason = "sandbox demo · fallback category"
-                        break
+                reason = "sandbox demo · money-in payroll → Salary"
         if chosen is None or str(chosen) not in by_id:
+            out.append(
+                CategorySuggestion(
+                    merchant_key=cl.merchant_key,
+                    label=cl.label,
+                    category_id="",
+                    category_name="",
+                    confidence=0.35,
+                    reason="Needs you · no confident sandbox match",
+                    transaction_ids=list(cl.transaction_ids),
+                    sample_count=cl.sample_count,
+                    needs_human=True,
+                )
+            )
             continue
         cat = by_id[str(chosen)]
         out.append(
@@ -97,13 +108,21 @@ def suggest_merchants_heuristic(
                 label=cl.label,
                 category_id=str(chosen),
                 category_name=cat.name or "",
-                confidence=0.72 if "matched" in reason else 0.55,
+                confidence=0.78 if "matched" in reason else 0.62,
                 reason=reason,
                 transaction_ids=list(cl.transaction_ids),
                 sample_count=cl.sample_count,
+                needs_human=False,
             )
         )
-    out.sort(key=lambda s: (-s.confidence, -s.sample_count, s.label.lower()))
+    out.sort(
+        key=lambda s: (
+            1 if s.needs_human else 0,
+            -s.confidence,
+            -s.sample_count,
+            s.label.lower(),
+        )
+    )
     return out
 
 

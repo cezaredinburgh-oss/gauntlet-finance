@@ -4,6 +4,16 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-12 — Categorize workspace redesign (guided flow + AI + groups)
+
+- **Guided assign:** after manual category assign → offer find-similar → filter to similar (same vendor + amount sign) → group-assign with uncheck exclusions → restore filters → plain-English rule offer (exclusion warnings via `ruleExplain`).
+- **Undo toast (~20s):** `POST /categories/restore-assignments` restores prior `category_id` / override / internal flag (supports clear-to-null).
+- **Modes:** Review | Groups | AI assist | Rules. Tools labels: Install starter rules / Fill blanks from my rules. Grok only in AI assist.
+- **AI quality:** leaf-only catalog; never suggest Other (needs_human); default batch 12; hint + exclude_merchant_keys; sandbox unknown → needs_human not Other.
+- **AI apply:** Review & apply opens similar-review (no silent full-cluster write).
+- **Groups:** large amounts, near-identical, suspected transfers, uncategorized income, stuck Other, recurring, top merchants, fees/ATM (`smartGroups.ts`).
+- CategoryEngine / import rules authority unchanged; AI still suggest-only until human confirm.
+
 ## 2026-08-12 — Demo accounts start on setup onboarding
 
 - Both sandbox and tour enter → `/onboarding` (reset per-demo localStorage keys).

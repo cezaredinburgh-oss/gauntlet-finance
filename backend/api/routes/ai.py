@@ -37,6 +37,9 @@ class CategorizeSuggestRequest(BaseModel):
 
     source_file_ids: list[str] = Field(default_factory=list)
     limit: int | None = None
+    exclude_merchant_keys: list[str] = Field(default_factory=list)
+    merchant_key: str | None = None
+    hint: str | None = None
 
 
 class CategorySuggestionItem(BaseModel):
@@ -48,6 +51,7 @@ class CategorySuggestionItem(BaseModel):
     reason: str
     transaction_ids: list[str]
     sample_count: int
+    needs_human: bool = False
 
 
 class CategorizeSuggestResponse(BaseModel):
@@ -105,6 +109,9 @@ def categorize_suggest(
         settings=settings,
         source_file_ids=body.source_file_ids or None,
         limit=body.limit,
+        exclude_merchant_keys=body.exclude_merchant_keys or None,
+        merchant_key=body.merchant_key,
+        hint=body.hint,
         sandbox=_is_writable_sandbox(user),
     )
     return CategorizeSuggestResponse(
@@ -121,6 +128,7 @@ def categorize_suggest(
                 reason=s.reason,
                 transaction_ids=s.transaction_ids,
                 sample_count=s.sample_count,
+                needs_human=bool(s.needs_human),
             )
             for s in result.suggestions
         ],

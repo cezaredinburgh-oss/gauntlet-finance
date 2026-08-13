@@ -57,6 +57,25 @@ class BulkCategoryOverrideResponse(BaseModel):
     transaction_ids: list[UUID] = Field(default_factory=list)
 
 
+class RestoreAssignmentItem(BaseModel):
+    """Previous category state for undo (category_id null = clear)."""
+
+    transaction_id: UUID
+    category_id: UUID | None = None
+    category_override: bool = False
+    is_internal_transfer: bool | None = None
+
+
+class RestoreAssignmentsRequest(BaseModel):
+    items: list[RestoreAssignmentItem] = Field(default_factory=list, min_length=1)
+
+
+class RestoreAssignmentsResponse(BaseModel):
+    updated: int
+    missing: int
+    transaction_ids: list[UUID] = Field(default_factory=list)
+
+
 class ApplyMatchResult(BaseModel):
     scanned: int
     matched: int

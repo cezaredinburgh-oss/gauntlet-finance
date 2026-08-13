@@ -1027,6 +1027,8 @@ export type AiCategorySuggestion = {
   reason: string;
   transaction_ids: string[];
   sample_count: number;
+  /** True when model is unsure — no Other dump; user must pick. */
+  needs_human?: boolean;
 };
 
 export type AiCategorizeSuggestResult = {

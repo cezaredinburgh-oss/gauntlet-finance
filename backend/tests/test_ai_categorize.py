@@ -206,3 +206,135 @@ def test_status_payload():
     assert st["mode"] == "platform"
     st2 = ai_categorize.status_payload(_settings(ai_enabled=False))
     assert st2["mode"] == "off"
+
+
+def test_validate_other_becomes_needs_human():
+    cats = list(DEFAULT_CATEGORIES)
+    clusters = [
+        ai_categorize.MerchantCluster(
+            merchant_key="m:weird shop",
+            label="Weird Shop",
+            amount_sign="out",
+            currency="CZK",
+            sample_count=1,
+            transaction_ids=["x"],
+        )
+    ]
+    raw = {
+        "suggestions": [
+            {
+                "merchant_key": "m:weird shop",
+                "category_id": str(CAT_OTHER),
+                "confidence": 0.95,
+                "reason": "dunno",
+            }
+        ]
+    }
+    out = ai_categorize._validate_suggestions(raw, clusters, cats)
+    assert len(out) == 1
+    assert out[0].needs_human is True
+    assert out[0].category_id == ""
+
+
+def test_validate_low_confidence_needs_human():
+    cats = list(DEFAULT_CATEGORIES)
+    clusters = [
+        ai_categorize.MerchantCluster(
+            merchant_key="m:lidl",
+            label="Lidl",
+            amount_sign="out",
+            currency="CZK",
+            sample_count=1,
+            transaction_ids=["a"],
+        )
+    ]
+    raw = {
+        "suggestions": [
+            {
+                "merchant_key": "m:lidl",
+                "category_id": str(CAT_GROCERIES),
+                "confidence": 0.2,
+                "reason": "maybe",
+            }
+        ]
+    }
+    out = ai_categorize._validate_suggestions(raw, clusters, cats)
+    assert len(out) == 1
+    assert out[0].needs_human is True
+
+
+def test_sandbox_heuristic_no_other_dump():
+    from backend.services.ai_sandbox_fallback import suggest_merchants_heuristic
+
+    cats = list(DEFAULT_CATEGORIES)
+    clusters = [
+        ai_categorize.MerchantCluster(
+            merchant_key="m:obscure xyz",
+            label="Obscure XYZ s.r.o.",
+            amount_sign="out",
+            currency="CZK",
+            sample_count=1,
+            transaction_ids=["z"],
+        ),
+        ai_categorize.MerchantCluster(
+            merchant_key="m:lidl",
+            label="Lidl",
+            amount_sign="out",
+            currency="CZK",
+            sample_count=2,
+            transaction_ids=["a", "b"],
+        ),
+    ]
+    out = suggest_merchants_heuristic(clusters, cats)
+    by_key = {s.merchant_key: s for s in out}
+    assert by_key["m:obscure xyz"].needs_human is True
+    assert by_key["m:obscure xyz"].category_id == ""
+    assert by_key["m:lidl"].needs_human is False
+    assert by_key["m:lidl"].category_id == str(CAT_GROCERIES)
+
+
+def test_suggest_hint_and_exclude():
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    repo.upsert_rows(
+        "Transactions",
+        [
+            tx(merchant="Lidl"),
+            tx(merchant="Obscure Co"),
+        ],
+    )
+
+    seen_user: list[str] = []
+
+    def fake_chat(**kwargs) -> ChatResult:
+        seen_user.append(kwargs["user"])
+        body = {
+            "suggestions": [
+                {
+                    "merchant_key": "m:obscure co",
+                    "category_id": str(CAT_GROCERIES),
+                    "confidence": 0.88,
+                    "reason": "hint said groceries",
+                }
+            ]
+        }
+        return ChatResult(
+            content=json.dumps(body),
+            prompt_tokens=50,
+            completion_tokens=20,
+            total_tokens=70,
+            model="grok-4.3",
+        )
+
+    r = ai_categorize.suggest_categories(
+        repo,
+        principal="e:hint@x",
+        settings=_settings(),
+        chat_fn=fake_chat,
+        exclude_merchant_keys=["m:lidl"],
+        merchant_key="m:obscure co",
+        hint="this is groceries",
+    )
+    assert r.merchants_considered == 1
+    assert "user_hint" in seen_user[0]
+    assert r.suggestions[0].category_id == str(CAT_GROCERIES)

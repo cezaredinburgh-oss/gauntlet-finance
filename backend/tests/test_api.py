@@ -189,6 +189,50 @@ def test_bulk_override_category(client: TestClient):
     assert items[str(t2.id)]["category_override"] is True
 
 
+def test_restore_assignments_undo(client: TestClient):
+    import backend.api.deps as deps
+    from backend.tests.helpers import tx as make_tx
+
+    r = client.post("/api/categories/ensure-defaults")
+    assert r.status_code == 200
+    cats = client.get("/api/categories").json()["items"]
+    cat_id = cats[0]["id"]
+
+    repo = deps._DEV_MEMORY_REPO
+    assert repo is not None
+    t1 = make_tx(merchant="Undo Me", description="x")
+    repo.upsert_rows("Transactions", [t1])
+
+    r = client.post(
+        "/api/categories/bulk-override",
+        json={"category_id": cat_id, "transaction_ids": [str(t1.id)]},
+    )
+    assert r.status_code == 200
+
+    r = client.post(
+        "/api/categories/restore-assignments",
+        json={
+            "items": [
+                {
+                    "transaction_id": str(t1.id),
+                    "category_id": None,
+                    "category_override": False,
+                    "is_internal_transfer": False,
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["updated"] == 1
+
+    items = {
+        str(t["id"]): t
+        for t in client.get("/api/transactions?limit=50").json()["items"]
+    }
+    assert items[str(t1.id)]["category_id"] in (None, "")
+    assert items[str(t1.id)]["category_override"] is False
+
+
 def test_sheets_status_memory_mode(client: TestClient):
     r = client.get("/api/sheets/status")
     assert r.status_code == 200

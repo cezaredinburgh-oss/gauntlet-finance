@@ -14,6 +14,8 @@ from backend.api.schemas import (
     BulkCategoryOverrideResponse,
     CategoryOverrideRequest,
     CategoryOverrideResponse,
+    RestoreAssignmentsRequest,
+    RestoreAssignmentsResponse,
 )
 from backend.common.timeutil import utc_now
 from backend.schema.default_categories import CAT_INTERNAL
@@ -438,5 +440,57 @@ async def bulk_override_category(
         category_id=body.category_id,
         updated=len(updated_ids),
         missing=len(ids) - len(updated_ids),
+        transaction_ids=updated_ids,
+    )
+
+
+@router.post(
+    "/categories/restore-assignments",
+    response_model=RestoreAssignmentsResponse,
+)
+async def restore_assignments(
+    body: RestoreAssignmentsRequest,
+    repo: RepoDep,
+    _user: UserDep,
+) -> RestoreAssignmentsResponse:
+    """
+    Restore prior category fields (undo). Supports clearing category_id.
+
+    Does not invent FX or touch amounts — assignment metadata only.
+    """
+    wanted = {item.transaction_id: item for item in body.items}
+    by_id = {
+        r.id: r
+        for r in repo.list_rows("Transactions")
+        if isinstance(r, Transaction) and r.id in wanted
+    }
+    ts = utc_now()
+    updated_rows: list[Transaction] = []
+    updated_ids: list[UUID] = []
+    for tid, item in wanted.items():
+        tx = by_id.get(tid)
+        if tx is None or tx.archived:
+            continue
+        if item.category_id is not None:
+            cat = repo.get_by_id("Categories", item.category_id)
+            if cat is None or not isinstance(cat, Category) or cat.archived:
+                continue
+        updates: dict[str, Any] = {
+            "category_id": item.category_id,
+            "category_override": bool(item.category_override),
+            "updated_at": ts,
+        }
+        if item.is_internal_transfer is not None:
+            updates["is_internal_transfer"] = bool(item.is_internal_transfer)
+        updated_rows.append(tx.model_copy(update=updates))
+        updated_ids.append(tid)
+
+    if updated_rows:
+        repo.upsert_rows("Transactions", updated_rows)
+        cache_invalidate()
+
+    return RestoreAssignmentsResponse(
+        updated=len(updated_ids),
+        missing=len(wanted) - len(updated_ids),
         transaction_ids=updated_ids,
     )

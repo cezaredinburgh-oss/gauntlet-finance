@@ -62,6 +62,52 @@ export function sameVendorTransactionIds(
   return out;
 }
 
+/**
+ * Similar txs for guided review: same vendor key, optionally same amount sign.
+ * Excludes seed ids. Does not require a target category.
+ */
+export function findSimilarTransactions(
+  pool: Transaction[],
+  seeds: Transaction[],
+  opts: { sameAmountSign?: boolean; limit?: number } = {},
+): Transaction[] {
+  const keys = new Set<string>();
+  const seedIds = new Set(seeds.map((s) => s.id));
+  let seedSign: "in" | "out" | "zero" | "mixed" | null = null;
+  for (const s of seeds) {
+    const k = vendorKey(s);
+    if (k) keys.add(k);
+    const n = Number(
+      s.amount_usd != null && s.amount_usd !== "" ? s.amount_usd : s.amount,
+    );
+    const sign: "in" | "out" | "zero" =
+      !Number.isFinite(n) || n === 0 ? "zero" : n > 0 ? "in" : "out";
+    if (seedSign === null) seedSign = sign;
+    else if (seedSign !== sign && sign !== "zero" && seedSign !== "zero") {
+      seedSign = "mixed";
+    }
+  }
+  if (!keys.size) return [];
+
+  const out: Transaction[] = [];
+  for (const t of pool) {
+    if (seedIds.has(t.id)) continue;
+    const k = vendorKey(t);
+    if (!k || !keys.has(k)) continue;
+    if (opts.sameAmountSign && seedSign && seedSign !== "mixed" && seedSign !== "zero") {
+      const n = Number(
+        t.amount_usd != null && t.amount_usd !== "" ? t.amount_usd : t.amount,
+      );
+      const sign: "in" | "out" | "zero" =
+        !Number.isFinite(n) || n === 0 ? "zero" : n > 0 ? "in" : "out";
+      if (sign !== "zero" && sign !== seedSign) continue;
+    }
+    out.push(t);
+    if (opts.limit != null && out.length >= opts.limit) break;
+  }
+  return out;
+}
+
 function seedFromTx(t: Transaction): { field: RuleSuggestion["match_field"]; value: string } | null {
   if (t.merchant && t.merchant.trim()) {
     return { field: "merchant", value: normalizeLabel(t.merchant) };
