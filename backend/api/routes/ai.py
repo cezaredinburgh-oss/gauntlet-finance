@@ -70,7 +70,9 @@ class CategorizeSuggestResponse(BaseModel):
 
 
 def _is_writable_sandbox(user) -> bool:
-    return bool(user.is_demo and getattr(user, "demo_kind", "") == "sandbox")
+    """Writable demo principals that may use offline AI heuristics when no XAI key."""
+    kind = getattr(user, "demo_kind", "") or ""
+    return bool(user.is_demo and kind in {"sandbox", "lab"})
 
 
 @router.get("/status", response_model=AiStatusResponse)

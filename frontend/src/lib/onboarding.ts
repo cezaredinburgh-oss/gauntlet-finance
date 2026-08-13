@@ -11,7 +11,7 @@
 export const ONBOARDING_STORAGE_KEY = "gauntlet.onboarding.v1";
 export const ONBOARDING_VERSION = 1;
 
-export type DemoOnboardingKind = "sandbox" | "tour";
+export type DemoOnboardingKind = "sandbox" | "tour" | "lab";
 
 export type OnboardingStepId =
   | "welcome"
@@ -195,7 +195,9 @@ export function shouldForceDemoOnboarding(opts: {
 }): boolean {
   if (!opts.isDemo) return false;
   const kind =
-    opts.demoKind === "tour" || opts.demoKind === "sandbox"
+    opts.demoKind === "tour" ||
+    opts.demoKind === "sandbox" ||
+    opts.demoKind === "lab"
       ? opts.demoKind
       : null;
   if (!kind) return false;

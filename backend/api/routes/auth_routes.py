@@ -263,6 +263,10 @@ async def public_auth_config(settings: SettingsDep) -> dict:
         ),
         "demo_sandbox_enabled": bool(settings.demo_sandbox_enabled),
         "demo_tour_enabled": bool(settings.demo_tour_enabled),
+        # Lab: password form on landing when enabled; email not advertised.
+        "lab_login_enabled": bool(
+            settings.lab_login_enabled and (settings.lab_password or "").strip()
+        ),
         # Owner password is single-tenant only (blocked under MULTI_TENANT).
         # Do not expose owner_email publicly (reduces targeted guessing).
         "owner_login_enabled": bool(

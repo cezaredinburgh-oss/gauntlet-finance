@@ -4,6 +4,14 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-13 — Lab test account (disk-persistent demo principal)
+
+- **Password login** via `LAB_LOGIN_ENABLED` + `LAB_EMAIL` + `LAB_PASSWORD` (default email `testaccount@o2.pl`). Never commit the password.
+- **`demo_kind=lab`**: full write path (not tour RO), empty **public** category pack like a new sandbox, **does not wipe on logout**.
+- **Storage**: `DiskBackedSheetsRepository` JSON under `LAB_DATA_DIR` (default `data/lab/ledger.json`) — not Google Sheets; only difference from a real new user for this principal.
+- Landing shows password form when lab is enabled; lab email is not advertised in public-config.
+- Frontend: lab banner, onboarding path, AI heuristic fallback parity with sandbox.
+
 ## 2026-08-12 — Lot inventory repair + import atomic replace
 
 - **Root causes of wrong holdings:**

@@ -92,12 +92,17 @@ export function OnboardingPage() {
   const step: OnboardingStepId = isStepId(stepParam) ? stepParam : "welcome";
   const multiTenant = Boolean(user?.multi_tenant);
   const demoKind: DemoOnboardingKind | null =
-    user?.is_demo && (user.demo_kind === "tour" || user.demo_kind === "sandbox")
+    user?.is_demo &&
+    (user.demo_kind === "tour" ||
+      user.demo_kind === "sandbox" ||
+      user.demo_kind === "lab")
       ? user.demo_kind
       : null;
   const tourGuide = demoKind === "tour";
-  const sandboxSetup = demoKind === "sandbox";
-  /** Tour walkthrough is educational (like preview); sandbox is interactive. */
+  /** Writable demo empty-ledger path (ephemeral sandbox or persistent lab). */
+  const sandboxSetup = demoKind === "sandbox" || demoKind === "lab";
+  const labSetup = demoKind === "lab";
+  /** Tour walkthrough is educational (like preview); sandbox/lab are interactive. */
   const educational = preview || tourGuide;
   const steps = stepsForDemo(demoKind);
 
@@ -235,12 +240,18 @@ export function OnboardingPage() {
       )}
 
       {sandboxSetup && (
-        <div className="rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
-          <strong className="font-semibold">Sandbox setup</strong>
-          <span className="text-amber-100/85">
-            {" "}
-            — temporary memory ledger. Upload real statements here; data clears when you sign
-            out.
+        <div
+          className={
+            labSetup
+              ? "rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100"
+              : "rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm text-amber-100"
+          }
+        >
+          <strong className="font-semibold">{labSetup ? "Lab setup" : "Sandbox setup"}</strong>
+          <span className={labSetup ? "text-emerald-100/85" : "text-amber-100/85"}>
+            {labSetup
+              ? " — persistent disk ledger (like a brand-new account). Full uploads and edits; data survives sign-out. Not Google Sheets."
+              : " — temporary memory ledger. Upload real statements here; data clears when you sign out."}
           </span>
         </div>
       )}
@@ -249,16 +260,20 @@ export function OnboardingPage() {
         <p className="text-xs font-semibold uppercase tracking-wide text-brand">
           {tourGuide
             ? "How setup works"
-            : sandboxSetup
-              ? "Sandbox · New user setup"
-              : "New user setup"}
+            : labSetup
+              ? "Lab · New user setup"
+              : sandboxSetup
+                ? "Sandbox · New user setup"
+                : "New user setup"}
         </p>
         <h1 className="text-2xl font-bold tracking-tight">
           {tourGuide
             ? "See how easy first-time setup is"
-            : sandboxSetup
-              ? "Set up your sandbox"
-              : "Get Gauntlet ready"}
+            : labSetup
+              ? "Set up your lab account"
+              : sandboxSetup
+                ? "Set up your sandbox"
+                : "Get Gauntlet ready"}
         </h1>
         <p className="text-sm text-ink-muted">
           {tourGuide
@@ -296,12 +311,13 @@ export function OnboardingPage() {
         <WelcomeStep
           onContinue={goNext}
           onSkipSandbox={() => {
-            markOnboardingComplete("sandbox", "ready");
+            markOnboardingComplete(labSetup ? "lab" : "sandbox", "ready");
             navigate("/", { replace: true });
           }}
           preview={preview}
           tourGuide={tourGuide}
           sandboxSetup={sandboxSetup}
+          labSetup={labSetup}
         />
       )}
       {step === "sheets" && (
@@ -322,6 +338,7 @@ export function OnboardingPage() {
           sheetsOk={sheetsOk}
           tourGuide={tourGuide}
           sandboxSetup={sandboxSetup}
+          labSetup={labSetup}
         />
       )}
       {step === "upload" && (
@@ -352,6 +369,7 @@ export function OnboardingPage() {
           onBack={goBack}
           onFinish={finish}
           sandboxSetup={sandboxSetup}
+          labSetup={labSetup}
         />
       )}
       {step === "reveal" && tourGuide && (
@@ -367,12 +385,14 @@ function WelcomeStep({
   preview,
   tourGuide,
   sandboxSetup,
+  labSetup = false,
 }: {
   onContinue: () => void;
   onSkipSandbox: () => void;
   preview: boolean;
   tourGuide: boolean;
   sandboxSetup: boolean;
+  labSetup?: boolean;
 }) {
   return (
     <div className="space-y-5">
@@ -380,21 +400,27 @@ function WelcomeStep({
         <h2 className="text-lg font-semibold">
           {tourGuide
             ? "First-time setup in a nutshell"
-            : sandboxSetup
-              ? "Welcome to your sandbox"
-              : "Welcome to Gauntlet Finance"}
+            : labSetup
+              ? "Welcome to your lab account"
+              : sandboxSetup
+                ? "Welcome to your sandbox"
+                : "Welcome to Gauntlet Finance"}
         </h2>
         <p className="text-sm text-ink-muted">
           {tourGuide
             ? "Real users connect a private Google Sheet, import bank exports, and bootstrap spending rules. This walkthrough shows that path — then opens a sample account that already has multi-bank activity and investments."
-            : sandboxSetup
-              ? "This sandbox mirrors new-user setup on a temporary memory ledger. Upload statements, try rules, then explore Home — everything clears when you sign out."
-              : "Personal multi-currency finance desk: statements-only ledger, your Google Sheet as storage, executive Home, and Czech tax runway on investments."}
+            : labSetup
+              ? "This lab account mirrors a brand-new user on a persistent disk ledger (not Google Sheets). Upload statements, try rules, explore Home — data stays after you sign out."
+              : sandboxSetup
+                ? "This sandbox mirrors new-user setup on a temporary memory ledger. Upload statements, try rules, then explore Home — everything clears when you sign out."
+                : "Personal multi-currency finance desk: statements-only ledger, your Google Sheet as storage, executive Home, and Czech tax runway on investments."}
         </p>
         <ol className="list-decimal space-y-1.5 pl-5 text-sm text-ink-muted">
           <li>
             {tourGuide || sandboxSetup
-              ? "Prepare a private ledger (Google Sheet in production; memory in this demo)."
+              ? labSetup
+                ? "Use the built-in disk ledger (same empty surface as a new user)."
+                : "Prepare a private ledger (Google Sheet in production; memory in this demo)."
               : "Connect a private Google Spreadsheet (service account — guided)."}
           </li>
           <li>Upload bank/broker exports (CSV or eToro Excel).</li>
@@ -460,6 +486,7 @@ function SheetsStep({
   sheetsOk,
   tourGuide,
   sandboxSetup,
+  labSetup = false,
 }: {
   preview: boolean;
   multiTenant: boolean;
@@ -477,25 +504,32 @@ function SheetsStep({
   sheetsOk: boolean;
   tourGuide: boolean;
   sandboxSetup: boolean;
+  labSetup?: boolean;
 }) {
   const checks = useMemo(
     () => [
       {
         label:
           tourGuide || sandboxSetup
-            ? "Demo ledger ready"
+            ? labSetup
+              ? "Lab ledger ready"
+              : "Demo ledger ready"
             : multiTenant
               ? "Tenant ledger bound"
               : "Spreadsheet ID configured",
         ok: sheetConfigured,
         detail: sheetConfigured
-          ? tourGuide || sandboxSetup
+          ? tourGuide
             ? "In-memory ledger for this session"
-            : multiTenant
-              ? sheets?.spreadsheet_id
-                ? `Bound: ${sheets.spreadsheet_id}`
-                : "Bound for this account"
-              : "Linked in app config"
+            : labSetup
+              ? "Disk-backed lab ledger (persistent)"
+              : sandboxSetup
+                ? "In-memory ledger for this session"
+                : multiTenant
+                  ? sheets?.spreadsheet_id
+                    ? `Bound: ${sheets.spreadsheet_id}`
+                    : "Bound for this account"
+                  : "Linked in app config"
           : multiTenant
             ? "Not provisioned yet"
             : "Not set yet",
@@ -534,11 +568,13 @@ function SheetsStep({
           <h2 className="text-lg font-semibold text-ink">
             {tourGuide
               ? "How you connect a ledger"
-              : sandboxSetup
-                ? "Your sandbox ledger"
-                : multiTenant
-                  ? "Your private ledger"
-                  : "Connect Google Sheets"}
+              : labSetup
+                ? "Your lab ledger"
+                : sandboxSetup
+                  ? "Your sandbox ledger"
+                  : multiTenant
+                    ? "Your private ledger"
+                    : "Connect Google Sheets"}
           </h2>
         </div>
         <p className="text-sm text-ink-muted">
@@ -548,6 +584,12 @@ function SheetsStep({
               <strong className="text-ink">your private Google Spreadsheet</strong> (service
               account) or a provisioned tenant sheet. Setup walks you through linking once —
               after that, imports and dashboards read that sheet.
+            </>
+          ) : labSetup ? (
+            <>
+              This lab account uses a <strong className="text-ink">disk-backed ledger</strong>{" "}
+              under the host&apos;s data directory — same empty start as a new user, but data
+              survives sign-out and restarts. Production accounts use Google Sheets instead.
             </>
           ) : sandboxSetup ? (
             <>
@@ -1121,6 +1163,7 @@ function ReadyStep({
   onBack,
   onFinish,
   sandboxSetup,
+  labSetup = false,
 }: {
   preview: boolean;
   sheetConfigured: boolean;
@@ -1128,6 +1171,7 @@ function ReadyStep({
   onBack: () => void;
   onFinish: () => void;
   sandboxSetup?: boolean;
+  labSetup?: boolean;
 }) {
   return (
     <div className="space-y-5">
@@ -1135,15 +1179,23 @@ function ReadyStep({
         <div className="flex items-center gap-2 text-ok">
           <CheckCircle2 className="h-6 w-6" />
           <h2 className="text-lg font-semibold text-ink">
-            {preview ? "Preview complete" : sandboxSetup ? "Sandbox ready" : "You're ready"}
+            {preview
+              ? "Preview complete"
+              : labSetup
+                ? "Lab ready"
+                : sandboxSetup
+                  ? "Sandbox ready"
+                  : "You're ready"}
           </h2>
         </div>
         <p className="text-sm text-ink-muted">
           {preview
             ? "You walked the full new-user path without changing your live connection or data."
-            : sandboxSetup
-              ? "Open Home to explore your sandbox ledger. Upload more statements anytime; data clears when you sign out."
-              : "Head to the executive Home for wealth and cash pulse. Upload more statements anytime; refine rules in Categorize."}
+            : labSetup
+              ? "Open Home to explore your lab ledger. Upload statements anytime — data is saved on disk and survives sign-out."
+              : sandboxSetup
+                ? "Open Home to explore your sandbox ledger. Upload more statements anytime; data clears when you sign out."
+                : "Head to the executive Home for wealth and cash pulse. Upload more statements anytime; refine rules in Categorize."}
         </p>
         <ul className="space-y-2 text-sm">
           <li className="flex gap-2">
@@ -1173,9 +1225,11 @@ function ReadyStep({
         <button type="button" className="btn-primary" onClick={onFinish}>
           {preview
             ? "Close preview → Home"
-            : sandboxSetup
-              ? "Open sandbox Home"
-              : "Open executive Home"}
+            : labSetup
+              ? "Open lab Home"
+              : sandboxSetup
+                ? "Open sandbox Home"
+                : "Open executive Home"}
           <ArrowRight className="h-4 w-4" />
         </button>
       </div>

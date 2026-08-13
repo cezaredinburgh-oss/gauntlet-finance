@@ -189,7 +189,9 @@ function modeFromSearchParams(params: URLSearchParams): WorkspaceMode {
 
 export function CategorizePage() {
   const { isReadOnly, user } = useAuth();
-  const isSandboxDemo = Boolean(user?.is_demo && user?.demo_kind === "sandbox");
+  const isSandboxDemo = Boolean(
+    user?.is_demo && (user?.demo_kind === "sandbox" || user?.demo_kind === "lab"),
+  );
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<Transaction[]>([]);
   const [total, setTotal] = useState(0);

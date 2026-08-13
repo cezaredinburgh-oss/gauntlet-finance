@@ -266,7 +266,8 @@ async def bootstrap_rules(
             ),
         )
     also = True if body is None else body.also_apply
-    public_demo = bool(user.is_demo and getattr(user, "demo_kind", "") == "sandbox")
+    kind = getattr(user, "demo_kind", "") or ""
+    public_demo = bool(user.is_demo and kind in {"sandbox", "lab"})
     return bootstrap_rules_from_data(
         repo, also_apply=also, public_demo=public_demo
     )

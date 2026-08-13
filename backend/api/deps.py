@@ -112,7 +112,7 @@ def _hydrate_tenant_user(settings: Settings, user: SessionUser) -> SessionUser |
     # Demo principal must never become platform_admin via env promote
     if is_demo:
         user.role = "user"
-        # Preserve sandbox/tour kind from the session cookie
+        # Preserve sandbox/tour/lab kind from the session cookie
         user.demo_kind = demo_kind or "sandbox"
     else:
         user.role = record.role
@@ -248,6 +248,11 @@ def get_repository(
 
             ensure_tour_seeded()
         set_tenant_id(user.user_id or "demo")
+        # Lab: disk-backed ledger (survives logout + restarts); not ephemeral sandbox.
+        if user.demo_kind == "lab":
+            from backend.services.lab_account import get_lab_repository
+
+            return get_lab_repository(settings)
         key = (user.spreadsheet_id or user.user_id or "demo-public").strip()
         return get_memory_repo_for_tenant(f"demo:{key}")
 

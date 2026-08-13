@@ -12,6 +12,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Project root = parent of backend/
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+
+def project_root() -> Path:
+    """Absolute path to the repository root (parent of ``backend/``)."""
+    return _PROJECT_ROOT
+
 # Known-insecure defaults — refuse these in production (especially multi-tenant).
 INSECURE_SECRET_DEFAULTS = frozenset(
     {
@@ -98,6 +103,13 @@ class Settings(BaseSettings):
     demo_sandbox_enabled: bool = False  # env DEMO_SANDBOX_ENABLED — empty ephemeral ledger
     demo_tour_enabled: bool = False  # env DEMO_TOUR_ENABLED — synthetic read-only sample
     demo_sandbox_max_active: int = 50  # env DEMO_SANDBOX_MAX_ACTIVE
+
+    # Lab test account: full writable new-user surface, disk-backed ledger (not Sheets).
+    # Survives logout and process restarts. Off until LAB_PASSWORD is set.
+    lab_login_enabled: bool = False  # env LAB_LOGIN_ENABLED
+    lab_email: str = "testaccount@o2.pl"  # env LAB_EMAIL
+    lab_password: str = ""  # env LAB_PASSWORD — never commit real secrets
+    lab_data_dir: str = ""  # env LAB_DATA_DIR — default data/lab under project root
 
     # Owner password login (real ledger). Use when ALLOW_OPEN_AUTH=false on public hosts.
     owner_email: str = ""  # env OWNER_EMAIL — shown on landing; must match login email

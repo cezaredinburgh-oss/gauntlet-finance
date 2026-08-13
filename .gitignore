@@ -18,6 +18,9 @@ api.pid
 ui.pid
 launcher.log
 
+# Lab disk ledger + local runtime data blobs
+data/lab/
+
 # Google credentials — never commit
 secrets/**
 !secrets/.gitkeep

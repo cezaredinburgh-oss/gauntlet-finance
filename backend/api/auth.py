@@ -27,7 +27,7 @@ OAUTH_SCOPES = " ".join(
     ]
 )
 
-DemoKind = Literal["sandbox", "tour", ""]
+DemoKind = Literal["sandbox", "tour", "lab", ""]
 
 
 @dataclass
@@ -43,7 +43,7 @@ class SessionUser:
     role: str = "user"
     spreadsheet_id: str | None = None
     is_demo: bool = False
-    # Public demos: "sandbox" (writable ephemeral) | "tour" (read-only seed) | ""
+    # Demos: sandbox (ephemeral) | tour (read-only) | lab (disk-persistent) | ""
     demo_kind: DemoKind = ""
 
     @property
@@ -86,7 +86,13 @@ def load_session_token(
         return None
     raw_kind = (data.get("demo_kind") or "").strip().lower()
     kind: DemoKind = (
-        "sandbox" if raw_kind == "sandbox" else "tour" if raw_kind == "tour" else ""
+        "sandbox"
+        if raw_kind == "sandbox"
+        else "tour"
+        if raw_kind == "tour"
+        else "lab"
+        if raw_kind == "lab"
+        else ""
     )
     # Legacy password-demo sessions: is_demo without kind → treat as sandbox (writable).
     is_demo = bool(data.get("is_demo"))

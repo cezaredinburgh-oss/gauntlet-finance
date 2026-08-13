@@ -153,7 +153,7 @@ class AuthMeResponse(BaseModel):
     spreadsheet_bound: bool = False
     is_demo: bool = False
     demo_login_enabled: bool = False
-    demo_kind: str | None = None  # "sandbox" | "tour" | null
+    demo_kind: str | None = None  # "sandbox" | "tour" | "lab" | null
     read_only: bool = False
 
 

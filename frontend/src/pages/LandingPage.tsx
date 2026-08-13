@@ -54,6 +54,7 @@ type PublicConfig = {
   demo_email: string | null;
   demo_sandbox_enabled?: boolean;
   demo_tour_enabled?: boolean;
+  lab_login_enabled?: boolean;
   owner_login_enabled?: boolean;
   google_login_available: boolean;
   open_auth?: boolean;
@@ -114,6 +115,7 @@ export function LandingPage() {
             demo_email: null,
             demo_sandbox_enabled: false,
             demo_tour_enabled: false,
+            lab_login_enabled: false,
             google_login_available: false,
           });
         }
@@ -184,7 +186,8 @@ export function LandingPage() {
   const sandboxOn = publicCfg?.demo_sandbox_enabled === true;
   const oneClickOn = tourOn || sandboxOn;
   const ownerOn = publicCfg?.owner_login_enabled === true;
-  const passwordOn = demoOn || ownerOn;
+  const labOn = publicCfg?.lab_login_enabled === true;
+  const passwordOn = demoOn || ownerOn || labOn;
   const googleOn = publicCfg?.google_login_available === true;
   const notInvited = authError === "not_invited";
   /** Only when host allows unauthenticated full access (dangerous on public URLs). */
@@ -359,6 +362,12 @@ export function LandingPage() {
                       <strong className="text-ink-muted">Legacy password demo:</strong>{" "}
                       {publicCfg?.demo_email || "demo@gauntlet.local"} — prefer the one-click
                       demos below when enabled.
+                    </li>
+                  )}
+                  {labOn && (
+                    <li>
+                      <strong className="text-ink-muted">Lab account:</strong> host-configured
+                      test login — full app on a persistent disk ledger (not Sheets).
                     </li>
                   )}
                 </ul>

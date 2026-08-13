@@ -142,6 +142,21 @@ def authenticate_password_login(
     got_email = normalize_email(email)
     pw = password or ""
 
+    # --- Lab: disk-persistent empty ledger (full write path, survives logout) ---
+    from backend.services.lab_account import ensure_lab_session, lab_login_configured
+
+    lab_email = normalize_email(settings.lab_email) or "testaccount@o2.pl"
+    lab_pw = (settings.lab_password or "").strip()
+    if settings.lab_login_enabled and lab_pw and _email_eq(got_email, lab_email):
+        if not lab_login_configured(settings):
+            raise DemoAuthError(
+                "Lab login is not configured (set LAB_PASSWORD).",
+                status_code=503,
+            )
+        if _secret_ok(pw, lab_pw):
+            return ensure_lab_session(settings)
+        raise DemoAuthError("Invalid email or password.")
+
     # --- Owner: real Google Sheet (single-tenant only) ---
     owner_email = normalize_email(settings.owner_email)
     owner_pw = (settings.owner_password or "").strip()
