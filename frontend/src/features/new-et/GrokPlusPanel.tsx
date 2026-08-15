@@ -11,6 +11,7 @@ import { Spinner } from "../../components/Spinner";
 import { cn } from "../../lib/cn";
 import type { VendorApplyRow } from "./VendorRollup";
 import { CreateCategoryInline } from "./CreateCategoryInline";
+import { GrokPlusStatus } from "./GrokPlusStatus";
 
 const UNMATCHED_ID = "__unmatched__";
 
@@ -123,6 +124,7 @@ export function GrokPlusPanel({
           <X className="h-4 w-4" />
         </button>
       </div>
+      <GrokPlusStatus variant="embedded" />
       {coachNote ? (
         <p className="rounded-lg border border-brand/20 bg-brand/10 px-3 py-2 text-xs text-ink">
           {coachNote}
@@ -165,7 +167,9 @@ export function GrokPlusPanel({
 
       {groups.length === 0 && unassigned.length === 0 ? (
         <p className="text-sm text-ink-faint">
-          {busy ? "Sorting vendors…" : "No categories matched yet."}
+          {busy
+            ? "Still working — leftover vendors will land in this list."
+            : "No categories matched yet. Use Ask Grok+ to start leftover matching."}
         </p>
       ) : (
         <>

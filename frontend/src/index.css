@@ -66,6 +66,9 @@ body {
   .input:focus {
     border-color: rgba(56, 189, 248, 0.55);
   }
+  .bar-indet {
+    animation: bar-slide 1.15s ease-in-out infinite;
+  }
   .label {
     @apply mb-1 block text-xs font-medium uppercase tracking-wide text-ink-faint;
   }
@@ -91,6 +94,15 @@ body {
     @apply badge;
     background: rgba(59, 130, 246, 0.2);
     color: #93c5fd;
+  }
+}
+
+@keyframes bar-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(400%);
   }
 }
 

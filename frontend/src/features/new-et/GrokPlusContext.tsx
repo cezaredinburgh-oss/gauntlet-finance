@@ -46,6 +46,8 @@ export type GrokPlusApi = {
   consumeKeys: (keys: string[]) => void;
   dismiss: () => void;
   dismissed: boolean;
+  minimized: boolean;
+  setMinimized: (value: boolean) => void;
   runCount: number;
   memorySkipCount: number;
   coachNote: string | null;
@@ -69,7 +71,16 @@ type Persisted = {
   lastBatchAdded: number;
   batchCount: number;
   message: string | null;
+  phase?: GrokPlusPhase;
 };
+
+function restorePhase(raw: unknown, bucketCount: number): GrokPlusPhase {
+  if (raw === "error") return "error";
+  if (raw === "caught_up") return "caught_up";
+  if (raw === "paused" || raw === "running") return "paused";
+  if (bucketCount > 0) return "paused";
+  return "idle";
+}
 
 const GrokPlusContext = createContext<GrokPlusApi | null>(null);
 
@@ -113,6 +124,8 @@ const IDLE_API: GrokPlusApi = {
   consumeKeys: () => undefined,
   dismiss: () => undefined,
   dismissed: false,
+  minimized: false,
+  setMinimized: () => undefined,
   runCount: 0,
   memorySkipCount: 0,
   coachNote: null,
@@ -128,7 +141,9 @@ export function GrokPlusProvider({
 }) {
   const seed = useRef<Persisted | null>(enabled ? readPersisted() : null).current;
 
-  const [phase, setPhase] = useState<GrokPlusPhase>("idle");
+  const [phase, setPhase] = useState<GrokPlusPhase>(() =>
+    restorePhase(seed?.phase, seed?.buckets.length ?? 0),
+  );
   const [started, setStarted] = useState(() => Boolean(seed?.buckets.length));
   const [buckets, setBuckets] = useState<VendorBucket[]>(() => seed?.buckets ?? []);
   const [message, setMessage] = useState<string | null>(() => seed?.message ?? null);
@@ -142,6 +157,7 @@ export function GrokPlusProvider({
   const [dayQuotaCap, setDayQuotaCap] = useState(() => seed?.dayQuotaCap ?? 0);
   const [model, setModel] = useState<string | null>(() => seed?.model ?? null);
   const [dismissed, setDismissed] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   const [runCount, setRunCount] = useState(0);
   const [memorySkipCount, setMemorySkipCount] = useState(0);
   const [coachNote, setCoachNote] = useState<string | null>(null);
@@ -190,12 +206,14 @@ export function GrokPlusProvider({
         lastBatchAdded,
         batchCount: run.batchCount,
         message,
+        phase,
       });
     }, 200);
     return () => window.clearTimeout(id);
   }, [
     enabled,
     started,
+    phase,
     buckets,
     sessionTokens,
     sessionCostUsd,
@@ -213,7 +231,9 @@ export function GrokPlusProvider({
     setPhase("running");
     setStarted(true);
     if (!bucketsRef.current.length) {
-      setMessage("Sorting residual vendors, then asking Grok about leftovers…");
+      setMessage(
+        "Working — sorting leftovers, then asking Grok. Matches appear here as each batch finishes.",
+      );
     }
     try {
       while (wantRunRef.current) {
@@ -383,7 +403,10 @@ export function GrokPlusProvider({
       pauseReasonRef.current = null;
       wantRunRef.current = true;
       setDismissed(false);
+      setMinimized(false);
       setStarted(true);
+      setPhase("running");
+      setMessage((m) => m || "Working — starting leftover matching…");
       setRunCount((n) => {
         const next = n + 1;
         if (next >= 2) {
@@ -482,6 +505,8 @@ export function GrokPlusProvider({
       consumeKeys,
       dismiss,
       dismissed,
+      minimized,
+      setMinimized,
       runCount,
       memorySkipCount,
       coachNote,
@@ -507,6 +532,8 @@ export function GrokPlusProvider({
       consumeKeys,
       dismiss,
       dismissed,
+      minimized,
+      setMinimized,
       runCount,
       memorySkipCount,
       coachNote,

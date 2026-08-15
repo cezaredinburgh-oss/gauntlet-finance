@@ -12,6 +12,8 @@ import {
   ChevronUp,
   Filter,
   Search,
+  Sparkles,
+  Store,
   Undo2,
   X,
 } from "lucide-react";
@@ -33,6 +35,7 @@ import {
 import { RulesMode } from "../features/new-et/RulesMode";
 import { GrokPlusPanel } from "../features/new-et/GrokPlusPanel";
 import { useGrokPlus } from "../features/new-et/GrokPlusContext";
+import { GrokPlusStatus } from "../features/new-et/GrokPlusStatus";
 import {
   CategorizeWizard,
   wizardDone,
@@ -1187,7 +1190,9 @@ export function NewEtCategorizePage() {
     setFocusIds(null);
     setSelected(new Set());
     setGrokBusy(true);
-    setGrokMsg("Looking up merchants across the full ledger…");
+    setGrokMsg(
+      "Working — looking up the top leftover vendors. This usually takes 15–45 seconds.",
+    );
     setGrokDebug(null);
     const preview: VendorBucket[] = [];
     try {
@@ -1597,30 +1602,6 @@ export function NewEtCategorizePage() {
               </button>
               <button
                 type="button"
-                className="rounded-lg border border-white/10 px-2 py-1 text-[11px] text-ink-muted hover:border-brand/40 hover:text-ink"
-                onClick={() =>
-                  setVendorPanel((cur) => (cur === "plain" ? "off" : "plain"))
-                }
-              >
-                By vendor{vendorBuckets.length ? ` (${vendorBuckets.length})` : ""}
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-white/10 px-2 py-1 text-[11px] text-ink-muted hover:border-brand/40 hover:text-ink"
-                disabled={grokBusy}
-                onClick={() => void fetchGrokVendors()}
-              >
-                {grokBusy && vendorPanel === "grok" ? "Asking Grok…" : "Ask Grok"}
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-white/10 px-2 py-1 text-[11px] text-ink-muted hover:border-brand/40 hover:text-ink"
-                onClick={() => startGrokPlus()}
-              >
-                {grokPlus.phase === "running" ? "Matching…" : "Ask Grok+"}
-              </button>
-              <button
-                type="button"
                 className="rounded-lg border border-danger/30 px-2 py-1 text-[11px] text-danger hover:bg-danger/10"
                 disabled={wipeBusy || isReadOnly}
                 onClick={() => {
@@ -1651,6 +1632,91 @@ export function NewEtCategorizePage() {
           </div>
         </div>
       )}
+
+      {!showWizard && mode === "review" && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <button
+            type="button"
+            className={cn(
+              "btn-secondary h-auto min-h-[3.5rem] w-full flex-col items-stretch gap-0.5 py-3",
+              vendorPanel === "plain" && "border-brand/40 bg-brand/10",
+            )}
+            onClick={() =>
+              setVendorPanel((cur) => (cur === "plain" ? "off" : "plain"))
+            }
+          >
+            <span className="flex items-center justify-center gap-2 text-sm font-semibold">
+              <Store className="h-4 w-4" />
+              By vendor{vendorBuckets.length ? ` (${vendorBuckets.length})` : ""}
+            </span>
+            <span className="text-[11px] font-normal text-ink-muted">
+              Group leftovers by shop
+            </span>
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "btn-primary h-auto min-h-[3.5rem] w-full flex-col items-stretch gap-0.5 py-3",
+              grokPlus.phase === "running" && "ring-2 ring-brand/50",
+              vendorPanel === "grokplus" && grokPlus.phase !== "running" && "ring-2 ring-brand/30",
+            )}
+            disabled={grokBusy}
+            aria-busy={grokPlus.phase === "running"}
+            onClick={() => startGrokPlus()}
+          >
+            <span className="flex items-center justify-center gap-2 text-sm font-semibold">
+              {grokPlus.phase === "running" ? (
+                <Spinner className="h-4 w-4 border-t-slate-900" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              {grokPlus.phase === "running"
+                ? "Working — matching leftovers"
+                : grokPlus.phase === "paused" && grokPlus.buckets.length
+                  ? "Ask Grok+ — ready for review"
+                  : grokPlus.phase === "caught_up"
+                    ? "Ask Grok+ — ready for review"
+                    : "Ask Grok+"}
+            </span>
+            <span className="text-[11px] font-normal text-slate-800/80">
+              {grokPlus.phase === "running"
+                ? "Background leftover matching is in progress"
+                : "Background leftover matching"}
+            </span>
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "btn-secondary h-auto min-h-[3.5rem] w-full flex-col items-stretch gap-0.5 py-3",
+              grokBusy && "border-brand/40 bg-brand/10",
+              vendorPanel === "grok" && !grokBusy && "border-brand/40 bg-brand/10",
+            )}
+            disabled={grokBusy || grokPlus.phase === "running"}
+            aria-busy={grokBusy}
+            onClick={() => void fetchGrokVendors()}
+          >
+            <span className="flex items-center justify-center gap-2 text-sm font-semibold">
+              {grokBusy ? (
+                <Spinner className="h-4 w-4 border-t-brand" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              {grokBusy ? "Working — looking up merchants" : "Ask Grok"}
+            </span>
+            <span className="text-[11px] font-normal text-ink-muted">
+              {grokBusy
+                ? "Usually 15–45 seconds — keep this tab open"
+                : "Look up top 10 leftovers online"}
+            </span>
+          </button>
+        </div>
+      )}
+
+      {!showWizard &&
+      grokPlus.started &&
+      !(mode === "review" && vendorPanel === "grokplus") ? (
+        <GrokPlusStatus variant="float" />
+      ) : null}
 
       {!showWizard && mode === "review" && vendorPanel === "plain" && (
         <VendorRollup
@@ -1683,7 +1749,7 @@ export function NewEtCategorizePage() {
           }
           isReadOnly={isReadOnly}
           applyingKey={vendorApplyKey}
-          message={grokPlus.message}
+          message={grokPlus.phase === "running" ? null : grokPlus.message}
           onApply={(b, categoryId) => void applyVendorBucket(b, categoryId)}
           onApplyRule={(b, categoryId) =>
             void applyVendorBucket(b, categoryId, { makeRule: true })
@@ -1714,7 +1780,7 @@ export function NewEtCategorizePage() {
           title="Grok vendor guesses"
           subtitle={
             grokBusy
-              ? "Looking up the top 10 residual vendors…"
+              ? "Working — looking up the top leftover vendors. This usually takes 15–45 seconds."
               : "Grok looks up each merchant online, then maps it to one of your categories."
           }
           buckets={grokBuckets}
@@ -1722,8 +1788,11 @@ export function NewEtCategorizePage() {
           busy={bulkBusy || ruleBusy || grokBusy}
           isReadOnly={isReadOnly}
           applyingKey={vendorApplyKey}
-          message={grokMsg}
+          message={grokBusy ? null : grokMsg}
           debugText={grokDebug}
+          aiWorking={grokBusy}
+          aiWorkingTitle="Working — looking up merchants"
+          aiWorkingDetail="Grok is looking up the top leftover vendors online. This usually takes 15–45 seconds — the bar means the request is still in flight."
           onApply={(b, categoryId) => void applyVendorBucket(b, categoryId)}
           onApplyRule={(b, categoryId) =>
             void applyVendorBucket(b, categoryId, { makeRule: true })

@@ -4,6 +4,7 @@ import type { Category } from "../../api/types";
 import type { VendorBucket } from "../../lib/ruleSuggest";
 import { Spinner } from "../../components/Spinner";
 import { CreateCategoryInline } from "./CreateCategoryInline";
+import { AiWorkingBanner } from "./AiWorkingBanner";
 
 const PAGE_SIZE = 10;
 
@@ -116,6 +117,9 @@ export function VendorRollup({
   onClose,
   onCategoryCreated,
   applyProgress,
+  aiWorking,
+  aiWorkingTitle,
+  aiWorkingDetail,
 }: {
   title?: string;
   subtitle?: string;
@@ -133,6 +137,9 @@ export function VendorRollup({
   onClose: () => void;
   onCategoryCreated?: (cat: Category) => void;
   applyProgress?: { current: number; total: number } | null;
+  aiWorking?: boolean;
+  aiWorkingTitle?: string;
+  aiWorkingDetail?: string;
 }) {
   const [page, setPage] = useState(0);
   const [picks, setPicks] = useState<Record<string, string>>({});
@@ -196,6 +203,12 @@ export function VendorRollup({
         </button>
       </div>
 
+      {aiWorking ? (
+        <AiWorkingBanner
+          title={aiWorkingTitle || "Working — looking up merchants"}
+          detail={aiWorkingDetail}
+        />
+      ) : null}
       {onCategoryCreated ? (
         <CreateCategoryInline
           catsSorted={catsSorted}
@@ -221,7 +234,11 @@ export function VendorRollup({
       ) : null}
 
       {remaining.length === 0 ? (
-        <p className="text-sm text-ink-faint">No residual vendors on the loaded list.</p>
+        <p className="text-sm text-ink-faint">
+          {aiWorking
+            ? "Still working — guesses will appear here when Grok finishes this lookup."
+            : "No residual vendors on the loaded list."}
+        </p>
       ) : (
         <>
           <ul className="divide-y divide-white/5 overflow-hidden rounded-xl border border-white/10">
