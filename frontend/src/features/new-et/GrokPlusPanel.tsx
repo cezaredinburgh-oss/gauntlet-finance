@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ChevronDown, Sparkles, X } from "lucide-react";
 import type { Category } from "../../api/types";
 import {
+  applyVendorCategoryOverrides,
   formatVendorPreview,
   groupVendorsByCategory,
   type VendorBucket,
@@ -9,6 +10,8 @@ import {
 import { Spinner } from "../../components/Spinner";
 import { cn } from "../../lib/cn";
 import type { VendorApplyRow } from "./VendorRollup";
+
+const UNMATCHED_ID = "__unmatched__";
 
 export function GrokPlusPanel({
   buckets,
@@ -40,15 +43,32 @@ export function GrokPlusPanel({
   onClose: () => void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
-  const [picks, setPicks] = useState<Record<string, string>>({});
-  const { groups, unassigned } = useMemo(
-    () => groupVendorsByCategory(buckets),
-    [buckets],
+  const [remaps, setRemaps] = useState<Record<string, string>>({});
+  const [ticked, setTicked] = useState<Record<string, boolean>>({});
+  const displayBuckets = useMemo(
+    () => applyVendorCategoryOverrides(buckets, remaps, catsSorted),
+    [buckets, remaps, catsSorted],
   );
-  const unmatchedId = "__unmatched__";
+  const { groups, unassigned } = useMemo(
+    () => groupVendorsByCategory(displayBuckets),
+    [displayBuckets],
+  );
 
   function chosen(b: VendorBucket): string {
-    return picks[b.key] ?? b.suggestedCategoryId ?? "";
+    return remaps[b.key] ?? b.suggestedCategoryId ?? "";
+  }
+
+  function isTicked(id: string, unmatched = false): boolean {
+    if (id in ticked) return ticked[id];
+    return !unmatched;
+  }
+
+  function setVendorCategory(keys: string[], categoryId: string) {
+    setRemaps((prev) => {
+      const next = { ...prev };
+      for (const key of keys) next[key] = categoryId;
+      return next;
+    });
   }
 
   function rowsFor(vendors: VendorBucket[]): VendorApplyRow[] {
@@ -62,6 +82,21 @@ export function GrokPlusPanel({
     onExpandCategory?.();
   }
 
+  function selectedRows(): VendorApplyRow[] {
+    const rows: VendorApplyRow[] = [];
+    for (const g of groups) {
+      if (!isTicked(g.categoryId)) continue;
+      rows.push(...rowsFor(g.vendors));
+    }
+    if (isTicked(UNMATCHED_ID, true)) rows.push(...rowsFor(unassigned));
+    return rows;
+  }
+
+  const approveRows = selectedRows();
+  const tickedGroupCount =
+    groups.filter((g) => isTicked(g.categoryId)).length +
+    (unassigned.length && isTicked(UNMATCHED_ID, true) ? 1 : 0);
+
   return (
     <div className="card space-y-3 p-4">
       <div className="flex items-start justify-between gap-2">
@@ -72,9 +107,9 @@ export function GrokPlusPanel({
           <div>
             <h2 className="font-semibold">Ask Grok+</h2>
             <p className="text-sm text-ink-muted">
-              Residual vendors sorted locally, then leftovers sent to Grok.
-              Click a category to see vendors, then a vendor to see transactions.
-              Unmatched names stay empty on purpose.
+              Tick the groups you want, retarget a row if the guess is wrong
+              (Fuel → Moto fuel), then approve. Untick anything that still
+              needs work.
             </p>
           </div>
         </div>
@@ -100,88 +135,145 @@ export function GrokPlusPanel({
           {busy ? "Sorting vendors…" : "No categories matched yet."}
         </p>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-white/10">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="border-b border-white/5 bg-white/[0.02] text-xs uppercase tracking-wide text-ink-faint">
-              <tr>
-                <th className="px-3 py-2">Category</th>
-                <th className="px-3 py-2">Vendors</th>
-                <th className="px-3 py-2 text-right">Tx</th>
-                <th className="px-3 py-2 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {groups.map((g) => {
-                const ready = rowsFor(g.vendors);
-                const open = openId === g.categoryId;
-                const preview = formatVendorPreview(g.vendors.map((v) => v.label));
-                return (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-ink-muted">
+              {tickedGroupCount} group{tickedGroupCount === 1 ? "" : "s"} selected
+              {approveRows.length
+                ? ` · ${approveRows.length} vendor${approveRows.length === 1 ? "" : "s"} ready`
+                : ""}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                className="btn-primary text-sm"
+                disabled={busy || isReadOnly || approveRows.length === 0}
+                onClick={() => onApplyAll(approveRows, false)}
+              >
+                Approve selected
+              </button>
+              <button
+                type="button"
+                className="btn-secondary text-sm"
+                disabled={busy || isReadOnly || approveRows.length === 0}
+                onClick={() => onApplyAll(approveRows, true)}
+              >
+                Approve selected + rules
+              </button>
+            </div>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-white/10">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead className="border-b border-white/5 bg-white/[0.02] text-xs uppercase tracking-wide text-ink-faint">
+                <tr>
+                  <th className="w-10 px-3 py-2">
+                    <span className="sr-only">Include</span>
+                  </th>
+                  <th className="px-3 py-2">Category</th>
+                  <th className="px-3 py-2">Vendors</th>
+                  <th className="px-3 py-2 text-right">Tx</th>
+                  <th className="px-3 py-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {groups.map((g) => {
+                  const ready = rowsFor(g.vendors);
+                  const open = openId === g.categoryId;
+                  const preview = formatVendorPreview(g.vendors.map((v) => v.label));
+                  return (
+                    <CategoryBlock
+                      key={g.categoryId}
+                      categoryId={g.categoryId}
+                      categoryName={g.categoryName}
+                      preview={preview}
+                      vendorCount={g.vendors.length}
+                      txCount={g.txCount}
+                      open={open}
+                      ticked={isTicked(g.categoryId)}
+                      vendors={g.vendors}
+                      catsSorted={catsSorted}
+                      chosen={chosen}
+                      busy={busy}
+                      isReadOnly={isReadOnly}
+                      applyingKey={applyingKey}
+                      readyCount={ready.length}
+                      onToggleTick={() =>
+                        setTicked((prev) => ({
+                          ...prev,
+                          [g.categoryId]: !isTicked(g.categoryId),
+                        }))
+                      }
+                      onToggle={() => toggleCategory(g.categoryId)}
+                      onRemapGroup={(categoryId) =>
+                        setVendorCategory(
+                          g.vendors.map((v) => v.key),
+                          categoryId,
+                        )
+                      }
+                      onPick={(key, categoryId) => setVendorCategory([key], categoryId)}
+                      onApply={onApply}
+                      onApplyRule={onApplyRule}
+                      onApplyAll={() => onApplyAll(ready, false)}
+                      onApplyAllRules={() => onApplyAll(ready, true)}
+                      onOpen={onOpen}
+                    />
+                  );
+                })}
+                {unassigned.length > 0 ? (
                   <CategoryBlock
-                    key={g.categoryId}
-                    categoryName={g.categoryName}
-                    preview={preview}
-                    vendorCount={g.vendors.length}
-                    txCount={g.txCount}
-                    open={open}
-                    vendors={g.vendors}
+                    key={UNMATCHED_ID}
+                    categoryId=""
+                    categoryName="Unmatched"
+                    preview={formatVendorPreview(unassigned.map((v) => v.label))}
+                    vendorCount={unassigned.length}
+                    txCount={unassigned.reduce((n, v) => n + v.count, 0)}
+                    open={openId === UNMATCHED_ID}
+                    ticked={isTicked(UNMATCHED_ID, true)}
+                    vendors={unassigned}
                     catsSorted={catsSorted}
                     chosen={chosen}
                     busy={busy}
                     isReadOnly={isReadOnly}
                     applyingKey={applyingKey}
-                    readyCount={ready.length}
-                    onToggle={() => toggleCategory(g.categoryId)}
-                    onPick={(key, categoryId) =>
-                      setPicks((prev) => ({ ...prev, [key]: categoryId }))
+                    readyCount={rowsFor(unassigned).length}
+                    onToggleTick={() =>
+                      setTicked((prev) => ({
+                        ...prev,
+                        [UNMATCHED_ID]: !isTicked(UNMATCHED_ID, true),
+                      }))
                     }
+                    onToggle={() => toggleCategory(UNMATCHED_ID)}
+                    onRemapGroup={(categoryId) =>
+                      setVendorCategory(
+                        unassigned.map((v) => v.key),
+                        categoryId,
+                      )
+                    }
+                    onPick={(key, categoryId) => setVendorCategory([key], categoryId)}
                     onApply={onApply}
                     onApplyRule={onApplyRule}
-                    onApplyAll={() => onApplyAll(ready, false)}
-                    onApplyAllRules={() => onApplyAll(ready, true)}
+                    onApplyAll={() => onApplyAll(rowsFor(unassigned), false)}
+                    onApplyAllRules={() => onApplyAll(rowsFor(unassigned), true)}
                     onOpen={onOpen}
                   />
-                );
-              })}
-              {unassigned.length > 0 ? (
-                <CategoryBlock
-                  key={unmatchedId}
-                  categoryName="Unmatched"
-                  preview={formatVendorPreview(unassigned.map((v) => v.label))}
-                  vendorCount={unassigned.length}
-                  txCount={unassigned.reduce((n, v) => n + v.count, 0)}
-                  open={openId === unmatchedId}
-                  vendors={unassigned}
-                  catsSorted={catsSorted}
-                  chosen={chosen}
-                  busy={busy}
-                  isReadOnly={isReadOnly}
-                  applyingKey={applyingKey}
-                  readyCount={rowsFor(unassigned).length}
-                  onToggle={() => toggleCategory(unmatchedId)}
-                  onPick={(key, categoryId) =>
-                    setPicks((prev) => ({ ...prev, [key]: categoryId }))
-                  }
-                  onApply={onApply}
-                  onApplyRule={onApplyRule}
-                  onApplyAll={() => onApplyAll(rowsFor(unassigned), false)}
-                  onApplyAllRules={() => onApplyAll(rowsFor(unassigned), true)}
-                  onOpen={onOpen}
-                />
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );
 }
 
 function CategoryBlock({
+  categoryId,
   categoryName,
   preview,
   vendorCount,
   txCount,
   open,
+  ticked,
   vendors,
   catsSorted,
   chosen,
@@ -189,7 +281,9 @@ function CategoryBlock({
   isReadOnly,
   applyingKey,
   readyCount,
+  onToggleTick,
   onToggle,
+  onRemapGroup,
   onPick,
   onApply,
   onApplyRule,
@@ -197,11 +291,13 @@ function CategoryBlock({
   onApplyAllRules,
   onOpen,
 }: {
+  categoryId: string;
   categoryName: string;
   preview: string;
   vendorCount: number;
   txCount: number;
   open: boolean;
+  ticked: boolean;
   vendors: VendorBucket[];
   catsSorted: Category[];
   chosen: (b: VendorBucket) => string;
@@ -209,7 +305,9 @@ function CategoryBlock({
   isReadOnly: boolean;
   applyingKey: string | null;
   readyCount: number;
+  onToggleTick: () => void;
   onToggle: () => void;
+  onRemapGroup: (categoryId: string) => void;
   onPick: (key: string, categoryId: string) => void;
   onApply: (bucket: VendorBucket, categoryId: string) => void;
   onApplyRule: (bucket: VendorBucket, categoryId: string) => void;
@@ -223,18 +321,43 @@ function CategoryBlock({
         className={cn(
           "cursor-pointer hover:bg-white/[0.03]",
           open && "bg-brand/5",
+          !ticked && "opacity-60",
         )}
         onClick={onToggle}
       >
+        <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-brand"
+            checked={ticked}
+            disabled={busy || isReadOnly}
+            aria-label={`Include ${categoryName}`}
+            onChange={onToggleTick}
+          />
+        </td>
         <td className="px-3 py-3 font-medium text-ink">
           <span className="inline-flex items-center gap-1.5">
             <ChevronDown
               className={cn(
-                "h-3.5 w-3.5 text-ink-muted transition",
+                "h-3.5 w-3.5 shrink-0 text-ink-muted transition",
                 open ? "rotate-0" : "-rotate-90",
               )}
             />
-            {categoryName}
+            <select
+              className="input max-w-[14rem] py-1.5 text-sm"
+              value={categoryId}
+              disabled={busy || isReadOnly}
+              aria-label={`Category for ${categoryName}`}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => onRemapGroup(e.target.value)}
+            >
+              <option value="">Unmatched</option>
+              {catsSorted.map((cat) => (
+                <option key={cat.id} value={cat.id}>
+                  {cat.name}
+                </option>
+              ))}
+            </select>
           </span>
         </td>
         <td className="max-w-md truncate px-3 py-3 text-ink-muted" title={preview}>
@@ -266,7 +389,7 @@ function CategoryBlock({
       </tr>
       {open && (
         <tr className="bg-black/20">
-          <td colSpan={4} className="px-3 py-2">
+          <td colSpan={5} className="px-3 py-2">
             <ul className="divide-y divide-white/5">
               {vendors.map((b) => {
                 const pick = chosen(b);

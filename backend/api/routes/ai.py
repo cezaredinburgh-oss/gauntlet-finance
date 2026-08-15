@@ -72,6 +72,41 @@ class CategorizeSuggestResponse(BaseModel):
     system_prompt: str = ""
     user_prompt: str = ""
     vendors_sent: list[dict[str, Any]] = Field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+
+def _suggest_response(result: ai_categorize.SuggestResult) -> CategorizeSuggestResponse:
+    return CategorizeSuggestResponse(
+        enabled=result.enabled,
+        configured=result.configured,
+        model=result.model,
+        suggestions=[
+            CategorySuggestionItem(
+                merchant_key=s.merchant_key,
+                label=s.label,
+                category_id=s.category_id,
+                category_name=s.category_name,
+                confidence=s.confidence,
+                reason=s.reason,
+                transaction_ids=s.transaction_ids,
+                sample_count=s.sample_count,
+                needs_human=bool(s.needs_human),
+            )
+            for s in result.suggestions
+        ],
+        merchants_considered=result.merchants_considered,
+        merchants_suggested=result.merchants_suggested,
+        tokens_used=result.tokens_used,
+        quota_used=result.quota_used,
+        quota_cap=result.quota_cap,
+        message=result.message,
+        system_prompt=result.system_prompt,
+        user_prompt=result.user_prompt,
+        vendors_sent=result.vendors_sent,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
+    )
 
 
 def _is_writable_sandbox(user) -> bool:
@@ -287,34 +322,7 @@ def vendor_suggest_plus(
         web_search=False,
         plus=True,
     )
-    return CategorizeSuggestResponse(
-        enabled=result.enabled,
-        configured=result.configured,
-        model=result.model,
-        suggestions=[
-            CategorySuggestionItem(
-                merchant_key=s.merchant_key,
-                label=s.label,
-                category_id=s.category_id,
-                category_name=s.category_name,
-                confidence=s.confidence,
-                reason=s.reason,
-                transaction_ids=s.transaction_ids,
-                sample_count=s.sample_count,
-                needs_human=bool(s.needs_human),
-            )
-            for s in result.suggestions
-        ],
-        merchants_considered=result.merchants_considered,
-        merchants_suggested=result.merchants_suggested,
-        tokens_used=result.tokens_used,
-        quota_used=result.quota_used,
-        quota_cap=result.quota_cap,
-        message=result.message,
-        system_prompt=result.system_prompt,
-        user_prompt=result.user_prompt,
-        vendors_sent=result.vendors_sent,
-    )
+    return _suggest_response(result)
 
 
 @router.post("/vendor-suggest", response_model=CategorizeSuggestResponse)
@@ -340,34 +348,7 @@ def vendor_suggest(
         sandbox=False,
         web_search=True,
     )
-    return CategorizeSuggestResponse(
-        enabled=result.enabled,
-        configured=result.configured,
-        model=result.model,
-        suggestions=[
-            CategorySuggestionItem(
-                merchant_key=s.merchant_key,
-                label=s.label,
-                category_id=s.category_id,
-                category_name=s.category_name,
-                confidence=s.confidence,
-                reason=s.reason,
-                transaction_ids=s.transaction_ids,
-                sample_count=s.sample_count,
-                needs_human=bool(s.needs_human),
-            )
-            for s in result.suggestions
-        ],
-        merchants_considered=result.merchants_considered,
-        merchants_suggested=result.merchants_suggested,
-        tokens_used=result.tokens_used,
-        quota_used=result.quota_used,
-        quota_cap=result.quota_cap,
-        message=result.message,
-        system_prompt=result.system_prompt,
-        user_prompt=result.user_prompt,
-        vendors_sent=result.vendors_sent,
-    )
+    return _suggest_response(result)
 
 
 @router.post("/categorize-suggest", response_model=CategorizeSuggestResponse)
@@ -397,34 +378,7 @@ def categorize_suggest(
         sandbox=_is_writable_sandbox(user),
         web_search=bool(body.web_search),
     )
-    return CategorizeSuggestResponse(
-        enabled=result.enabled,
-        configured=result.configured,
-        model=result.model,
-        suggestions=[
-            CategorySuggestionItem(
-                merchant_key=s.merchant_key,
-                label=s.label,
-                category_id=s.category_id,
-                category_name=s.category_name,
-                confidence=s.confidence,
-                reason=s.reason,
-                transaction_ids=s.transaction_ids,
-                sample_count=s.sample_count,
-                needs_human=bool(s.needs_human),
-            )
-            for s in result.suggestions
-        ],
-        merchants_considered=result.merchants_considered,
-        merchants_suggested=result.merchants_suggested,
-        tokens_used=result.tokens_used,
-        quota_used=result.quota_used,
-        quota_cap=result.quota_cap,
-        message=result.message,
-        system_prompt=result.system_prompt,
-        user_prompt=result.user_prompt,
-        vendors_sent=result.vendors_sent,
-    )
+    return _suggest_response(result)
 
 
 class ColumnMapBody(BaseModel):
@@ -605,6 +559,9 @@ async def import_mapped(
         transfer_pairs_linked=summary.transfer_pairs_linked,
         transactions_deduped=summary.transactions_deduped,
         events_deduped=summary.events_deduped,
+        transactions_tagged=getattr(summary, "transactions_tagged", 0),
+        transactions_internal_flagged=getattr(summary, "transactions_internal_flagged", 0),
+        transactions_categorized=getattr(summary, "transactions_categorized", 0),
         message=summary.message,
         errors=summary.errors,
         ai_map_eligible=bool(getattr(summary, "ai_map_eligible", False)),

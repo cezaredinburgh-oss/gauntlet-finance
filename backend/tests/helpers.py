@@ -41,6 +41,9 @@ def tx(
     category_id: UUID | None = None,
     category_override: bool = False,
     counterparty_account: str | None = None,
+    suggest_category_id: UUID | None = None,
+    suggest_source: str | None = None,
+    suggest_reason: str | None = None,
 ) -> Transaction:
     return Transaction(
         id=uuid4(),
@@ -59,6 +62,9 @@ def tx(
         category_override=category_override,
         is_internal_transfer=is_internal_transfer,
         transfer_group_id=transfer_group_id,
+        suggest_category_id=suggest_category_id,
+        suggest_source=suggest_source,
+        suggest_reason=suggest_reason,
         created_at=TS,
         updated_at=TS,
     )

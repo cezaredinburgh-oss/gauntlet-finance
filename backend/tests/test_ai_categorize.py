@@ -234,6 +234,9 @@ def test_plus_is_one_small_knowledge_call():
     )
     assert calls == [None]
     assert r.merchants_considered == 15
+    assert r.prompt_tokens == 4
+    assert r.completion_tokens == 2
+    assert r.tokens_used == 6
 
 
 def test_plus_caps_at_twelve_searchable_vendors():
@@ -272,8 +275,8 @@ def test_plus_local_rules_skip_grok_for_known_and_pots():
     repo.upsert_rows(
         "Transactions",
         [
-            tx(merchant="Albert"),
-            tx(merchant="Lime"),
+            tx(merchant="Spotify"),
+            tx(merchant="McDonald's"),
             tx(description="To pocket CZK Purchase vault from CZK"),
         ],
     )
@@ -298,9 +301,44 @@ def test_plus_local_rules_skip_grok_for_known_and_pots():
     )
     assert called["n"] == 0
     names = {s.label: s.category_name for s in r.suggestions if s.category_id}
-    assert names["Albert"] == "Groceries"
-    assert names["Lime"] == "Taxi / rideshare"
+    assert names["Spotify"] == "Spotify"
+    assert names["McDonald's"] == "Restaurants"
     assert any("pocket" in s.label.lower() for s in r.suggestions if s.category_name == "Internal transfer")
+
+
+def test_plus_uses_memory_after_two_assigns():
+    from backend.schema.default_categories import CAT_GROCERIES
+    from backend.services import vendor_memory as vmem
+
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    a = tx(merchant="Lidl")
+    b = tx(merchant="Lidl")
+    repo.upsert_rows("Transactions", [a, b])
+    vmem.record_assignments(repo, [a, b], CAT_GROCERIES)
+    called = {"n": 0}
+
+    def fake_chat(**kwargs) -> ChatResult:
+        called["n"] += 1
+        return ChatResult(
+            content=json.dumps({"suggestions": []}),
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+            model="grok-test",
+        )
+
+    r = ai_categorize.suggest_categories(
+        repo,
+        principal="e:plus-mem@x",
+        settings=_settings(),
+        plus=True,
+        chat_fn=fake_chat,
+    )
+    assert called["n"] == 0
+    lidl = next(s for s in r.suggestions if s.label == "Lidl")
+    assert lidl.category_id == str(CAT_GROCERIES)
+    assert "Learned" in lidl.reason
 
 
 def test_plus_keeps_local_when_grok_times_out():
@@ -308,7 +346,7 @@ def test_plus_keeps_local_when_grok_times_out():
     repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
     repo.upsert_rows(
         "Transactions",
-        [tx(merchant="Albert"), tx(merchant="Obscure XYZ s.r.o.")],
+        [tx(merchant="Spotify"), tx(merchant="Obscure XYZ s.r.o.")],
     )
 
     def fake_chat(**kwargs) -> ChatResult:
@@ -321,7 +359,7 @@ def test_plus_keeps_local_when_grok_times_out():
         plus=True,
         chat_fn=fake_chat,
     )
-    assert any(s.label == "Albert" and s.category_name == "Groceries" for s in r.suggestions)
+    assert any(s.label == "Spotify" and s.category_name == "Spotify" for s in r.suggestions)
     assert any(s.label == "Obscure XYZ s.r.o." and s.needs_human for s in r.suggestions)
     assert "Local matches kept" in (r.message or "")
 

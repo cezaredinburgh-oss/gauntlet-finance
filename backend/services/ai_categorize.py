@@ -135,6 +135,8 @@ class SuggestResult:
     system_prompt: str = ""
     user_prompt: str = ""
     vendors_sent: list[dict[str, Any]] = field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 def _normalize_label(s: str) -> str:
@@ -761,10 +763,58 @@ def suggest_categories(
     grok_clusters = clusters
     unmatched_early: list[CategorySuggestion] = []
     if plus:
+        from backend.services import vendor_memory as vmem
         from backend.services.vendor_preclassify import preclassify_clusters
 
-        pre = preclassify_clusters(clusters, catalog)
-        local_suggestions = [_suggestion_from_local(g) for g in pre.resolved]
+        mem_by_key = vmem.load_index(repo)
+        cat_by_id = {c.id: c for c in categories}
+        txs_by_id = {str(t.id): t for t in txs}
+        remaining: list[MerchantCluster] = []
+        for c in clusters:
+            mem = mem_by_key.get(c.merchant_key)
+            if mem and mem.assign_count >= vmem.MEMORY_MIN_ASSIGNS:
+                cat = cat_by_id.get(mem.category_id)
+                if cat:
+                    local_suggestions.append(
+                        CategorySuggestion(
+                            merchant_key=c.merchant_key,
+                            label=c.label,
+                            category_id=str(mem.category_id),
+                            category_name=cat.name,
+                            confidence=0.97,
+                            reason=f"Learned from {mem.assign_count} assigns",
+                            transaction_ids=c.transaction_ids,
+                            sample_count=c.sample_count,
+                        )
+                    )
+                    continue
+            tagged_tx = next(
+                (
+                    txs_by_id[tid]
+                    for tid in c.transaction_ids
+                    if tid in txs_by_id and txs_by_id[tid].suggest_category_id
+                ),
+                None,
+            )
+            if tagged_tx and tagged_tx.suggest_category_id:
+                cat = cat_by_id.get(tagged_tx.suggest_category_id)
+                if cat:
+                    local_suggestions.append(
+                        CategorySuggestion(
+                            merchant_key=c.merchant_key,
+                            label=c.label,
+                            category_id=str(tagged_tx.suggest_category_id),
+                            category_name=cat.name,
+                            confidence=0.9,
+                            reason=tagged_tx.suggest_reason or "Upload tag",
+                            transaction_ids=c.transaction_ids,
+                            sample_count=c.sample_count,
+                        )
+                    )
+                    continue
+            remaining.append(c)
+        pre = preclassify_clusters(remaining, catalog)
+        local_suggestions.extend(_suggestion_from_local(g) for g in pre.resolved)
         leftover_searchable = [
             c for c in pre.leftovers if is_searchable_vendor_cluster(c)
         ]
@@ -942,5 +992,7 @@ def suggest_categories(
         quota_used=snap.used,
         quota_cap=snap.cap,
         message=msg,
+        prompt_tokens=int(result.prompt_tokens or 0),
+        completion_tokens=int(result.completion_tokens or 0),
         **_debug_prompt(debug_clusters, user_payload, system=system_used),
     )

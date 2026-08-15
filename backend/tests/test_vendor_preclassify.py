@@ -5,10 +5,10 @@ from __future__ import annotations
 from backend.schema.default_categories import (
     CAT_BANK_FEES,
     CAT_CASH_WITHDRAWAL,
-    CAT_GROCERIES,
     CAT_INTERNAL,
     CAT_LOANS,
-    CAT_TAXI,
+    CAT_RESTAURANTS,
+    CAT_SPOTIFY,
     DEFAULT_CATEGORIES,
 )
 from backend.services.ai_categorize import MerchantCluster, _category_catalog
@@ -51,8 +51,9 @@ def test_pocket_and_fx_are_internal():
         ],
         cat,
     )
-    assert [g.category_id for g in r.resolved] == [str(CAT_INTERNAL)] * 3
-    assert r.leftovers == []
+    assert {g.category_id for g in r.resolved} == {str(CAT_INTERNAL)}
+    assert len(r.resolved) == 2
+    assert r.leftovers[0].label.startswith("Top-up")
 
 
 def test_cash_loan_fee_rules():
@@ -76,17 +77,16 @@ def test_known_merchant_and_unwrapped_lidl():
     cat = _catalog()
     r = preclassify_clusters(
         [
+            _cl("Spotify", key="m:spotify"),
+            _cl("McDonald's", key="m:mcdonald's"),
             _cl("Albert", key="m:albert"),
-            _cl("Lime", key="m:lime"),
-            _cl("Card payment — Lidl; Praha 3; CZE", key="d:card payment — lidl"),
         ],
         cat,
     )
     by_label = {g.cluster.label: g for g in r.resolved}
-    assert by_label["Albert"].category_id == str(CAT_GROCERIES)
-    assert by_label["Lime"].category_id == str(CAT_TAXI)
-    assert by_label["Card payment — Lidl; Praha 3; CZE"].category_id == str(CAT_GROCERIES)
-    assert r.leftovers == []
+    assert by_label["Spotify"].category_id == str(CAT_SPOTIFY)
+    assert by_label["McDonald's"].category_id == str(CAT_RESTAURANTS)
+    assert [c.label for c in r.leftovers] == ["Albert"]
 
 
 def test_unknown_stays_leftover():

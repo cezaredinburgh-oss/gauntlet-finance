@@ -14,7 +14,6 @@ from uuid import UUID, uuid4
 logger = logging.getLogger(__name__)
 
 from backend.common.timeutil import utc_now
-from backend.engines.categorize import CategoryEngine
 from backend.engines.lots import FifoResult, LotEngine
 from backend.engines.statements import StatementService
 from backend.engines.transfer_match import match_internal_transfers
@@ -23,7 +22,6 @@ from backend.parsers.base import ImportGateResult
 from backend.schema.models import (
     Account,
     Category,
-    CategoryRule,
     InvestmentEvent,
     InvestmentEventType,
     InvestmentLot,
@@ -78,6 +76,9 @@ class UploadSummary:
     transfer_pairs_linked: int = 0
     transactions_deduped: int = 0
     events_deduped: int = 0
+    transactions_tagged: int = 0
+    transactions_internal_flagged: int = 0
+    transactions_categorized: int = 0
     message: str = ""
     errors: list[str] = field(default_factory=list)
     # True when native detect failed and cash AI map may help (CSV).
@@ -123,14 +124,23 @@ def _build_import_message(
     events_written: int,
     transactions_deduped: int,
     events_deduped: int,
+    transactions_tagged: int = 0,
+    transactions_internal_flagged: int = 0,
 ) -> str:
     """Human summary: N parsed · X already in ledger · Y new."""
     parts: list[str] = []
     if transactions_written or transactions_deduped:
         tx_parsed = transactions_written + transactions_deduped
+        extra = ""
+        if transactions_written:
+            extra = (
+                f" · {transactions_tagged} tagged · "
+                f"{transactions_internal_flagged} marked internal · "
+                f"0 categorized"
+            )
         parts.append(
             f"{tx_parsed} parsed · {transactions_deduped} already in ledger · "
-            f"{transactions_written} new"
+            f"{transactions_written} new{extra}"
         )
     if events_written or events_deduped:
         ev_parsed = events_written + events_deduped
@@ -548,29 +558,21 @@ class ImportPipeline:
         d_tx = StatementService.dedupe_transactions(existing_tx, parsed.transactions)
         d_ev = StatementService.dedupe_events(existing_ev, parsed.investment_events)
 
-        # Ensure Digital Assets Europe crypto-pot rule before categorize
-        try:
-            from backend.schema.ensure_defaults import ensure_digital_assets_rule
+        # Tag only — never write category_id. Structural hits may flag internal.
+        from backend.engines.core_pack import tag_transactions
 
-            ensure_digital_assets_rule(self.repo)
-        except Exception:  # noqa: BLE001
-            pass
-
-        # Categorize new transactions
         categories = [
             r for r in self.repo.list_rows("Categories") if isinstance(r, Category)
         ]
-        rules = [
-            r for r in self.repo.list_rows("CategoryRules") if isinstance(r, CategoryRule)
-        ]
-        cat_engine = CategoryEngine(rules=rules, categories=categories)
-        cat_result = cat_engine.categorize_many(d_tx.transactions)
+        tagged_new, n_tagged, n_flagged = tag_transactions(
+            d_tx.transactions, categories
+        )
 
         # Internal transfer match on union of existing + new
-        combined = existing_tx + cat_result.transactions
+        combined = existing_tx + tagged_new
         match_result = match_internal_transfers(combined)
         matched_by_id = {t.id: t for t in match_result.transactions}
-        new_tx_final = [matched_by_id[t.id] for t in cat_result.transactions]
+        new_tx_final = [matched_by_id[t.id] for t in tagged_new]
         existing_updates = []
         for t in existing_tx:
             m = matched_by_id.get(t.id)
@@ -709,6 +711,8 @@ class ImportPipeline:
 
         tx_written = len(new_tx_final)
         ev_written = len(d_ev.investment_events)
+        n_internal = sum(1 for t in new_tx_final if t.is_internal_transfer)
+        n_categorized = sum(1 for t in new_tx_final if t.category_id is not None)
         msg = _build_import_message(
             parser_key=parsed.parser_key,
             filename=filename,
@@ -717,6 +721,8 @@ class ImportPipeline:
             events_written=ev_written,
             transactions_deduped=d_tx.dropped_transactions,
             events_deduped=d_ev.dropped_events,
+            transactions_tagged=n_tagged,
+            transactions_internal_flagged=n_internal,
         )
         # Count lots for touched tickers when we rebuilt; else all fifo lots written
         if touched and (force_rebuild or stale_lot_ids or stale_alloc_ids or fifo.events):
@@ -741,5 +747,8 @@ class ImportPipeline:
             transfer_pairs_linked=match_result.pairs_linked,
             transactions_deduped=d_tx.dropped_transactions,
             events_deduped=d_ev.dropped_events,
+            transactions_tagged=n_tagged,
+            transactions_internal_flagged=n_internal,
+            transactions_categorized=n_categorized,
             message=msg,
         )

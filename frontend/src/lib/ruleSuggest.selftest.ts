@@ -3,6 +3,7 @@
  * Run: npx --yes tsx src/lib/ruleSuggest.selftest.ts  (from frontend/)
  */
 import {
+  applyVendorCategoryOverrides,
   formatVendorPreview,
   groupTransactionsByVendor,
   groupVendorsByCategory,
@@ -126,6 +127,28 @@ if (byCat.groups[0].categoryName !== "Groceries" || byCat.groups[0].txCount !== 
 if (byCat.unassigned.length !== 1 || byCat.unassigned[0].label !== "???") {
   throw new Error("unassigned should keep unmatched vendors");
 }
+const remapped = applyVendorCategoryOverrides(
+  [
+    {
+      key: "m:mol",
+      label: "MOL",
+      count: 4,
+      ids: ["m1"],
+      suggestedCategoryId: "fuel",
+      suggestedCategoryName: "Fuel (car)",
+    },
+  ],
+  { "m:mol": "moto" },
+  [
+    { ...groceries, id: "fuel", name: "Fuel (car)" },
+    { ...groceries, id: "moto", name: "Moto fuel" },
+  ],
+);
+const remappedGroups = groupVendorsByCategory(remapped);
+if (remappedGroups.groups.length !== 1 || remappedGroups.groups[0].categoryName !== "Moto fuel") {
+  throw new Error("remapping a vendor should move it to the new category group");
+}
+
 if (formatVendorPreview(["Rohlik", "Lidl"], 80) !== "Rohlik, Lidl") {
   throw new Error("short preview should list all names");
 }

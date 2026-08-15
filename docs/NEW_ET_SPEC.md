@@ -49,6 +49,10 @@ Modes: **Review | Rules | Categories**. “Groups” in product language = **Cat
 
 Primary Review path is **manual assign → similar → rule**. No Grok desk, no presets, no chat.
 
+Ask Grok+ (lab only, suggest-only) can keep matching leftover residuals in the background. A floating chip shows status, latest match, and an estimated session/today cost; Review matches returns to the Approve panel. Hidden tab pauses.
+
+Upload **tags** from the universal core pack and may flag internals; it does not assign `category_id`. User assigns teach VendorMemory for later Grok+ proposals. See `docs/CATEGORIZE_FLOW.md`.
+
 - After a row or bulk assign, one card offers **Review similar**, **Apply to N similar**, and **Apply + save rule** (one click).
 - Similar = same vendor key + same money direction + residual only. Rule is the existing client suggestion (`merchant contains …`).
 - Guided card sits **above the table**. Undo toast ~20s.

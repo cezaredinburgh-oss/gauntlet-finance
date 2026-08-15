@@ -204,6 +204,9 @@ class Transaction(SheetRow):
     original_file_hash: Optional[str] = None
     source_file_id: Optional[UUID] = None
     notes: Optional[str] = None
+    suggest_category_id: Optional[UUID] = None
+    suggest_source: Optional[str] = None
+    suggest_reason: Optional[str] = None
 
 
 class InvestmentLot(SheetRow):
@@ -286,6 +289,17 @@ class CategoryRule(SheetRow):
     institution_scope: Optional[str] = None
     is_active: bool = True
     notes: Optional[str] = None
+
+
+class VendorMemory(SheetRow):
+    """Tab: VendorMemory — learned vendor → category from user assigns."""
+
+    vendor_key: str
+    label: str
+    category_id: UUID
+    assign_count: int = 0
+    reject_count: int = 0
+    source: str = "user"
 
 
 class FXRate(SheetRow):
@@ -390,6 +404,9 @@ SHEET_HEADERS: dict[str, list[str]] = {
         "original_file_hash",
         "source_file_id",
         "notes",
+        "suggest_category_id",
+        "suggest_source",
+        "suggest_reason",
         "archived",
         "created_at",
         "updated_at",
@@ -478,6 +495,18 @@ SHEET_HEADERS: dict[str, list[str]] = {
         "created_at",
         "updated_at",
     ],
+    "VendorMemory": [
+        "id",
+        "vendor_key",
+        "label",
+        "category_id",
+        "assign_count",
+        "reject_count",
+        "source",
+        "archived",
+        "created_at",
+        "updated_at",
+    ],
     "FXRates": [
         "id",
         "rate_date",
@@ -547,6 +576,7 @@ TAB_MODEL: dict[str, type[SheetRow]] = {
     "InvestmentEvents": InvestmentEvent,
     "Categories": Category,
     "CategoryRules": CategoryRule,
+    "VendorMemory": VendorMemory,
     "FXRates": FXRate,
     "StatementFiles": StatementFile,
     "Settings": Setting,

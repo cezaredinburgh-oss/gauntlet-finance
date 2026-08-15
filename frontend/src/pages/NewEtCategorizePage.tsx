@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { ApiError, api } from "../api/client";
 import type {
-  AiCategorizeSuggestResult,
   Category,
   CategoryCoverage,
   CategoryRule,
@@ -33,6 +32,7 @@ import {
 } from "../features/new-et/GuidedCards";
 import { RulesMode } from "../features/new-et/RulesMode";
 import { GrokPlusPanel } from "../features/new-et/GrokPlusPanel";
+import { useGrokPlus } from "../features/new-et/GrokPlusContext";
 import { VendorRollup, type VendorApplyRow } from "../features/new-et/VendorRollup";
 import {
   createUndoEntry,
@@ -115,36 +115,6 @@ function isUuid(value: string): boolean {
   return UUID_RE.test(value);
 }
 
-function mapGrokSuggestions(
-  suggestions: AiCategorizeSuggestResult["suggestions"],
-  catsSorted: Category[],
-): VendorBucket[] {
-  return suggestions.map((s) => {
-    const want = (s.category_id || "").trim().toLowerCase();
-    const byId = want
-      ? catsSorted.find((c) => c.id.toLowerCase() === want)
-      : undefined;
-    const byName = s.category_name
-      ? catsSorted.find(
-          (c) => c.name.toLowerCase() === s.category_name.trim().toLowerCase(),
-        )
-      : undefined;
-    const resolved = byId || byName;
-    return {
-      key: s.merchant_key,
-      label: s.label,
-      count: s.sample_count || s.transaction_ids.length,
-      ids: s.transaction_ids,
-      suggestedCategoryId: resolved?.id || "",
-      suggestedCategoryName: resolved?.name || s.category_name,
-      reason: s.reason
-        ? `${s.reason}${resolved?.name || s.category_name ? ` → ${resolved?.name || s.category_name}` : ""}`
-        : resolved?.name || s.category_name || undefined,
-      confidence: s.confidence,
-    };
-  });
-}
-
 function normTxId(id: string): string {
   return id.trim().toLowerCase();
 }
@@ -198,6 +168,7 @@ function isoDaysAgo(days: number): { from: string; to: string } {
 
 export function NewEtCategorizePage() {
   const { isReadOnly } = useAuth();
+  const grokPlus = useGrokPlus();
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<Transaction[]>([]);
   const [total, setTotal] = useState(0);
@@ -235,7 +206,6 @@ export function NewEtCategorizePage() {
   const loadGen = useRef(0);
   const txTableRef = useRef<HTMLDivElement | null>(null);
   const grokExcludeRef = useRef<string[]>([]);
-  const grokBusyRef = useRef(false);
 
   const dateFrom = searchParams.get("date_from") || "";
   const dateTo = searchParams.get("date_to") || "";
@@ -250,6 +220,13 @@ export function NewEtCategorizePage() {
   useEffect(() => {
     setQ(qFromUrl);
   }, [qFromUrl]);
+
+  useEffect(() => {
+    if (searchParams.get("panel") === "grokplus") {
+      setVendorPanel("grokplus");
+      setMode("review");
+    }
+  }, [searchParams]);
 
   const multiCategoryIds = useMemo(
     () =>
@@ -1107,7 +1084,11 @@ export function NewEtCategorizePage() {
       setItems(working);
       void refreshCoverage();
       const left = grokBuckets.filter((b) => b.key !== bucket.key);
-      markVendorConsumed([bucket.key]);
+      if (vendorPanel === "grokplus") {
+        grokPlus.consumeKeys([bucket.key]);
+      } else {
+        markVendorConsumed([bucket.key]);
+      }
       if (vendorPanel === "grok" || vendorPanel === "grokplus") {
         setFocusIds(null);
         setSelected(new Set());
@@ -1120,12 +1101,6 @@ export function NewEtCategorizePage() {
       }
       if (vendorPanel === "grok" && left.length === 0) {
         void fetchGrokVendors();
-      } else if (
-        vendorPanel === "grokplus" &&
-        left.length === 0 &&
-        !grokBusyRef.current
-      ) {
-        void fetchGrokPlus();
       }
     } catch (e) {
       alert(e instanceof Error ? e.message : "Vendor assign failed");
@@ -1149,7 +1124,12 @@ export function NewEtCategorizePage() {
         }
       }
       setItems(working);
-      markVendorConsumed(rows.map((r) => r.bucket.key));
+      const keys = rows.map((r) => r.bucket.key);
+      if (vendorPanel === "grokplus") {
+        grokPlus.consumeKeys(keys);
+      } else {
+        markVendorConsumed(keys);
+      }
       void refreshCoverage();
       if (makeRule) void load({ quiet: true });
       if (vendorPanel === "grok") {
@@ -1159,7 +1139,6 @@ export function NewEtCategorizePage() {
       } else if (vendorPanel === "grokplus") {
         setFocusIds(null);
         setSelected(new Set());
-        if (!grokBusyRef.current) void fetchGrokPlus();
       }
     } catch (e) {
       alert(e instanceof Error ? e.message : "Apply all failed");
@@ -1272,96 +1251,11 @@ export function NewEtCategorizePage() {
     }
   }
 
-  async function fetchGrokPlus() {
+  function startGrokPlus() {
     setVendorPanel("grokplus");
     setFocusIds(null);
     setSelected(new Set());
-    grokBusyRef.current = true;
-    setGrokBusy(true);
-    setGrokMsg("Sorting residual vendors, then asking Grok about leftovers…");
-    setGrokDebug(null);
-    setGrokBuckets([]);
-    const collected: VendorBucket[] = [];
-    const debugChunks: string[] = [];
-    const seen = new Set<string>(grokExcludeRef.current);
-    const rounds = 3;
-    const batch = 12;
-    let finalMsg: string | null = null;
-    try {
-      for (let i = 0; i < rounds; i += 1) {
-        setGrokMsg(
-          collected.length
-            ? `Mapped ${collected.length} vendors… batch ${i + 1} of ${rounds}`
-            : `Matching vendors to categories… batch ${i + 1} of ${rounds}`,
-        );
-        let r: AiCategorizeSuggestResult;
-        try {
-          r = await api.aiVendorSuggestPlus({
-            exclude_merchant_keys: [...seen],
-            limit: batch,
-          });
-        } catch (e) {
-          const detail =
-            e instanceof ApiError
-              ? e.status === 404
-                ? "The API on port 8020 is old — restart Start-App, then try Ask Grok+ again."
-                : e.message
-              : e instanceof Error
-                ? e.message
-                : "Grok+ request failed";
-          finalMsg = collected.length
-            ? `Mapped ${collected.length} vendor${collected.length === 1 ? "" : "s"}, then a later batch failed: ${detail}`
-            : detail;
-          break;
-        }
-        for (const v of r.vendors_sent || []) {
-          if (v.merchant_key) seen.add(v.merchant_key);
-        }
-        for (const s of r.suggestions) {
-          if (s.merchant_key) seen.add(s.merchant_key);
-        }
-        const sent = r.vendors_sent || [];
-        if (sent.length) {
-          debugChunks.push(
-            `Batch ${i + 1} vendors (${sent.length}):\n` +
-              sent
-                .map((v, n) => `${n + 1}. ${v.label} ×${v.count} (${v.merchant_key})`)
-                .join("\n"),
-          );
-        }
-        if (i === 0) {
-          debugChunks.push(
-            "",
-            "--- system prompt ---",
-            r.system_prompt || "(empty)",
-            "",
-            "--- user prompt ---",
-            r.user_prompt || "(empty)",
-          );
-        }
-        setGrokDebug(debugChunks.join("\n"));
-        if (!r.configured) {
-          finalMsg =
-            r.message || "Grok is not configured. Set AI_ENABLED and XAI_API_KEY.";
-          break;
-        }
-        const next = mapGrokSuggestions(r.suggestions, catsSorted);
-        for (const b of next) {
-          if (!collected.some((x) => x.key === b.key)) collected.push(b);
-        }
-        if (collected.length) setGrokBuckets([...collected]);
-        if (!sent.length && next.length === 0) break;
-      }
-      if (finalMsg == null) {
-        finalMsg = collected.length
-          ? `Grok mapped ${collected.length} vendor${collected.length === 1 ? "" : "s"} into categories.`
-          : "Grok returned no vendor guesses.";
-      }
-      setGrokMsg(finalMsg);
-    } finally {
-      grokBusyRef.current = false;
-      setGrokBusy(false);
-    }
+    if (grokPlus.phase !== "running") grokPlus.start(catsSorted);
   }
 
   const grokAwaitingClick =
@@ -1619,10 +1513,9 @@ export function NewEtCategorizePage() {
               <button
                 type="button"
                 className="rounded-lg border border-white/10 px-2 py-1 text-[11px] text-ink-muted hover:border-brand/40 hover:text-ink"
-                disabled={grokBusy}
-                onClick={() => void fetchGrokPlus()}
+                onClick={() => startGrokPlus()}
               >
-                {grokBusy && vendorPanel === "grokplus" ? "Asking Grok+…" : "Ask Grok+"}
+                {grokPlus.phase === "running" ? "Matching…" : "Ask Grok+"}
               </button>
             </div>
           </div>
@@ -1649,13 +1542,16 @@ export function NewEtCategorizePage() {
 
       {mode === "review" && vendorPanel === "grokplus" && (
         <GrokPlusPanel
-          buckets={grokBuckets}
+          buckets={grokPlus.buckets}
           catsSorted={catsSorted}
-          busy={bulkBusy || ruleBusy || (grokBusy && grokBuckets.length === 0)}
+          busy={
+            bulkBusy ||
+            ruleBusy ||
+            (grokPlus.phase === "running" && grokPlus.buckets.length === 0)
+          }
           isReadOnly={isReadOnly}
           applyingKey={vendorApplyKey}
-          message={grokMsg}
-          debugText={grokDebug}
+          message={grokPlus.message}
           onApply={(b, categoryId) => void applyVendorBucket(b, categoryId)}
           onApplyRule={(b, categoryId) =>
             void applyVendorBucket(b, categoryId, { makeRule: true })
@@ -1666,7 +1562,10 @@ export function NewEtCategorizePage() {
             setFocusIds(null);
             setSelected(new Set());
           }}
-          onClose={() => setVendorPanel("off")}
+          onClose={() => {
+            setVendorPanel("off");
+            patchParams({ panel: null });
+          }}
         />
       )}
 
@@ -2088,6 +1987,14 @@ export function NewEtCategorizePage() {
                             {cat && (
                               <div className="mt-0.5 text-[10px] text-ink-faint">
                                 {cat.necessity} · {cat.life_domain}
+                              </div>
+                            )}
+                            {!t.category_id && t.suggest_reason && (
+                              <div className="mt-0.5 text-[10px] text-brand/80">
+                                Tag: {t.suggest_reason}
+                                {t.suggest_category_id
+                                  ? ` · ${catMap.get(t.suggest_category_id)?.name || ""}`
+                                  : ""}
                               </div>
                             )}
                           </td>

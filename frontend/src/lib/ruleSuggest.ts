@@ -319,6 +319,28 @@ export type CategoryVendorGroup = {
   txCount: number;
 };
 
+/** Overlay per-vendor category edits so the drill-down regroups immediately. */
+export function applyVendorCategoryOverrides(
+  buckets: VendorBucket[],
+  remaps: Record<string, string>,
+  cats: Category[],
+): VendorBucket[] {
+  if (!Object.keys(remaps).length) return buckets;
+  return buckets.map((b) => {
+    if (!(b.key in remaps)) return b;
+    const id = remaps[b.key];
+    if (!id) {
+      return { ...b, suggestedCategoryId: "", suggestedCategoryName: "" };
+    }
+    const cat = cats.find((c) => c.id === id);
+    return {
+      ...b,
+      suggestedCategoryId: id,
+      suggestedCategoryName: cat?.name || b.suggestedCategoryName || "",
+    };
+  });
+}
+
 export function groupVendorsByCategory(buckets: VendorBucket[]): {
   groups: CategoryVendorGroup[];
   unassigned: VendorBucket[];

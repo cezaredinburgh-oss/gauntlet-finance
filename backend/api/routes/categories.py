@@ -209,6 +209,14 @@ async def get_coverage(
     return coverage_stats(repo, days=days)
 
 
+@router.get("/categories/vendor-memory")
+async def get_vendor_memory(repo: RepoDep, _user: UserDep) -> dict[str, Any]:
+    """Learned vendor → category map (JSON export of the meta document)."""
+    from backend.services.vendor_memory import export_memory
+
+    return {"items": export_memory(repo)}
+
+
 @router.get("/categories/merchant-queue")
 async def get_merchant_queue(
     repo: RepoDep,
@@ -383,6 +391,9 @@ async def override_category(
         updates["is_internal_transfer"] = True
     updated = tx.model_copy(update=updates)
     repo.upsert_rows("Transactions", [updated])
+    from backend.services.vendor_memory import record_assignments
+
+    record_assignments(repo, [tx], category_id, source="user")
     cache_invalidate()
     return CategoryOverrideResponse(
         transaction_id=updated.id,
@@ -440,6 +451,10 @@ async def bulk_override_category(
 
     if updated_rows:
         repo.upsert_rows("Transactions", updated_rows)
+        from backend.services.vendor_memory import record_assignments
+
+        originals = [by_id[tid] for tid in updated_ids if tid in by_id]
+        record_assignments(repo, originals, body.category_id, source="user")
         cache_invalidate()
 
     return BulkCategoryOverrideResponse(

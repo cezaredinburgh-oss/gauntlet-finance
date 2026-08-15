@@ -36,6 +36,8 @@ import {
 } from "../lib/alertSeen";
 import { cn } from "../lib/cn";
 import { isNewEtUser } from "../lib/newEtAccess";
+import { FloatingMatchChip } from "../features/new-et/FloatingMatchChip";
+import { GrokPlusProvider } from "../features/new-et/GrokPlusContext";
 
 type NavLeaf = {
   kind: "leaf";
@@ -489,6 +491,7 @@ export function Layout() {
   }, [location.pathname]);
 
   return (
+    <GrokPlusProvider enabled={showNewEt}>
     <div className="min-h-screen bg-surface text-ink">
       <DemoBanner />
       <div className="lg:flex">
@@ -616,7 +619,9 @@ export function Layout() {
           ))}
         </div>
       </nav>
+      {showNewEt ? <FloatingMatchChip /> : null}
       </div>
     </div>
+    </GrokPlusProvider>
   );
 }

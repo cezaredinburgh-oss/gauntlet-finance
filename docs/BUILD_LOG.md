@@ -4,6 +4,25 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-14 — Tag on upload + VendorMemory
+
+- Import no longer writes `category_id`. Core pack tags only; structural own-money sets `is_internal_transfer`.
+- Tiny exact shops: Spotify, Netflix, McDonald’s. No owner-name rule on ensure-defaults.
+- User assigns learn `VendorMemory`. Grok+ proposes those after two confirms, then tags, then leftover Grok.
+
+## 2026-08-14 — Grok+ background loop + floating chip
+
+- Ask Grok+ now keeps matching leftover residuals in a lab-only Layout session (not a 3-batch click).
+- A bottom-right chip follows the user around the app: status, latest match, session + today cost estimate, jump back to Approve.
+- Hidden tab pauses; Pause/Resume on the chip. Suggest-only. 80-batch session cap.
+- Cost is an estimate from published grok-4.3 / 4.5 rates × prompt/completion tokens (day total uses quota × 80/20 blend).
+- Approve selected no longer wipes remaining guesses.
+
+## 2026-08-13 — Ask Grok+: remap groups and approve selected
+
+- Category rows are editable (e.g. Fuel (car) → Moto fuel); vendors regroup immediately.
+- Groups are ticked by default. Untick anything that still needs work, then **Approve selected**.
+
 ## 2026-08-13 — Ask Grok+ hybrid: local sort, then leftover Grok
 
 - Residual vendors are compiled in memory (not disk files).

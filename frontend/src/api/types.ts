@@ -93,6 +93,9 @@ export type Transaction = {
   is_internal_transfer: boolean;
   transfer_group_id?: string | null;
   notes?: string | null;
+  suggest_category_id?: string | null;
+  suggest_source?: string | null;
+  suggest_reason?: string | null;
 };
 
 export type Category = {
@@ -692,6 +695,9 @@ export type UploadResult = {
   transfer_pairs_linked: number;
   transactions_deduped: number;
   events_deduped: number;
+  transactions_tagged?: number;
+  transactions_internal_flagged?: number;
+  transactions_categorized?: number;
   message: string;
   errors: string[];
   /** Unknown cash CSV may be mapped with Grok */
@@ -1069,6 +1075,8 @@ export type AiCategorizeSuggestResult = {
   tokens_used: number;
   quota_used: number;
   quota_cap: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
   message?: string | null;
   system_prompt?: string;
   user_prompt?: string;

@@ -30,6 +30,9 @@ class UploadResponse(BaseModel):
     transfer_pairs_linked: int = 0
     transactions_deduped: int = 0
     events_deduped: int = 0
+    transactions_tagged: int = 0
+    transactions_internal_flagged: int = 0
+    transactions_categorized: int = 0
     message: str = ""
     errors: list[str] = Field(default_factory=list)
     ai_map_eligible: bool = False

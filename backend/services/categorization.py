@@ -97,24 +97,18 @@ def ensure_default_categories(repo: SheetsRepository) -> dict[str, Any]:
             updated += 1
     if to_write:
         repo.upsert_rows("Categories", to_write)
-    # Seed Self-education exact-message rule (course payment) + Digital Assets pot rule
-    from backend.schema.ensure_defaults import (
-        ensure_digital_assets_rule,
-        ensure_self_education_rule,
-    )
+    from backend.schema.ensure_defaults import ensure_digital_assets_rule
 
-    se_rule = ensure_self_education_rule(repo)
     da_rule = ensure_digital_assets_rule(repo)
-    se_applied = apply_self_education_course_payments(repo)
     cache_invalidate()
     return {
         "created": created,
         "updated": updated,
         "total_defaults": len(DEFAULT_CATEGORIES),
-        "self_education_rule": se_rule,
+        "self_education_rule": False,
         "digital_assets_rule": da_rule,
         "self_education_category_id": str(CAT_SELF_EDUCATION),
-        "self_education_txs_updated": se_applied.get("updated", 0),
+        "self_education_txs_updated": 0,
     }
 
 

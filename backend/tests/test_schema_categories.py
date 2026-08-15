@@ -36,6 +36,7 @@ def test_sheet_tabs_complete() -> None:
         "InvestmentEvents",
         "Categories",
         "CategoryRules",
+        "VendorMemory",
         "FXRates",
         "StatementFiles",
         "Settings",

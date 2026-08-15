@@ -18,6 +18,7 @@ def test_build_import_message_tx_only():
     )
     assert msg == (
         "[revolut_expenses] 2187 parsed · 2128 already in ledger · 59 new"
+        " · 0 tagged · 0 marked internal · 0 categorized"
     )
 
 
