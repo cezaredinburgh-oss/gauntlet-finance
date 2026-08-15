@@ -100,6 +100,30 @@ def memory_lookup(repo: SheetsRepository, key: str) -> VendorMemory | None:
     return load_index(repo).get(key)
 
 
+def wipe_user_assignments(repo: SheetsRepository) -> dict[str, int]:
+    """Clear user category assigns and memory. Keep tags and internal flags."""
+    now = utc_now()
+    dirty: list[Transaction] = []
+    for row in repo.list_rows("Transactions"):
+        if not isinstance(row, Transaction) or row.archived:
+            continue
+        if row.category_id is None and not row.category_override:
+            continue
+        dirty.append(
+            row.model_copy(
+                update={
+                    "category_id": None,
+                    "category_override": False,
+                    "updated_at": now,
+                }
+            )
+        )
+    if dirty:
+        repo.upsert_rows("Transactions", dirty)
+    repo.replace_all_rows("VendorMemory", [])
+    return {"cleared_assignments": len(dirty), "memory_cleared": 1}
+
+
 def export_memory(repo: SheetsRepository) -> list[dict[str, object]]:
     rows = [
         r

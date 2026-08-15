@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { Pause, Play, Sparkles } from "lucide-react";
+import { Pause, Play, Sparkles, X } from "lucide-react";
 import { formatUsdEstimate } from "../../lib/aiCost";
 import { cn } from "../../lib/cn";
 import { useGrokPlus } from "./GrokPlusContext";
@@ -9,7 +9,7 @@ export function FloatingMatchChip() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  if (!grok.enabled || !grok.started) return null;
+  if (!grok.enabled || !grok.started || grok.dismissed) return null;
 
   const running = grok.phase === "running";
   const paused = grok.phase === "paused";
@@ -59,6 +59,15 @@ export function FloatingMatchChip() {
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="order-last rounded-lg p-1 text-ink-muted hover:bg-white/5 hover:text-ink"
+                aria-label="Close matching window"
+                title="Close"
+                onClick={() => grok.dismiss()}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
               <p className="truncate text-xs font-semibold text-ink">
                 {running && (
                   <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-brand align-middle" />

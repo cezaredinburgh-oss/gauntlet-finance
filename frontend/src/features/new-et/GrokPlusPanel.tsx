@@ -10,6 +10,7 @@ import {
 import { Spinner } from "../../components/Spinner";
 import { cn } from "../../lib/cn";
 import type { VendorApplyRow } from "./VendorRollup";
+import { CreateCategoryInline } from "./CreateCategoryInline";
 
 const UNMATCHED_ID = "__unmatched__";
 
@@ -27,6 +28,9 @@ export function GrokPlusPanel({
   onOpen,
   onExpandCategory,
   onClose,
+  onCategoryCreated,
+  coachNote,
+  applyProgress,
 }: {
   buckets: VendorBucket[];
   catsSorted: Category[];
@@ -41,6 +45,9 @@ export function GrokPlusPanel({
   onOpen: (bucket: VendorBucket) => void;
   onExpandCategory?: () => void;
   onClose: () => void;
+  onCategoryCreated?: (cat: Category) => void;
+  coachNote?: string | null;
+  applyProgress?: { current: number; total: number } | null;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [remaps, setRemaps] = useState<Record<string, string>>({});
@@ -107,9 +114,8 @@ export function GrokPlusPanel({
           <div>
             <h2 className="font-semibold">Ask Grok+</h2>
             <p className="text-sm text-ink-muted">
-              Tick the groups you want, retarget a row if the guess is wrong
-              (Fuel → Moto fuel), then approve. Untick anything that still
-              needs work.
+              Expand a category and click a vendor to check the txs. Retarget
+              misses or add a category if the catalog is wrong, then approve.
             </p>
           </div>
         </div>
@@ -117,6 +123,33 @@ export function GrokPlusPanel({
           <X className="h-4 w-4" />
         </button>
       </div>
+      {coachNote ? (
+        <p className="rounded-lg border border-brand/20 bg-brand/10 px-3 py-2 text-xs text-ink">
+          {coachNote}
+        </p>
+      ) : null}
+      {onCategoryCreated ? (
+        <CreateCategoryInline
+          catsSorted={catsSorted}
+          disabled={busy || isReadOnly}
+          onCreated={onCategoryCreated}
+        />
+      ) : null}
+      {applyProgress && applyProgress.total > 0 ? (
+        <div>
+          <p className="text-[11px] text-ink-muted">
+            Applying {applyProgress.current} / {applyProgress.total} vendors…
+          </p>
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full bg-brand"
+              style={{
+                width: `${Math.min(100, (applyProgress.current / applyProgress.total) * 100)}%`,
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {message ? <p className="text-sm text-ink">{message}</p> : null}
       {debugText ? (

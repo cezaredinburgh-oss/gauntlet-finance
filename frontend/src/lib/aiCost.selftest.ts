@@ -2,7 +2,12 @@
  * Self-test for Grok USD estimates.
  * Run: npx --yes tsx src/lib/aiCost.selftest.ts  (from frontend/)
  */
-import { estimateUsd, formatUsdEstimate, ratesForModel } from "./aiCost";
+import {
+  estimateGrokPlusLadder,
+  estimateUsd,
+  formatUsdEstimate,
+  ratesForModel,
+} from "./aiCost";
 
 const r43 = ratesForModel("grok-4.3");
 if (r43.inputPerM !== 1.25 || r43.outputPerM !== 2.5) {
@@ -29,5 +34,15 @@ if (Math.abs(blended - expectBlend) > 1e-9) throw new Error(`blend => ${blended}
 if (formatUsdEstimate(0) !== "$0.00") throw new Error("zero format");
 if (formatUsdEstimate(0.0042) !== "$0.0042") throw new Error("tiny format");
 if (formatUsdEstimate(1.2) !== "$1.20") throw new Error("dollar format");
+
+const ladder = estimateGrokPlusLadder({
+  categorized: 0,
+  uncategorized: 120,
+  leftoverVendors: 12,
+  usdPerLeftoverBatch: 0.02,
+});
+if (ladder[0].pct !== 50 || ladder[0].needTx !== 60) {
+  throw new Error(`ladder 50 ${JSON.stringify(ladder[0])}`);
+}
 
 console.log("aiCost.selftest: ok");

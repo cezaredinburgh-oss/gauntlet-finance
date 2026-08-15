@@ -34,3 +34,26 @@ def test_lookup_requires_two_assigns():
     row = vm.memory_lookup(repo, "m:lidl")
     assert row is not None
     assert row.assign_count >= vm.MEMORY_MIN_ASSIGNS
+
+
+def test_wipe_clears_assigns_keeps_tags_and_internal():
+    from backend.schema.default_categories import CAT_INTERNAL
+
+    repo = InMemorySheetsRepository()
+    kept = tx(
+        merchant="To pocket",
+        suggest_category_id=CAT_INTERNAL,
+        suggest_reason="Own pot / FX / vault",
+        is_internal_transfer=True,
+    )
+    assigned = tx(merchant="Lidl", category_id=CAT_GROCERIES, category_override=True)
+    repo.upsert_rows("Transactions", [kept, assigned])
+    vm.record_assignments(repo, [assigned], CAT_GROCERIES)
+    out = vm.wipe_user_assignments(repo)
+    assert out["cleared_assignments"] == 1
+    rows = {t.merchant: t for t in repo.list_rows("Transactions")}
+    assert rows["Lidl"].category_id is None
+    assert rows["Lidl"].category_override is False
+    assert rows["To pocket"].is_internal_transfer is True
+    assert rows["To pocket"].suggest_category_id == CAT_INTERNAL
+    assert repo.list_rows("VendorMemory") == []

@@ -33,6 +33,10 @@ import {
 import { RulesMode } from "../features/new-et/RulesMode";
 import { GrokPlusPanel } from "../features/new-et/GrokPlusPanel";
 import { useGrokPlus } from "../features/new-et/GrokPlusContext";
+import {
+  CategorizeWizard,
+  wizardDone,
+} from "../features/new-et/CategorizeWizard";
 import { VendorRollup, type VendorApplyRow } from "../features/new-et/VendorRollup";
 import {
   createUndoEntry,
@@ -40,7 +44,7 @@ import {
   snapshotFromTx,
   type UndoEntry,
 } from "../lib/categorizeUndo";
-import { formatUsd } from "../lib/money";
+import { estimateGrokPlusLadder, formatUsdEstimate } from "../lib/aiCost";
 import { cn } from "../lib/cn";
 import {
   analyseRuleAgainstEvidence,
@@ -206,6 +210,12 @@ export function NewEtCategorizePage() {
   const loadGen = useRef(0);
   const txTableRef = useRef<HTMLDivElement | null>(null);
   const grokExcludeRef = useRef<string[]>([]);
+  const [showWizard, setShowWizard] = useState(() => !wizardDone());
+  const [applyProgress, setApplyProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
+  const [wipeBusy, setWipeBusy] = useState(false);
 
   const dateFrom = searchParams.get("date_from") || "";
   const dateTo = searchParams.get("date_to") || "";
@@ -1113,9 +1123,12 @@ export function NewEtCategorizePage() {
   async function applyVendorBatch(rows: VendorApplyRow[], makeRule: boolean) {
     if (!rows.length) return;
     setBulkBusy(true);
+    setApplyProgress({ current: 0, total: rows.length });
     try {
       let working = items;
-      for (const row of rows) {
+      for (let i = 0; i < rows.length; i += 1) {
+        const row = rows[i];
+        setApplyProgress({ current: i + 1, total: rows.length });
         setVendorApplyKey(row.bucket.key);
         const out = await commitVendorAssign(working, row.bucket, row.categoryId);
         working = out.working;
@@ -1124,6 +1137,7 @@ export function NewEtCategorizePage() {
         }
       }
       setItems(working);
+      setApplyProgress(null);
       const keys = rows.map((r) => r.bucket.key);
       if (vendorPanel === "grokplus") {
         grokPlus.consumeKeys(keys);
@@ -1145,6 +1159,7 @@ export function NewEtCategorizePage() {
     } finally {
       setVendorApplyKey(null);
       setBulkBusy(false);
+      setApplyProgress(null);
     }
   }
 
@@ -1341,6 +1356,15 @@ export function NewEtCategorizePage() {
         ))}
       </div>
 
+      {showWizard && mode === "review" && (
+        <CategorizeWizard
+          onOpenVendors={() => setVendorPanel("plain")}
+          onOpenCategories={() => setWorkspaceMode("categories")}
+          onStartTour={() => startGrokPlus()}
+          onSkip={() => setShowWizard(false)}
+        />
+      )}
+
       {hasActiveScope && (
         <div className="rounded-xl border border-brand/30 bg-slate-950/95 px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1410,13 +1434,27 @@ export function NewEtCategorizePage() {
               />
             </div>
             <div className="mt-1 text-[11px] text-ink-faint">
-              Table shows newest {items.length.toLocaleString()}
+              Full ledger · table shows newest {items.length.toLocaleString()}
               {total > items.length ? ` of ${total.toLocaleString()}` : ""}
               {hideTransfers ? " · internals hidden" : ""}
-              {coverage
-                ? ` · ${formatUsd(coverage.expense_usd_categorized)} of ${formatUsd(coverage.expense_usd_total)} last ${coverage.days}d expense`
-                : ""}
             </div>
+            {(() => {
+              const usdPer = grokPlus.lastBatchCostUsd || 0.01;
+              const ladder = estimateGrokPlusLadder({
+                categorized: ledgerCoverage.categorized,
+                uncategorized: ledgerCoverage.uncategorized,
+                leftoverVendors: vendorBuckets.length,
+                usdPerLeftoverBatch: usdPer,
+              });
+              return (
+                <p className="mt-2 text-[11px] text-ink-faint">
+                  Est. Grok+ leftover $ to review{" "}
+                  {ladder.map((r) => `${r.pct}% ~${formatUsdEstimate(r.estUsd)}`).join(" · ")}
+                  {" "}
+                  (estimate · repeat vendors you already assigned skip the model)
+                </p>
+              );
+            })()}
           </div>
           <div className="card p-4 lg:col-span-1">
             <div className="label mb-1">Top uncategorized</div>
@@ -1517,6 +1555,34 @@ export function NewEtCategorizePage() {
               >
                 {grokPlus.phase === "running" ? "Matching…" : "Ask Grok+"}
               </button>
+              <button
+                type="button"
+                className="rounded-lg border border-danger/30 px-2 py-1 text-[11px] text-danger hover:bg-danger/10"
+                disabled={wipeBusy || isReadOnly}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      "Clear all category assigns and learned vendors? Statements, tags, and internal flags stay.",
+                    )
+                  ) {
+                    return;
+                  }
+                  setWipeBusy(true);
+                  void api
+                    .wipeAssignments()
+                    .then(() => {
+                      grokPlus.dismiss();
+                      setGrokBuckets([]);
+                      return load();
+                    })
+                    .catch((e) =>
+                      alert(e instanceof Error ? e.message : "Wipe failed"),
+                    )
+                    .finally(() => setWipeBusy(false));
+                }}
+              >
+                {wipeBusy ? "Wiping…" : "Wipe categorization"}
+              </button>
             </div>
           </div>
         </div>
@@ -1537,6 +1603,8 @@ export function NewEtCategorizePage() {
           onApplyAll={(rows, makeRule) => void applyVendorBatch(rows, makeRule)}
           onOpen={openVendorBucket}
           onClose={() => setVendorPanel("off")}
+          onCategoryCreated={(cat) => setCats((prev) => [...prev, cat])}
+          applyProgress={applyProgress}
         />
       )}
 
@@ -1566,6 +1634,14 @@ export function NewEtCategorizePage() {
             setVendorPanel("off");
             patchParams({ panel: null });
           }}
+          onCategoryCreated={(cat) => setCats((prev) => [...prev, cat])}
+          coachNote={
+            grokPlus.coachNote ||
+            (grokPlus.runCount <= 1
+              ? "Drill into a category, click a vendor, and add a category if something important is missing before you approve."
+              : null)
+          }
+          applyProgress={applyProgress}
         />
       )}
 
@@ -1591,6 +1667,7 @@ export function NewEtCategorizePage() {
           onApplyAll={(rows, makeRule) => void applyVendorBatch(rows, makeRule)}
           onOpen={openVendorBucket}
           onClose={() => setVendorPanel("off")}
+          onCategoryCreated={(cat) => setCats((prev) => [...prev, cat])}
         />
       )}
 

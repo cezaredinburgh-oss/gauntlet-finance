@@ -54,3 +54,7 @@ Import `CategoryEngine` assign (already removed from upload); `ensure_self_educa
 | W4 | New ET tag line; types; tests |
 
 Verify: `pytest` (405 passed) · `cd frontend && npm run lint`
+
+## Coaching UX (2026-08-14)
+
+New users get a 3-step wizard (categories → vendors → one leftover Grok+ batch). Skip is allowed. First leftover run stops after one batch. Wipe clears assigns + VendorMemory only. Coverage is full-ledger plus est. leftover $ to 50/75/90%.

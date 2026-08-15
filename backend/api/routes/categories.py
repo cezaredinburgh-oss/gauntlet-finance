@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.api.deps import RepoDep, UserDep
+from backend.api.deps import RepoDep, UserDep, WritableUserDep
 from backend.api.schemas import (
     BulkCategoryOverrideRequest,
     BulkCategoryOverrideResponse,
@@ -215,6 +215,26 @@ async def get_vendor_memory(repo: RepoDep, _user: UserDep) -> dict[str, Any]:
     from backend.services.vendor_memory import export_memory
 
     return {"items": export_memory(repo)}
+
+
+class WipeAssignmentsBody(BaseModel):
+    confirm: str = ""
+
+
+@router.post("/categories/wipe-assignments")
+async def wipe_assignments(
+    body: WipeAssignmentsBody,
+    repo: RepoDep,
+    _user: WritableUserDep,
+) -> dict[str, Any]:
+    """Clear user category assigns + VendorMemory. Keeps statements, tags, internals."""
+    if (body.confirm or "").strip().upper() != "WIPE":
+        raise HTTPException(status_code=400, detail="Type WIPE to confirm.")
+    from backend.services.vendor_memory import wipe_user_assignments
+
+    result = wipe_user_assignments(repo)
+    cache_invalidate()
+    return {"status": "ok", **result}
 
 
 @router.get("/categories/merchant-queue")

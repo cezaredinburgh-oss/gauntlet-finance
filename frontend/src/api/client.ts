@@ -566,6 +566,17 @@ export const api = {
   applyRules: () =>
     request<ApplyRulesResult>("/categories/apply-rules", { method: "POST" }),
 
+  vendorMemory: () =>
+    request<{ items: Array<{ vendor_key: string; assign_count: number; label: string }> }>(
+      "/categories/vendor-memory",
+    ),
+
+  wipeAssignments: () =>
+    request<{ status: string; cleared_assignments: number; memory_cleared: number }>(
+      "/categories/wipe-assignments",
+      { method: "POST", body: JSON.stringify({ confirm: "WIPE" }) },
+    ),
+
   aiStatus: () => request<AiStatus>("/ai/status"),
 
   aiCategorizeSuggest: (body: {

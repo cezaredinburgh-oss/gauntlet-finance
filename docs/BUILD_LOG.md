@@ -4,6 +4,13 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-14 — Categorize coaching UX
+
+- New-user wizard (categories → vendors → short Grok+ tour); skip allowed.
+- First Grok+ leftover run is one batch. Chip can be closed.
+- Create category from vendor / Grok+ lists. Approve shows progress.
+- Coverage is full-ledger; est. leftover $ to 50/75/90%. Wipe assigns + memory only.
+
 ## 2026-08-14 — Tag on upload + VendorMemory
 
 - Import no longer writes `category_id`. Core pack tags only; structural own-money sets `is_internal_transfer`.

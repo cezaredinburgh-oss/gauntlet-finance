@@ -44,6 +44,12 @@ export type GrokPlusApi = {
   pause: () => void;
   resume: (cats?: Category[]) => void;
   consumeKeys: (keys: string[]) => void;
+  dismiss: () => void;
+  dismissed: boolean;
+  runCount: number;
+  memorySkipCount: number;
+  coachNote: string | null;
+  lastBatchCostUsd: number;
 };
 
 const STORAGE_KEY = "gauntlet.grokplus.session";
@@ -105,6 +111,12 @@ const IDLE_API: GrokPlusApi = {
   pause: () => undefined,
   resume: () => undefined,
   consumeKeys: () => undefined,
+  dismiss: () => undefined,
+  dismissed: false,
+  runCount: 0,
+  memorySkipCount: 0,
+  coachNote: null,
+  lastBatchCostUsd: 0,
 };
 
 export function GrokPlusProvider({
@@ -129,6 +141,12 @@ export function GrokPlusProvider({
   const [dayQuotaUsed, setDayQuotaUsed] = useState(() => seed?.dayQuotaUsed ?? 0);
   const [dayQuotaCap, setDayQuotaCap] = useState(() => seed?.dayQuotaCap ?? 0);
   const [model, setModel] = useState<string | null>(() => seed?.model ?? null);
+  const [dismissed, setDismissed] = useState(false);
+  const [runCount, setRunCount] = useState(0);
+  const [memorySkipCount, setMemorySkipCount] = useState(0);
+  const [coachNote, setCoachNote] = useState<string | null>(null);
+  const [lastBatchCostUsd, setLastBatchCostUsd] = useState(0);
+  const firstRunRef = useRef(true);
 
   const wantRunRef = useRef(false);
   const inFlightRef = useRef(false);
@@ -261,16 +279,18 @@ export function GrokPlusProvider({
         runRef.current.sessionPrompt += prompt;
         runRef.current.sessionCompletion += completion;
         setSessionTokens((n) => n + used);
-        setSessionCostUsd(
-          (n) =>
-            n +
-            estimateUsd({
-              promptTokens: prompt,
-              completionTokens: completion,
-              totalTokens: used,
-              model: response.model || modelRef.current,
-            }),
-        );
+        const batchCost = estimateUsd({
+          promptTokens: prompt,
+          completionTokens: completion,
+          totalTokens: used,
+          model: response.model || modelRef.current,
+        });
+        setLastBatchCostUsd(batchCost);
+        setSessionCostUsd((n) => n + batchCost);
+        const learned = (response.suggestions || []).filter((s) =>
+          (s.reason || "").toLowerCase().includes("learned"),
+        ).length;
+        if (learned) setMemorySkipCount(learned);
 
         if (!response.configured) {
           wantRunRef.current = false;
@@ -333,6 +353,16 @@ export function GrokPlusProvider({
           break;
         }
 
+        if (firstRunRef.current) {
+          firstRunRef.current = false;
+          wantRunRef.current = false;
+          setPhase("paused");
+          setMessage(
+            "Tour batch done. Open a category, check misses, and add a category if the list is missing one — then Approve. Later runs get cheaper as you lock repeats.",
+          );
+          break;
+        }
+
         if (!wantRunRef.current) {
           setPhase("paused");
           break;
@@ -352,7 +382,25 @@ export function GrokPlusProvider({
       }
       pauseReasonRef.current = null;
       wantRunRef.current = true;
+      setDismissed(false);
       setStarted(true);
+      setRunCount((n) => {
+        const next = n + 1;
+        if (next >= 2) {
+          void api.vendorMemory().then((r) => {
+            const ready = (r.items || []).filter((i) => i.assign_count >= 2);
+            setMemorySkipCount(ready.length);
+            setCoachNote(
+              ready.length
+                ? `Your last approvals taught Grok+ ${ready.length} repeat vendor${ready.length === 1 ? "" : "s"}. Those skip the paid leftover call. Unseen shops still cost — locking repeats and adding missing categories first makes later batches cheaper.`
+                : "No repeat vendors locked yet (need two assigns of the same shop). Grok+ still pays for unseen leftovers. Assign obvious repeats by hand first.",
+            );
+          }).catch(() => {
+            setCoachNote(null);
+          });
+        }
+        return next;
+      });
       void runLoop();
     },
     [enabled, runLoop],
@@ -371,6 +419,13 @@ export function GrokPlusProvider({
     },
     [start],
   );
+
+  const dismiss = useCallback(() => {
+    wantRunRef.current = false;
+    pauseReasonRef.current = "user";
+    setPhase((p) => (p === "running" ? "paused" : p));
+    setDismissed(true);
+  }, []);
 
   const consumeKeys = useCallback((keys: string[]) => {
     if (!keys.length) return;
@@ -425,6 +480,12 @@ export function GrokPlusProvider({
       pause,
       resume,
       consumeKeys,
+      dismiss,
+      dismissed,
+      runCount,
+      memorySkipCount,
+      coachNote,
+      lastBatchCostUsd,
     }),
     [
       enabled,
@@ -444,6 +505,12 @@ export function GrokPlusProvider({
       pause,
       resume,
       consumeKeys,
+      dismiss,
+      dismissed,
+      runCount,
+      memorySkipCount,
+      coachNote,
+      lastBatchCostUsd,
     ],
   );
 

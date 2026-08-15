@@ -40,6 +40,28 @@ export function estimateUsd(opts: {
   return (prompt / 1_000_000) * rates.inputPerM + (completion / 1_000_000) * rates.outputPerM;
 }
 
+/** Estimate leftover-Grok $ to hit coverage targets. Memory/local hits are free. */
+export function estimateGrokPlusLadder(opts: {
+  categorized: number;
+  uncategorized: number;
+  leftoverVendors: number;
+  usdPerLeftoverBatch: number;
+  vendorsPerBatch?: number;
+}): { pct: number; needTx: number; estUsd: number }[] {
+  const total = Math.max(0, opts.categorized + opts.uncategorized);
+  const perBatch = Math.max(1, opts.vendorsPerBatch ?? 12);
+  const rate = Math.max(0, opts.usdPerLeftoverBatch);
+  const avgTx =
+    opts.leftoverVendors > 0 ? opts.uncategorized / opts.leftoverVendors : 1;
+  return [50, 75, 90].map((pct) => {
+    const target = Math.ceil((pct / 100) * total);
+    const needTx = Math.max(0, target - opts.categorized);
+    const needVendors = avgTx > 0 ? needTx / avgTx : 0;
+    const batches = Math.ceil(needVendors / perBatch);
+    return { pct, needTx, estUsd: batches * rate };
+  });
+}
+
 export function formatUsdEstimate(usd: number): string {
   if (!Number.isFinite(usd) || usd <= 0) return "$0.00";
   if (usd < 0.01) return `$${usd.toFixed(4)}`;

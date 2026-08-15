@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Store, X } from "lucide-react";
 import type { Category } from "../../api/types";
 import type { VendorBucket } from "../../lib/ruleSuggest";
 import { Spinner } from "../../components/Spinner";
+import { CreateCategoryInline } from "./CreateCategoryInline";
 
 const PAGE_SIZE = 10;
 
@@ -103,6 +104,8 @@ export function VendorRollup({
   onApplyAll,
   onOpen,
   onClose,
+  onCategoryCreated,
+  applyProgress,
 }: {
   title?: string;
   subtitle?: string;
@@ -118,6 +121,8 @@ export function VendorRollup({
   onApplyAll: (rows: VendorApplyRow[], makeRule: boolean) => void;
   onOpen: (bucket: VendorBucket) => void;
   onClose: () => void;
+  onCategoryCreated?: (cat: Category) => void;
+  applyProgress?: { current: number; total: number } | null;
 }) {
   const [page, setPage] = useState(0);
   const [picks, setPicks] = useState<Record<string, string>>({});
@@ -160,6 +165,18 @@ export function VendorRollup({
         </button>
       </div>
 
+      {onCategoryCreated ? (
+        <CreateCategoryInline
+          catsSorted={catsSorted}
+          disabled={busy || isReadOnly}
+          onCreated={onCategoryCreated}
+        />
+      ) : null}
+      {applyProgress && applyProgress.total > 0 ? (
+        <p className="text-[11px] text-ink-muted">
+          Applying {applyProgress.current} / {applyProgress.total} vendors…
+        </p>
+      ) : null}
       {message ? <p className="text-sm text-ink">{message}</p> : null}
       {debugText ? (
         <details className="rounded-xl border border-white/10 bg-black/30 px-3 py-2">
