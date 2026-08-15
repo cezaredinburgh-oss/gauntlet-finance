@@ -57,8 +57,9 @@ export function HomeHero({
         <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
           Executive snapshot
           {wealthRefreshing && (
-            <span className="ml-2 font-medium normal-case tracking-normal text-brand">
-              Refreshing prices…
+            <span className="ml-2 inline-flex items-center gap-1.5 font-medium normal-case tracking-normal text-brand">
+              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-brand/30 border-t-brand" />
+              Working — refreshing prices (~12s)
             </span>
           )}
         </div>
@@ -224,6 +225,7 @@ export function HomeDeepLinks({ children }: { children?: ReactNode }) {
           <DeepLink to="/investments/analysis" label="Analysis" />
           <DeepLink to="/investments/tax" label="Tax" />
           <DeepLink to="/expenses/spending" label="Spending" />
+          <DeepLink to="/alerts" label="Alerts" />
         </>
       )}
     </div>

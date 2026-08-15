@@ -4,7 +4,7 @@ import { GrokPlusStatus } from "./GrokPlusStatus";
 /** Floats on every New ET route except Categorize, where status lives in the Grok+ panel. */
 export function FloatingMatchChip() {
   const location = useLocation();
-  if (location.pathname === "/new-et/categorize") return null;
+  if (location.pathname === "/expenses/categorize") return null;
 
   return (
     <aside

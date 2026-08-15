@@ -1034,16 +1034,17 @@ function RulesStep({
         </div>
         <p className="text-sm text-ink-muted">
           {tourGuide
-            ? "New users seed default categories, install starter keyword rules, then fill blanks. Internal transfers and crypto-pot moves stay out of spend totals. You will see this already applied in the sample account next."
-            : "Seed default categories, install starter keyword rules, then scan blanks. Finish fine work in the full Categorize workspace (merchant rules, bulk assign)."}
+            ? "New users review categories first, then assign obvious shops by vendor. Upload tags internals and a few global shops — it does not auto-assign the rest. You will see this already applied in the sample account next."
+            : "Review categories, assign leftovers by vendor, then use Ask Grok+ for guesses you still confirm. Upload never writes category_id."}
         </p>
         <ul className="list-disc space-y-1 pl-5 text-xs text-ink-muted">
           <li>Internal transfers are flagged on import and stay out of spend totals.</li>
           <li>Stable category IDs — we do not renumber categories by name.</li>
           <li>Rules fill blanks only; manual overrides are preserved.</li>
           <li>
-            Optional: after import, use <strong className="text-ink-muted">Suggest with Grok</strong>{" "}
-            on Categorize for remaining merchants (you still confirm each apply).
+            Optional: after import, use <strong className="text-ink-muted">By vendor</strong> then{" "}
+            <strong className="text-ink-muted">Ask Grok+</strong> on Categorize for leftover
+            merchants (you still confirm each apply).
             {sandboxSetup
               ? " Sandbox includes a demo AI path without a Grok key."
               : " Production uses your server XAI_API_KEY when enabled."}
@@ -1052,7 +1053,7 @@ function RulesStep({
         {sandboxSetup && !preview && (
           <div className="flex flex-wrap gap-2 pt-1">
             <Link to="/expenses/categorize" className="btn-secondary text-xs">
-              Open Categorize · Grok suggest
+              Open Categorize
             </Link>
             <Link to="/upload" className="btn-secondary text-xs">
               Open Upload · Map with Grok

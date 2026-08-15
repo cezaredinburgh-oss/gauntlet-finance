@@ -1,6 +1,24 @@
-# New ET — lab Expense-tracking fork
+# New ET — superseded 2026-08-15
 
-Spec approved 2026-08-13. Implementation lives beside old `/expenses/*`; it does not replace it.
+The lab fork is now **Expense tracking for every account**.
+
+| Old | Now |
+|-----|-----|
+| `/new-et/spending` (lab only) | `/expenses/spending` |
+| `/new-et/categorize` (lab only) | `/expenses/categorize` |
+| Legacy Groups / AI-desk categorize | **Deleted** |
+| Alerts under Expense tracking | Top-level `/alerts` |
+| `/new-et/*` | Redirects to `/expenses/*` |
+
+Grok+ (suggest-only leftover matching) is available on every account.
+
+The original 2026-08-13 spec below is historical.
+
+---
+
+# New ET — lab Expense-tracking fork (historical)
+
+Spec approved 2026-08-13. Implementation originally lived beside old `/expenses/*`; it now replaces it.
 
 ## Problem
 

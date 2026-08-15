@@ -36,7 +36,7 @@ export function buildTriageItems(opts: {
       level: a.level,
       title: a.title,
       body: a.body,
-      href: a.href || "/expenses/alerts",
+      href: a.href || "/alerts",
     });
   }
 

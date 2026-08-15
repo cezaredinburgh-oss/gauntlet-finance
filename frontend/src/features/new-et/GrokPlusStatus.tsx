@@ -176,7 +176,7 @@ export function GrokPlusStatus({
           className="btn-primary mt-2.5 w-full justify-center py-1.5 text-xs"
           onClick={() => {
             grok.setMinimized(false);
-            navigate("/new-et/categorize?panel=grokplus");
+            navigate("/expenses/categorize?panel=grokplus");
           }}
         >
           Review matches{grok.buckets.length ? ` (${grok.buckets.length})` : ""}

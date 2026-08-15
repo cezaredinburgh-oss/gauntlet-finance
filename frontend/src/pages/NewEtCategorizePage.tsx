@@ -229,6 +229,9 @@ export function NewEtCategorizePage() {
   const categoryIdParam = searchParams.get("category_id") || "";
   const categoryIdsParam = searchParams.get("category_ids") || "";
   const qFromUrl = searchParams.get("q") || "";
+  const lifeDomainParam = searchParams.get("life_domain") || "";
+  const filterFlag = searchParams.get("filter") || "";
+  const unconvertedOnly = searchParams.get("unconverted") === "1";
 
   useEffect(() => {
     setQ(qFromUrl);
@@ -399,6 +402,30 @@ export function NewEtCategorizePage() {
     if (expensesOnly) rows = rows.filter(txIsExpense);
     if (incomeOnly) rows = rows.filter(txIsIncome);
 
+    if (lifeDomainParam) {
+      const want = lifeDomainParam.toLowerCase();
+      rows = rows.filter((t) => {
+        const cat = t.category_id ? catMap.get(t.category_id) : undefined;
+        return (cat?.life_domain || "").toLowerCase() === want;
+      });
+    }
+    if (filterFlag === "fixed") {
+      rows = rows.filter((t) => {
+        const cat = t.category_id ? catMap.get(t.category_id) : undefined;
+        return (cat?.necessity || "") === "Fixed";
+      });
+    }
+    if (filterFlag === "transfer_leak") {
+      rows = rows.filter((t) => {
+        if (!txIsExpense(t) || txHasRealCategory(t, catMap)) return false;
+        const blob = `${t.merchant || ""} ${t.description || ""} ${t.original_description || ""}`.toLowerCase();
+        return /transfer|przelew|převod|own.?account|internal/.test(blob);
+      });
+    }
+    if (unconvertedOnly) {
+      rows = rows.filter((t) => t.amount_usd == null || t.amount_usd === "");
+    }
+
     const needle = q.trim().toLowerCase();
     if (needle) {
       rows = rows.filter((t) => {
@@ -425,6 +452,9 @@ export function NewEtCategorizePage() {
     multiCategoryIds,
     expensesOnly,
     incomeOnly,
+    lifeDomainParam,
+    filterFlag,
+    unconvertedOnly,
     catMap,
     focusIds,
   ]);
@@ -507,6 +537,9 @@ export function NewEtCategorizePage() {
       incomeOnly ||
       q.trim() ||
       currency ||
+      lifeDomainParam ||
+      filterFlag ||
+      unconvertedOnly ||
       searchParams.get("hide_transfers") === "1",
   );
 
@@ -519,6 +552,10 @@ export function NewEtCategorizePage() {
     if (currency) chips.push(currency);
     if (q.trim()) chips.push(`Search: “${q.trim()}”`);
     if (hideTransfers) chips.push("Hide internal transfers");
+    if (lifeDomainParam) chips.push(`Domain: ${lifeDomainParam}`);
+    if (filterFlag === "fixed") chips.push("Fixed costs");
+    if (filterFlag === "transfer_leak") chips.push("Possible transfer leak");
+    if (unconvertedOnly) chips.push("Missing USD");
     return chips;
   }, [
     dateFrom,
@@ -529,6 +566,9 @@ export function NewEtCategorizePage() {
     currency,
     q,
     hideTransfers,
+    lifeDomainParam,
+    filterFlag,
+    unconvertedOnly,
   ]);
 
   function clearScope() {

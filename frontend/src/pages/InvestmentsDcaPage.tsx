@@ -245,7 +245,7 @@ export function InvestmentsDcaPage() {
               </span>
             )}
             <Link
-              to="/expenses/alerts"
+              to="/alerts"
               className="ml-auto font-medium text-brand hover:underline"
             >
               Alerts →

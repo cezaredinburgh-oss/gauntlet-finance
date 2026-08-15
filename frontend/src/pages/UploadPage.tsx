@@ -17,6 +17,7 @@ import type {
 import { useAuth } from "../auth/AuthContext";
 import { cn } from "../lib/cn";
 import { Spinner } from "../components/Spinner";
+import { WorkingBanner } from "../components/WorkingBanner";
 
 const MAX_BATCH_FILES = 25;
 const ACCEPT =
@@ -672,13 +673,23 @@ function OutcomeCard({
               disabled={mapBusy || importBusy}
               onClick={onMap}
             >
-              <Sparkles className="h-3.5 w-3.5" />
-              {mapBusy ? "Mapping…" : "Map with Grok"}
+              {mapBusy ? (
+                <Spinner className="h-3.5 w-3.5 border-t-brand" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {mapBusy ? "Working — mapping columns" : "Map with Grok"}
             </button>
             <span className="text-[11px] text-ink-faint">
               Cash CSV only · preview before import · no account numbers sent
             </span>
           </div>
+          {mapBusy ? (
+            <WorkingBanner
+              title="Working — mapping this statement"
+              detail="Grok is reading column headers. This usually takes 10–30 seconds. Nothing is imported until you confirm."
+            />
+          ) : null}
           {mapError && (
             <p className="text-xs text-danger">{mapError}</p>
           )}

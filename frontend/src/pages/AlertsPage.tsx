@@ -58,10 +58,13 @@ export function AlertsPage() {
   /** Bump to re-read fingerprint seen state from localStorage after mark. */
   const [seenTick, setSeenTick] = useState(0);
 
+  const [reloadTick, setReloadTick] = useState(0);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setError(null);
       try {
         const r = await api.alerts();
         if (!cancelled) setItems(r.items);
@@ -74,7 +77,7 @@ export function AlertsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadTick]);
 
   function onAlertActivate(a: AlertItem) {
     markAlertSeen(a);
@@ -113,7 +116,21 @@ export function AlertsPage() {
 
   if (loading) return <PageLoader label="Loading alerts…" />;
   if (error) {
-    return <EmptyState title="Couldn’t load alerts" description={error} />;
+    return (
+      <EmptyState
+        title="Couldn’t load alerts"
+        description={error}
+        action={
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => setReloadTick((n) => n + 1)}
+          >
+            Retry
+          </button>
+        }
+      />
+    );
   }
 
   return (
@@ -122,7 +139,19 @@ export function AlertsPage() {
         <h1 className="text-2xl font-bold tracking-tight">Alerts</h1>
         <p className="text-sm text-ink-muted">
           Spend pace, data quality, tax unlocks, and DCA opportunities — grouped by
-          domain. Opportunity is separate from warnings.
+          domain. Click a card to open the related page.
+        </p>
+        <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ink-faint">
+          <span>
+            <span className="text-danger">Danger</span> — act soon
+          </span>
+          <span>
+            <span className="text-warn">Warn</span> — review
+          </span>
+          <span>
+            <span className="text-ok">Opportunity</span> — optional edge (DCA, unlock)
+          </span>
+          <span>Info — context only</span>
         </p>
       </div>
 
@@ -151,6 +180,7 @@ export function AlertsPage() {
               type="button"
               className="btn-ghost text-xs"
               onClick={onMarkAllSeen}
+              title="Clears the unseen badge. Alerts stay listed."
             >
               Mark all seen
             </button>

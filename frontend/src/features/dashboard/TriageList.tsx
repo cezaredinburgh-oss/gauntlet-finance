@@ -12,7 +12,7 @@ export function TriageList({ items, max = 5 }: { items: TriageItem[]; max?: numb
       <div className="mb-2 flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold tracking-wide text-warn">Needs attention</h2>
         <Link
-          to="/expenses/alerts"
+          to="/alerts"
           className="inline-flex items-center gap-0.5 text-xs font-medium text-brand hover:underline"
         >
           All alerts <ArrowRight className="h-3 w-3" />

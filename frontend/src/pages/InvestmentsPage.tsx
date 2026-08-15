@@ -251,6 +251,11 @@ export function InvestmentsPage() {
         <EmptyState
           title="No open lots"
           description="Upload Revolut stocks/crypto or eToro activity to build your portfolio."
+          action={
+            <Link to="/upload" className="btn-primary">
+              Upload statements
+            </Link>
+          }
         />
       ) : (
         <>

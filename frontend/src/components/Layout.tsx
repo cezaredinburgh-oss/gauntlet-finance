@@ -12,7 +12,6 @@ import {
   Wallet,
   ChevronDown,
   Receipt,
-  FlaskConical,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -35,7 +34,6 @@ import {
   pruneSeenAlertKeys,
 } from "../lib/alertSeen";
 import { cn } from "../lib/cn";
-import { isNewEtUser } from "../lib/newEtAccess";
 import { FloatingMatchChip } from "../features/new-et/FloatingMatchChip";
 import { GrokPlusProvider } from "../features/new-et/GrokPlusContext";
 
@@ -70,19 +68,6 @@ const expensesGroup: NavGroup = {
   children: [
     { kind: "leaf", to: "/expenses/spending", label: "Spending", icon: Wallet },
     { kind: "leaf", to: "/expenses/categorize", label: "Categorize", icon: Tags },
-    { kind: "leaf", to: "/expenses/alerts", label: "Alerts", icon: Bell, badge: "alerts" },
-  ],
-};
-
-const newEtGroup: NavGroup = {
-  kind: "group",
-  id: "new-et",
-  label: "New ET",
-  icon: FlaskConical,
-  defaultTo: "/new-et/spending",
-  children: [
-    { kind: "leaf", to: "/new-et/spending", label: "Spending", icon: Wallet },
-    { kind: "leaf", to: "/new-et/categorize", label: "Categorize", icon: Tags },
   ],
 };
 
@@ -100,18 +85,15 @@ const investmentsGroupDef: NavGroup = {
   ],
 };
 
-function buildNav(showNewEt: boolean): NavItem[] {
-  const items: NavItem[] = [
+function buildNav(): NavItem[] {
+  return [
     { kind: "leaf", to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
     expensesGroup,
-  ];
-  if (showNewEt) items.push(newEtGroup);
-  items.push(
     investmentsGroupDef,
+    { kind: "leaf", to: "/alerts", label: "Alerts", icon: Bell, badge: "alerts" },
     { kind: "leaf", to: "/upload", label: "Upload", icon: Upload },
     { kind: "leaf", to: "/settings", label: "Settings", icon: Settings },
-  );
-  return items;
+  ];
 }
 
 /** Primary destinations for the mobile bottom bar */
@@ -136,7 +118,6 @@ const mobileBottom: Array<{
 
 const EXPENSES_OPEN_KEY = "nav.expenses.open";
 const INVESTMENTS_OPEN_KEY = "nav.investments.open";
-const NEW_ET_OPEN_KEY = "nav.new-et.open";
 
 function pathInGroup(pathname: string, group: NavGroup): boolean {
   return group.children.some(
@@ -159,10 +140,8 @@ function NavItems({
   pathname,
   expensesOpen,
   investmentsOpen,
-  newEtOpen,
   setExpensesOpen,
   setInvestmentsOpen,
-  setNewEtOpen,
   alertBadge,
   onNavigate,
   navigate,
@@ -171,10 +150,8 @@ function NavItems({
   pathname: string;
   expensesOpen: boolean;
   investmentsOpen: boolean;
-  newEtOpen: boolean;
   setExpensesOpen: Dispatch<SetStateAction<boolean>>;
   setInvestmentsOpen: Dispatch<SetStateAction<boolean>>;
-  setNewEtOpen: Dispatch<SetStateAction<boolean>>;
   /** Unseen active alerts (all levels); only on Alerts leaf, not group header */
   alertBadge: number;
   onNavigate?: () => void;
@@ -217,9 +194,7 @@ function NavItems({
             ? expensesOpen
             : item.id === "investments"
               ? investmentsOpen
-              : item.id === "new-et"
-                ? newEtOpen
-                : true;
+              : true;
         const groupActive = pathInGroup(pathname, item);
 
         return (
@@ -243,21 +218,12 @@ function NavItems({
                 onClick={() => {
                   if (item.id === "expenses") setExpensesOpen(true);
                   if (item.id === "investments") setInvestmentsOpen(true);
-                  if (item.id === "new-et") setNewEtOpen(true);
                   navigate(item.defaultTo);
                   onNavigate?.();
                 }}
               >
                 <GroupIcon className="h-5 w-5 shrink-0" />
                 <span className="flex-1 truncate">{item.label}</span>
-                {/* Collapsed expenses: non-numeric hint (leaf holds the count when open). */}
-                {item.id === "expenses" && !open && alertBadge > 0 && (
-                  <span
-                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn"
-                    title={`${alertBadge} unseen alert${alertBadge === 1 ? "" : "s"}`}
-                    aria-hidden
-                  />
-                )}
               </button>
               <button
                 type="button"
@@ -267,7 +233,6 @@ function NavItems({
                 onClick={() => {
                   if (item.id === "expenses") setExpensesOpen((v) => !v);
                   if (item.id === "investments") setInvestmentsOpen((v) => !v);
-                  if (item.id === "new-et") setNewEtOpen((v) => !v);
                 }}
               >
                 <ChevronDown
@@ -301,11 +266,9 @@ export function Layout() {
   /** Always-current inventory for event-driven badge recompute (avoids empty-state race). */
   const alertItemsRef = useRef<AlertItem[]>([]);
 
-  const showNewEt = isNewEtUser(user);
-  const navItems = useMemo(() => buildNav(showNewEt), [showNewEt]);
+  const navItems = useMemo(() => buildNav(), []);
   const expensesActive = pathInGroup(location.pathname, expensesGroup);
   const investmentsActive = pathInGroup(location.pathname, investmentsGroupDef);
-  const newEtActive = pathInGroup(location.pathname, newEtGroup);
 
   const [expensesOpen, setExpensesOpen] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -331,28 +294,12 @@ export function Layout() {
     }
     return true;
   });
-  const [newEtOpen, setNewEtOpen] = useState(() => {
-    if (typeof window === "undefined") return true;
-    if (window.location.pathname.startsWith("/new-et")) return true;
-    try {
-      const stored = sessionStorage.getItem(NEW_ET_OPEN_KEY);
-      if (stored === "0") return false;
-      if (stored === "1") return true;
-    } catch {
-      /* ignore */
-    }
-    return true;
-  });
-
   useEffect(() => {
     if (expensesActive && !expensesOpen) setExpensesOpen(true);
   }, [expensesActive, expensesOpen]);
   useEffect(() => {
     if (investmentsActive && !investmentsOpen) setInvestmentsOpen(true);
   }, [investmentsActive, investmentsOpen]);
-  useEffect(() => {
-    if (newEtActive && !newEtOpen) setNewEtOpen(true);
-  }, [newEtActive, newEtOpen]);
 
   useEffect(() => {
     try {
@@ -368,13 +315,6 @@ export function Layout() {
       /* ignore */
     }
   }, [investmentsOpen]);
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(NEW_ET_OPEN_KEY, newEtOpen ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  }, [newEtOpen]);
 
   const applyAlertItems = useCallback((items: AlertItem[]) => {
     pruneSeenAlertKeys(items);
@@ -405,7 +345,7 @@ export function Layout() {
 
   // Refresh inventory when visiting Alerts (page has its own fetch; keep badge in sync).
   useEffect(() => {
-    if (location.pathname.startsWith("/expenses/alerts")) {
+    if (location.pathname === "/alerts" || location.pathname.startsWith("/alerts/")) {
       void fetchAlertBadge();
     }
   }, [location.pathname, fetchAlertBadge]);
@@ -491,7 +431,7 @@ export function Layout() {
   }, [location.pathname]);
 
   return (
-    <GrokPlusProvider enabled={showNewEt}>
+    <GrokPlusProvider enabled>
     <div className="min-h-screen bg-surface text-ink">
       <DemoBanner />
       <div className="lg:flex">
@@ -511,10 +451,8 @@ export function Layout() {
             pathname={location.pathname}
             expensesOpen={expensesOpen}
             investmentsOpen={investmentsOpen}
-            newEtOpen={newEtOpen}
             setExpensesOpen={setExpensesOpen}
             setInvestmentsOpen={setInvestmentsOpen}
-            setNewEtOpen={setNewEtOpen}
             alertBadge={alertBadge}
             navigate={navigate}
           />
@@ -579,10 +517,8 @@ export function Layout() {
                 pathname={location.pathname}
                 expensesOpen={expensesOpen}
                 investmentsOpen={investmentsOpen}
-                newEtOpen={newEtOpen}
                 setExpensesOpen={setExpensesOpen}
                 setInvestmentsOpen={setInvestmentsOpen}
-                setNewEtOpen={setNewEtOpen}
                 alertBadge={alertBadge}
                 navigate={navigate}
                 onNavigate={() => setMobileOpen(false)}
@@ -611,7 +547,7 @@ export function Layout() {
               }}
             >
               <Icon className="h-5 w-5" />
-              {matchPrefix === "/expenses" && alertBadge > 0 && (
+              {to === "/alerts" && alertBadge > 0 && (
                 <span className="absolute right-2 top-1 h-1.5 w-1.5 rounded-full bg-warn" />
               )}
               {label.split(" ")[0]}
@@ -619,7 +555,7 @@ export function Layout() {
           ))}
         </div>
       </nav>
-      {showNewEt ? <FloatingMatchChip /> : null}
+      <FloatingMatchChip />
       </div>
     </div>
     </GrokPlusProvider>

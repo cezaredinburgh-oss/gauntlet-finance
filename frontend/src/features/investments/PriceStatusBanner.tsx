@@ -69,16 +69,19 @@ export function PriceStatusBanner({ snap }: { snap: PortfolioSnapshot }) {
       )}
     >
       {fetching ? (
-        <div className="font-medium">
-          Fetching market quotes…
-          {etaLeft > 0 ? (
-            <span className="font-normal opacity-90">
-              {" "}
-              · typically ~{etaLeft}s remaining (estimate)
-            </span>
-          ) : (
-            <span className="font-normal opacity-90"> · still working…</span>
-          )}
+        <div>
+          <div className="flex items-center gap-2 font-medium">
+            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current/30 border-t-current" />
+            Working — fetching market quotes
+          </div>
+          <p className="mt-1 text-[11px] font-normal opacity-90">
+            {etaLeft > 0
+              ? `Typically ~${etaLeft}s remaining (estimate). Marks update when this finishes.`
+              : "Still working — the request is in flight."}
+          </p>
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/10">
+            <div className="bar-indet h-full w-1/3 rounded-full bg-current" />
+          </div>
         </div>
       ) : (
         <div>{note}</div>

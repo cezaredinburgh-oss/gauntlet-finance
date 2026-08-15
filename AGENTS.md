@@ -240,7 +240,7 @@ Google Sheets is high-latency and quota-limited. Treat every read/write as expen
 
 1. **Theme:** dark Desk-like glass. Do not introduce a light-theme-only component.
 2. **Home (`/`):** executive summary — wealth + cash insight, not a raw spreadsheet dump.
-3. **Spending** lives on spending routes; do not overload Home with full categorize UX.
+3. **Expense tracking** is `/expenses/spending` + `/expenses/categorize` (Review / Rules / Categories + Grok+). Alerts is `/alerts`, same nav level as Upload and Settings. `/new-et/*` redirects there. Do not revive the old Groups/AI-desk Categorize page. Do not overload Home with full categorize UX.
 4. **Price refresh:** Layout control → POST refresh → invalidate → `prices-updated` (or existing event) → dependent views refetch.
 5. **Investments:** verify holdings before trusting fancy KPIs; analysis/DCA are separate routes.
 6. Reuse `Layout`, `TimeframePicker`, `Money`, chart helpers — do not fork parallel widget systems.

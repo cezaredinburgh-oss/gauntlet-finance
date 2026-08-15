@@ -11,11 +11,8 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { Layout } from "./components/Layout";
 import { PageLoader } from "./components/Spinner";
 import { DashboardPage } from "./pages/DashboardPage";
-import { SpendingPage } from "./pages/SpendingPage";
-import { CategorizePage } from "./pages/CategorizePage";
 import { NewEtSpendingPage } from "./pages/NewEtSpendingPage";
 import { NewEtCategorizePage } from "./pages/NewEtCategorizePage";
-import { NewEtGate } from "./components/NewEtGate";
 import { InvestmentsPage } from "./pages/InvestmentsPage";
 import { InvestmentsAnalysisPage } from "./pages/InvestmentsAnalysisPage";
 import { InvestmentsDcaPage } from "./pages/InvestmentsDcaPage";
@@ -128,9 +125,12 @@ export default function App() {
             <Route path="dashboard" element={<Navigate to="/" replace />} />
             <Route path="expenses">
               <Route index element={<Navigate to="spending" replace />} />
-              <Route path="spending" element={<SpendingPage />} />
-              <Route path="categorize" element={<CategorizePage />} />
-              <Route path="alerts" element={<AlertsPage />} />
+              <Route path="spending" element={<NewEtSpendingPage />} />
+              <Route path="categorize" element={<NewEtCategorizePage />} />
+              <Route
+                path="alerts"
+                element={<Navigate to="/alerts" replace />}
+              />
               {/* Legacy expense sub-routes */}
               <Route
                 path="transactions"
@@ -147,22 +147,14 @@ export default function App() {
               />
             </Route>
             <Route path="new-et">
-              <Route index element={<Navigate to="spending" replace />} />
+              <Route index element={<Navigate to="/expenses/spending" replace />} />
               <Route
                 path="spending"
-                element={
-                  <NewEtGate>
-                    <NewEtSpendingPage />
-                  </NewEtGate>
-                }
+                element={<RedirectPreserveSearch to="/expenses/spending" />}
               />
               <Route
                 path="categorize"
-                element={
-                  <NewEtGate>
-                    <NewEtCategorizePage />
-                  </NewEtGate>
-                }
+                element={<RedirectPreserveSearch to="/expenses/categorize" />}
               />
             </Route>
             <Route path="investments" element={<InvestmentsPage />} />
@@ -182,7 +174,7 @@ export default function App() {
                 />
               }
             />
-            <Route path="alerts" element={<Navigate to="/expenses/alerts" replace />} />
+            <Route path="alerts" element={<AlertsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

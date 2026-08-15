@@ -34,7 +34,7 @@ type CategoryBar = {
   rollupNames?: string[];
 };
 
-/** Drill into New ET Categorize (never old /expenses/categorize). */
+/** Drill into Categorize with the same filters as the chart bar. */
 function transactionsDrilldownUrl(
   tf: TimeframeValue,
   bar: CategoryBar,
@@ -52,7 +52,7 @@ function transactionsDrilldownUrl(
   } else {
     params.set("category_id", bar.id);
   }
-  return `/new-et/categorize?${params.toString()}`;
+  return `/expenses/categorize?${params.toString()}`;
 }
 
 const NECESSITY_COLORS: Record<string, string> = {
@@ -103,7 +103,7 @@ function HoverList({
   );
 }
 
-/** Lab-only copy of Spending. Old SpendingPage is untouched. */
+/** Expense Tracking — Spending. */
 export function NewEtSpendingPage() {
   const navigate = useNavigate();
   const [tf, setTf] = useState<TimeframeValue>(() => loadStoredSpendingTimeframe());
@@ -223,7 +223,7 @@ export function NewEtSpendingPage() {
         <div className="rounded-xl border border-warn/30 bg-warn/10 px-4 py-3 text-sm text-warn">
           Most spend is uncategorized ({uncatPct.toFixed(0)}%). Category bars will improve after
           categorization.{" "}
-          <Link to="/new-et/categorize" className="font-semibold underline">
+          <Link to="/expenses/categorize" className="font-semibold underline">
             Open Categorize
           </Link>
         </div>
@@ -452,7 +452,7 @@ export function NewEtSpendingPage() {
       </div>
 
       <div className="flex flex-wrap gap-3 text-xs">
-        <Link to="/new-et/categorize" className="font-medium text-brand hover:underline">
+        <Link to="/expenses/categorize" className="font-medium text-brand hover:underline">
           Categorize transactions →
         </Link>
         <Link to="/" className="text-ink-muted hover:text-ink hover:underline">

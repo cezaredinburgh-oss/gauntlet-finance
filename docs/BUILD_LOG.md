@@ -4,6 +4,16 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-15 — New ET becomes Expense tracking
+
+- Removed the legacy Spending / Groups / AI-desk Categorize UI.
+- `/expenses/spending` and `/expenses/categorize` mount the former New ET pages for every account. `/new-et/*` redirects. Lab gate gone.
+- Alerts is a top-level nav item at `/alerts` (same level as Upload and Settings). `/expenses/alerts` redirects.
+- Grok+ is on for all accounts (still user-started and suggest-only).
+- Rest-of-app chrome: working banners on quotes / Map with Grok; Alerts + Tax Retry; empty Holdings/Tax CTAs; onboarding copy matches vendor-first + Grok+.
+
+---
+
 ## 2026-08-14 — Categorize feedback 2
 
 - First assign is quiet; **Recategorized** only after a second human change.

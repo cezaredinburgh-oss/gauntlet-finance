@@ -77,8 +77,9 @@ export function ExecutiveHero({
           <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
             Executive snapshot
             {wealthRefreshing && (
-              <span className="ml-2 font-medium normal-case tracking-normal text-brand">
-                Refreshing prices…
+              <span className="ml-2 inline-flex items-center gap-1.5 font-medium normal-case tracking-normal text-brand">
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-brand/30 border-t-brand" />
+                Working — refreshing prices (~12s)
               </span>
             )}
           </div>
@@ -312,7 +313,7 @@ function AlertCountStrip({ buckets }: { buckets: AlertBucketCounts }) {
 
   return (
     <Link
-      to="/expenses/alerts"
+      to="/alerts"
       className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2.5 transition hover:border-brand/40"
       title="Open all alerts"
     >

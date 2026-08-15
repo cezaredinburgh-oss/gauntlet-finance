@@ -9,6 +9,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { Link } from "react-router-dom";
 import { Download } from "lucide-react";
 import { api, API_BASE } from "../api/client";
 import type { TaxReport, TaxYearsSummary } from "../api/types";
@@ -24,6 +25,7 @@ export function TaxPage() {
   const [tab, setTab] = useState<"taxable" | "exempt" | "open">("taxable");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,7 +68,7 @@ export function TaxPage() {
     return () => {
       cancelled = true;
     };
-  }, [year]);
+  }, [year, reloadTick]);
 
   const chartData = useMemo(() => {
     if (!byYear?.years?.length) return [];
@@ -109,11 +111,18 @@ export function TaxPage() {
     <InvestmentsPageShell
       active="tax"
       title="Tax report"
-      subtitle="Realised disposals from FIFO lot allocations · CZK primary · not tax advice"
+      subtitle="Realised disposals from FIFO lot allocations · CZK primary · not tax advice. Czech 3-year (1095-day) exemption is tracked on open lots."
     >
       {error && (
-        <div className="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-          {error}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="btn-ghost text-xs text-ink"
+            onClick={() => setReloadTick((n) => n + 1)}
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -204,7 +213,7 @@ export function TaxPage() {
             <div className="card p-5">
               <h2 className="mb-1 text-sm font-semibold">Realised gains by year</h2>
               <p className="mb-4 text-xs text-ink-faint">
-                CZK · taxable vs 3-year exempt (from lot allocations)
+                CZK · taxable vs 3-year exempt (1095 days from buy). Hover a bar for the year split.
               </p>
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
@@ -340,7 +349,15 @@ export function TaxPage() {
             {tab === "open" && (
               <div className="overflow-x-auto">
                 {report.open_positions.length === 0 ? (
-                  <EmptyState title="No open lots" description="Import investment statements first." />
+                  <EmptyState
+                    title="No open lots"
+                    description="Import investment statements first."
+                    action={
+                      <Link to="/upload" className="btn-primary">
+                        Upload statements
+                      </Link>
+                    }
+                  />
                 ) : (
                   <table className="w-full text-left text-sm">
                     <thead className="text-xs text-ink-faint">
