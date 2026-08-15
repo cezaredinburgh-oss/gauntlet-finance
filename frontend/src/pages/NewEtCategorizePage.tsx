@@ -959,9 +959,12 @@ export function NewEtCategorizePage() {
       }
       await api.overrideCategory(categoryId, txId);
       const forceInternal = categoryImpliesInternal(categoryId);
+      const recategorized =
+        Boolean(prev?.category_override) ||
+        Boolean(prev && !isResidualCategory(prev, catMap));
       const patch = {
         category_id: categoryId,
-        category_override: true as const,
+        category_override: recategorized,
         ...(forceInternal ? { is_internal_transfer: true } : {}),
       };
       setItems((cur) => cur.map((t) => (t.id === txId ? { ...t, ...patch } : t)));
@@ -992,15 +995,28 @@ export function NewEtCategorizePage() {
       const r = await api.bulkOverrideCategory(bulkCategoryId, ids);
       const idSet = new Set(r.transaction_ids);
       const forceInternal = categoryImpliesInternal(bulkCategoryId);
-      const patch = {
-        category_id: bulkCategoryId,
-        category_override: true as const,
-        ...(forceInternal ? { is_internal_transfer: true } : {}),
-      };
-      setItems((cur) => cur.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t)));
-      const seeds = previousTxs
+      setItems((cur) =>
+        cur.map((t) => {
+          if (!idSet.has(t.id)) return t;
+          const recategorized =
+            t.category_override || !isResidualCategory(t, catMap);
+          return {
+            ...t,
+            category_id: bulkCategoryId,
+            category_override: recategorized,
+            ...(forceInternal ? { is_internal_transfer: true } : {}),
+          };
+        }),
+      );
+      const seeds = items
         .filter((t) => idSet.has(t.id))
-        .map((t) => ({ ...t, ...patch }));
+        .map((t) => ({
+          ...t,
+          category_id: bulkCategoryId,
+          category_override:
+            t.category_override || !isResidualCategory(t, catMap),
+          ...(forceInternal ? { is_internal_transfer: true } : {}),
+        }));
       setSelected(new Set());
       nudgeLedgerCounts(seeds.length);
       void refreshCoverage();
@@ -1068,15 +1084,18 @@ export function NewEtCategorizePage() {
     const r = await api.bulkOverrideCategory(categoryId, bucket.ids);
     const idSet = new Set(r.transaction_ids);
     const forceInternal = categoryImpliesInternal(categoryId);
-    const patch = {
-      category_id: categoryId,
-      category_override: true as const,
-      ...(forceInternal ? { is_internal_transfer: true } : {}),
-    };
-    const next = working.map((t) => (idSet.has(t.id) ? { ...t, ...patch } : t));
-    const seeds = previousTxs
-      .filter((t) => idSet.has(t.id))
-      .map((t) => ({ ...t, ...patch }));
+    const next = working.map((t) => {
+      if (!idSet.has(t.id)) return t;
+      const recategorized =
+        t.category_override || !isResidualCategory(t, catMap);
+      return {
+        ...t,
+        category_id: categoryId,
+        category_override: recategorized,
+        ...(forceInternal ? { is_internal_transfer: true } : {}),
+      };
+    });
+    const seeds = next.filter((t) => idSet.has(t.id));
     nudgeLedgerCounts(seeds.length);
     return { working: next, seeds };
   }
@@ -1330,6 +1349,7 @@ export function NewEtCategorizePage() {
         </div>
       </div>
 
+      {!showWizard && (
       <div
         className="inline-flex flex-wrap rounded-xl border border-white/10 bg-white/[0.03] p-1"
         role="tablist"
@@ -1355,17 +1375,61 @@ export function NewEtCategorizePage() {
           </button>
         ))}
       </div>
+      )}
 
-      {showWizard && mode === "review" && (
+      {showWizard ? (
         <CategorizeWizard
-          onOpenVendors={() => setVendorPanel("plain")}
-          onOpenCategories={() => setWorkspaceMode("categories")}
+          categories={
+            <CategoriesMode
+              cats={cats}
+              isReadOnly={isReadOnly}
+              onChanged={() => load({ quiet: true })}
+            />
+          }
+          rules={
+            <RulesMode
+              rules={rules}
+              catsSorted={catsSorted}
+              catMap={catMap}
+              isReadOnly={isReadOnly}
+              onChanged={() => load({ quiet: true })}
+            />
+          }
+          coverage={
+            <div className="card p-4">
+              <div className="label">Coverage (full ledger)</div>
+              <div className="text-2xl font-semibold">{ledgerCoverage.pct.toFixed(0)}%</div>
+              <p className="mt-1 text-sm text-ink">
+                {ledgerCoverage.categorized.toLocaleString()} categorized ·{" "}
+                {ledgerCoverage.uncategorized.toLocaleString()} uncategorized
+              </p>
+            </div>
+          }
+          vendors={
+            <VendorRollup
+              title="Vendors"
+              buckets={vendorBuckets}
+              catsSorted={catsSorted}
+              busy={bulkBusy || ruleBusy}
+              isReadOnly={isReadOnly}
+              applyingKey={vendorApplyKey}
+              onApply={(b, categoryId) => void applyVendorBucket(b, categoryId)}
+              onApplyRule={(b, categoryId) =>
+                void applyVendorBucket(b, categoryId, { makeRule: true })
+              }
+              onApplyAll={(rows, makeRule) => void applyVendorBatch(rows, makeRule)}
+              onOpen={openVendorBucket}
+              onClose={() => undefined}
+              onCategoryCreated={(cat) => setCats((prev) => [...prev, cat])}
+              applyProgress={applyProgress}
+            />
+          }
           onStartTour={() => startGrokPlus()}
           onSkip={() => setShowWizard(false)}
         />
-      )}
+      ) : null}
 
-      {hasActiveScope && (
+      {!showWizard && hasActiveScope && (
         <div className="rounded-xl border border-brand/30 bg-slate-950/95 px-4 py-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
@@ -1391,7 +1455,7 @@ export function NewEtCategorizePage() {
         </div>
       )}
 
-      {mode === "review" && (
+      {!showWizard && mode === "review" && (
         <div className="grid gap-3 lg:grid-cols-3">
           <div className="card p-4 lg:col-span-1">
             <div className="label">Coverage (full ledger)</div>
@@ -1588,7 +1652,7 @@ export function NewEtCategorizePage() {
         </div>
       )}
 
-      {mode === "review" && vendorPanel === "plain" && (
+      {!showWizard && mode === "review" && vendorPanel === "plain" && (
         <VendorRollup
           title="Vendors"
           buckets={vendorBuckets}
@@ -1608,7 +1672,7 @@ export function NewEtCategorizePage() {
         />
       )}
 
-      {mode === "review" && vendorPanel === "grokplus" && (
+      {!showWizard && mode === "review" && vendorPanel === "grokplus" && (
         <GrokPlusPanel
           buckets={grokPlus.buckets}
           catsSorted={catsSorted}
@@ -1645,7 +1709,7 @@ export function NewEtCategorizePage() {
         />
       )}
 
-      {mode === "review" && vendorPanel === "grok" && (
+      {!showWizard && mode === "review" && vendorPanel === "grok" && (
         <VendorRollup
           title="Grok vendor guesses"
           subtitle={
@@ -1671,7 +1735,7 @@ export function NewEtCategorizePage() {
         />
       )}
 
-      {mode === "review" && (
+      {!showWizard && mode === "review" && (
         <>
           {simFlow.phase === "next_steps" && (
             <NextStepsCard
@@ -1727,7 +1791,7 @@ export function NewEtCategorizePage() {
         </>
       )}
 
-      {mode === "rules" && (
+      {!showWizard && mode === "rules" && (
         <RulesMode
           rules={rules}
           catsSorted={catsSorted}
@@ -1737,7 +1801,7 @@ export function NewEtCategorizePage() {
         />
       )}
 
-      {mode === "categories" && (
+      {!showWizard && mode === "categories" && (
         <CategoriesMode
           cats={cats}
           isReadOnly={isReadOnly}
@@ -1745,7 +1809,7 @@ export function NewEtCategorizePage() {
         />
       )}
 
-      {mode === "review" && (
+      {!showWizard && mode === "review" && (
         <>
           <div className="card flex flex-col gap-3 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
@@ -2024,7 +2088,7 @@ export function NewEtCategorizePage() {
                                 </span>
                               )}
                               {t.category_override && (
-                                <span className="badge bg-warn/15 text-warn">Override</span>
+                                <span className="badge bg-warn/15 text-warn">Recategorized</span>
                               )}
                             </div>
                             {t.description && t.merchant && (

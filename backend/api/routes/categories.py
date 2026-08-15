@@ -21,6 +21,7 @@ from backend.common.timeutil import utc_now
 from backend.schema.default_categories import CAT_INTERNAL
 from backend.schema.models import Category, Transaction
 from backend.services.categorization import (
+    _is_blank_or_other_category,
     apply_match_to_all_transactions,
     apply_merchant_queue_item,
     apply_rules_fill_blanks,
@@ -402,9 +403,15 @@ async def override_category(
     tx = repo.get_by_id("Transactions", body.transaction_id)
     if tx is None or not isinstance(tx, Transaction):
         raise HTTPException(status_code=404, detail="Transaction not found")
+    cats = {
+        c.id: c
+        for c in repo.list_rows("Categories")
+        if isinstance(c, Category)
+    }
+    recategorized = tx.category_override or not _is_blank_or_other_category(tx, cats)
     updates: dict[str, Any] = {
         "category_id": category_id,
-        "category_override": True,
+        "category_override": recategorized,
         "updated_at": utc_now(),
     }
     if _category_implies_internal_transfer(cat):
@@ -418,7 +425,7 @@ async def override_category(
     return CategoryOverrideResponse(
         transaction_id=updated.id,
         category_id=category_id,
-        category_override=True,
+        category_override=updated.category_override,
     )
 
 
@@ -455,13 +462,19 @@ async def bulk_override_category(
     force_internal = _category_implies_internal_transfer(cat)
     if body.is_internal_transfer is True:
         force_internal = True
+    cats = {
+        c.id: c
+        for c in repo.list_rows("Categories")
+        if isinstance(c, Category)
+    }
     for tid in ids:
         tx = by_id.get(tid)
         if tx is None or tx.archived:
             continue
+        recategorized = tx.category_override or not _is_blank_or_other_category(tx, cats)
         updates: dict[str, Any] = {
             "category_id": body.category_id,
-            "category_override": True,
+            "category_override": recategorized,
             "updated_at": ts,
         }
         if force_internal:

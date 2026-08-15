@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Tags } from "lucide-react";
 import { api } from "../../api/client";
 import type { Category, CategoryRule } from "../../api/types";
@@ -127,7 +127,65 @@ export function RulesMode({
     }
   }
 
-  const sorted = rules.slice().sort((a, b) => a.priority - b.priority);
+  type RuleSort = "priority" | "match" | "category" | "scope" | "flags";
+  const [sortKey, setSortKey] = useState<RuleSort>("priority");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  function toggleSort(key: RuleSort) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir(key === "priority" ? "asc" : "asc");
+    }
+  }
+
+  const sorted = useMemo(() => {
+    const rows = rules.slice();
+    const dir = sortDir === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === "priority") cmp = a.priority - b.priority;
+      else if (sortKey === "match") {
+        cmp = `${a.match_field} ${a.match_value}`.localeCompare(
+          `${b.match_field} ${b.match_value}`,
+        );
+      } else if (sortKey === "category") {
+        cmp = (catMap.get(a.category_id)?.name || "").localeCompare(
+          catMap.get(b.category_id)?.name || "",
+        );
+      } else if (sortKey === "scope") {
+        cmp = (a.institution_scope || "").localeCompare(b.institution_scope || "");
+      } else {
+        cmp = Number(b.is_active) - Number(a.is_active);
+      }
+      return cmp * dir;
+    });
+    return rows;
+  }, [rules, sortKey, sortDir, catMap]);
+
+  function SortTh({
+    id,
+    children,
+    right,
+  }: {
+    id: RuleSort;
+    children: string;
+    right?: boolean;
+  }) {
+    const active = sortKey === id;
+    return (
+      <th className={`px-4 py-2 font-medium ${right ? "text-right" : ""}`}>
+        <button
+          type="button"
+          className={`hover:text-ink ${active ? "text-ink" : ""}`}
+          onClick={() => toggleSort(id)}
+        >
+          {children}
+          {active ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+        </button>
+      </th>
+    );
+  }
 
   return (
     <div className="card space-y-4 p-4">
@@ -189,11 +247,11 @@ export function RulesMode({
           <table className="w-full min-w-[720px] text-left text-sm">
             <thead className="text-xs text-ink-faint">
               <tr>
-                <th className="px-4 py-2 font-medium">Prio</th>
-                <th className="px-4 py-2 font-medium">Match</th>
-                <th className="px-4 py-2 font-medium">Category</th>
-                <th className="px-4 py-2 font-medium">Scope</th>
-                <th className="px-4 py-2 font-medium">Flags</th>
+                <SortTh id="priority">Prio</SortTh>
+                <SortTh id="match">Match</SortTh>
+                <SortTh id="category">Category</SortTh>
+                <SortTh id="scope">Scope</SortTh>
+                <SortTh id="flags">Flags</SortTh>
                 <th className="px-4 py-2 font-medium text-right">Actions</th>
               </tr>
             </thead>

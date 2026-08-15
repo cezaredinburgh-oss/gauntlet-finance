@@ -4,6 +4,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-14 — Categorize feedback 2
+
+- First assign is quiet; **Recategorized** only after a second human change.
+- Rules table sorts by column. Vendor rows have Skip; Apply all advances to a new set.
+- Assigned vendors leave the list. New-user wizard is exclusive until finished or skipped.
+
 ## 2026-08-14 — Categorize coaching UX
 
 - New-user wizard (categories → vendors → short Grok+ tour); skip allowed.
