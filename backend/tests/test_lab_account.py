@@ -467,6 +467,33 @@ def test_cloud_synced_lab_dir_redirects_to_local(monkeypatch: pytest.MonkeyPatch
     assert la.lab_data_dir(S()) == tmp_path / "local-lab"
 
 
+def test_lab_data_dir_strips_pasted_key_prefix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from backend.services import lab_account as la
+
+    monkeypatch.setattr(la, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(la, "_volume_lab_dir", lambda: None)
+
+    class S:
+        lab_data_dir = "LAB_DATA_DIR=/data/lab"
+
+    got = la.lab_data_dir(S())
+    assert got.is_absolute()
+    assert got.as_posix().replace("C:", "").endswith("/data/lab")
+
+
+def test_relative_lab_dir_uses_volume_when_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from backend.services import lab_account as la
+
+    monkeypatch.setattr(la, "project_root", lambda: tmp_path)
+    vol = tmp_path / "data-vol" / "lab"
+    monkeypatch.setattr(la, "_volume_lab_dir", lambda: vol)
+
+    class S:
+        lab_data_dir = "data/lab"
+
+    assert la.lab_data_dir(S()) == vol
+
+
 def test_lab_reset_api_dry_run_and_wipe(lab_env: Path):
     from datetime import date, datetime, timezone
     from decimal import Decimal

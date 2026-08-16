@@ -105,6 +105,28 @@ def recover_canonical_ledger(dest: Path, *search_dirs: Path) -> Path | None:
     return dest
 
 
+def _normalize_lab_data_dir_raw(raw: str) -> str:
+    """Strip quotes and a pasted ``LAB_DATA_DIR=`` prefix from the env value."""
+    s = (raw or "").strip().strip('"').strip("'")
+    if "=" in s:
+        key, _, val = s.partition("=")
+        if key.strip().replace("-", "_").upper() == "LAB_DATA_DIR":
+            s = val.strip().strip('"').strip("'")
+    return s
+
+
+def _volume_lab_dir() -> Path | None:
+    volume = Path("/data")
+    if not volume.is_dir():
+        return None
+    try:
+        if os.access(volume, os.W_OK) if hasattr(os, "access") else True:
+            return volume / "lab"
+    except OSError:
+        return volume / "lab"
+    return volume / "lab"
+
+
 def lab_data_dir(settings: Settings) -> Path:
     """
     Directory for the lab disk ledger.
@@ -114,7 +136,8 @@ def lab_data_dir(settings: Settings) -> Path:
     is on iCloud/OneDrive, use a local AppData path so sync cannot steal
     ``ledger.json``. Else project ``data/lab``.
     """
-    raw = (settings.lab_data_dir or "").strip()
+    raw = _normalize_lab_data_dir_raw(settings.lab_data_dir or "")
+    volume_lab = _volume_lab_dir()
     if raw:
         p = Path(raw)
         candidate = p if p.is_absolute() else project_root() / p
@@ -124,20 +147,29 @@ def lab_data_dir(settings: Settings) -> Path:
                 candidate,
             )
             return local_lab_data_dir()
+        # Relative ``data/lab`` on Railway would land on the ephemeral image FS.
+        if volume_lab is not None and not _path_is_under(candidate, Path("/data")):
+            logger.warning(
+                "LAB_DATA_DIR %s is not on the /data volume; using %s",
+                candidate,
+                volume_lab,
+            )
+            return volume_lab
         return candidate
-    volume = Path("/data")
-    if volume.is_dir():
-        try:
-            if volume.exists() and (os.access(volume, os.W_OK) if hasattr(os, "access") else True):
-                return volume / "lab"
-        except OSError:
-            pass
-        # Volume present but permission check failed — still prefer it
-        return volume / "lab"
+    if volume_lab is not None:
+        return volume_lab
     project_lab = project_root() / "data" / "lab"
     if path_is_cloud_synced(project_root()):
         return local_lab_data_dir()
     return project_lab
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def lab_ledger_path(settings: Settings) -> Path:
