@@ -120,6 +120,13 @@ async def lifespan(app: FastAPI):
         settings.spreadsheet_configured,
         settings.multi_tenant,
     )
+    if settings.is_production and (
+        settings.lab_login_enabled and (settings.lab_password or "").strip()
+    ):
+        logger.warning(
+            "LAB_LOGIN_ENABLED is set but lab login is disabled in production "
+            "(shared disk ledger is not a per-user store)."
+        )
     if settings.multi_tenant:
         # Ensure control DB + platform admins exist at boot
         from backend.tenancy.store import get_control_store

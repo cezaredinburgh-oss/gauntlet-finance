@@ -71,6 +71,8 @@ Or use wizard step **Deploy → Generate env vars**.
 
 **Auth note:** Production refuses open API access when `AUTH_MODE` is `dev` or `disabled` unless `ALLOW_OPEN_AUTH=true`. Without that flag unauthenticated domain routes return **401** (login required). Prefer owner password, OAuth, or one-click demos on public domains — never leave `ALLOW_OPEN_AUTH=true` on a shared URL.
 
+**Lab account:** `LAB_LOGIN_ENABLED` is a single shared disk ledger for local QA. Production (`APP_ENV=production`) ignores it. Real users stay on per-user Google Sheets (`MULTI_TENANT=true`). Do not set `LAB_DATA_DIR` on iCloud/OneDrive.
+
 ### Public demos (marketing)
 
 | Variable | Effect |

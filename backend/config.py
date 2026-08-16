@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     lab_login_enabled: bool = False  # env LAB_LOGIN_ENABLED
     lab_email: str = "testaccount@o2.pl"  # env LAB_EMAIL
     lab_password: str = ""  # env LAB_PASSWORD — never commit real secrets
-    lab_data_dir: str = ""  # env LAB_DATA_DIR — default data/lab under project root
+    lab_data_dir: str = ""  # env LAB_DATA_DIR — default local AppData when the repo is on iCloud, else data/lab
 
     # Owner password login (real ledger). Use when ALLOW_OPEN_AUTH=false on public hosts.
     owner_email: str = ""  # env OWNER_EMAIL — shown on landing; must match login email

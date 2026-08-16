@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,8 @@ class DiskBackedSheetsRepository:
         return self._path
 
     def _load(self) -> None:
+        if not self._path.is_file():
+            self._recover_from_numbered_copies()
         if not self._path.is_file():
             return
         try:
@@ -70,6 +73,38 @@ class DiskBackedSheetsRepository:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("lab ledger tab load failed %s: %s", tab, exc)
 
+    def _recover_from_numbered_copies(self) -> None:
+        """iCloud/OneDrive may rename ledger.json to 'ledger 2.json' on conflict."""
+        parent = self._path.parent
+        if not parent.is_dir():
+            return
+        candidates: list[Path] = []
+        try:
+            for p in parent.iterdir():
+                if not p.is_file():
+                    continue
+                name = p.name.lower()
+                if not name.startswith("ledger") or not name.endswith(".json"):
+                    continue
+                if ".tmp" in name or p.resolve() == self._path.resolve():
+                    continue
+                try:
+                    if p.stat().st_size > 0:
+                        candidates.append(p)
+                except OSError:
+                    continue
+        except OSError:
+            return
+        if not candidates:
+            return
+        src = max(candidates, key=lambda p: (p.stat().st_mtime, p.stat().st_size))
+        try:
+            self._path.write_bytes(src.read_bytes())
+        except OSError as exc:
+            logger.warning("lab ledger recover failed (%s -> %s): %s", src, self._path, exc)
+            return
+        logger.warning("recovered lab ledger from numbered copy %s", src)
+
     def _snapshot(self) -> dict[str, Any]:
         tabs: dict[str, list[dict[str, Any]]] = {}
         for tab in SHEET_HEADERS:
@@ -81,10 +116,10 @@ class DiskBackedSheetsRepository:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         data = self._snapshot()
         text = json.dumps(data, ensure_ascii=False, indent=0, sort_keys=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+        tmp = self._path.with_name(f"{self._path.name}.{os.getpid()}.tmp")
         try:
             tmp.write_text(text, encoding="utf-8")
-            tmp.replace(self._path)
+            os.replace(tmp, self._path)
         except OSError as exc:
             logger.exception("lab ledger save failed (%s): %s", self._path, exc)
             try:

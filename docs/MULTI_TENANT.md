@@ -28,6 +28,7 @@ REPO_BACKEND=memory
 - `MULTI_TENANT=true` requires `AUTH_MODE=oauth` in production.
 - Open auth is never permitted for multi-tenant production.
 - Global `/setup` wizard is disabled; use `POST /api/tenant/provision` (or admin bind).
+- Lab password login (`LAB_LOGIN_ENABLED`) is ignored in production — one shared JSON file is not a tenant ledger.
 
 ## Concepts
 

@@ -208,3 +208,85 @@ def test_lab_case_insensitive_email(lab_env):
         )
         assert r.status_code == 200
         assert r.json()["email"] == "testaccount@o2.pl"
+
+
+def test_newest_ledger_snapshot_prefers_latest_numbered_copy(tmp_path: Path):
+    from backend.services.lab_account import newest_ledger_snapshot
+
+    d = tmp_path / "lab"
+    d.mkdir()
+    (d / "ledger 2.json").write_text('{"tabs":{}}', encoding="utf-8")
+    newer = d / "ledger 9.json"
+    newer.write_text('{"tabs":{"Transactions":[]}}', encoding="utf-8")
+    import os
+    import time
+
+    os.utime(newer, (time.time() + 10, time.time() + 10))
+    hit = newest_ledger_snapshot(d)
+    assert hit is not None
+    assert hit.name == "ledger 9.json"
+
+
+def test_disk_repo_recovers_when_canonical_missing(tmp_path: Path):
+    from backend.schema.models import Category, LifeDomain, Necessity
+    from backend.sheets.disk_memory import DiskBackedSheetsRepository
+    from datetime import datetime, timezone
+
+    d = tmp_path / "lab"
+    d.mkdir()
+    src = DiskBackedSheetsRepository(d / "ledger.json")
+    ts = datetime.now(timezone.utc)
+    src.upsert_rows(
+        "Categories",
+        [
+            Category(
+                id=__import__("uuid").uuid4(),
+                name="Recovered Cat",
+                parent_id=None,
+                necessity=Necessity.DISCRETIONARY,
+                life_domain=LifeDomain.OTHER,
+                is_income=False,
+                is_transfer=False,
+                sort_order=1,
+                created_at=ts,
+                updated_at=ts,
+            )
+        ],
+    )
+    canonical = d / "ledger.json"
+    numbered = d / "ledger 12.json"
+    numbered.write_bytes(canonical.read_bytes())
+    canonical.unlink()
+    assert not canonical.is_file()
+
+    reloaded = DiskBackedSheetsRepository(canonical)
+    names = {str(getattr(c, "name", "")) for c in reloaded.list_rows("Categories")}
+    assert "Recovered Cat" in names
+    assert canonical.is_file()
+
+
+def test_lab_login_disabled_in_production(lab_env, monkeypatch: pytest.MonkeyPatch):
+    from backend.services.lab_account import lab_login_configured
+
+    monkeypatch.setenv("APP_ENV", "production")
+    get_settings.cache_clear()
+    assert lab_login_configured(get_settings()) is False
+
+
+def test_path_is_cloud_synced_detects_icloud():
+    from backend.services.lab_account import path_is_cloud_synced
+
+    assert path_is_cloud_synced(Path("C:/Users/x/iCloudDrive/app")) is True
+    assert path_is_cloud_synced(Path("C:/Users/x/Projects/app")) is False
+
+
+def test_cloud_synced_lab_dir_redirects_to_local(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from backend.services import lab_account as la
+
+    monkeypatch.setattr(la, "project_root", lambda: Path("C:/Users/x/iCloudDrive/Gauntlet"))
+    monkeypatch.setattr(la, "local_lab_data_dir", lambda: tmp_path / "local-lab")
+
+    class S:
+        lab_data_dir = "data/lab"
+
+    assert la.lab_data_dir(S()) == tmp_path / "local-lab"

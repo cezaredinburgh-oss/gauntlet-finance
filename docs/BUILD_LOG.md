@@ -4,6 +4,14 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-15 — Lab ledger survives iCloud rename
+
+- iCloud Drive was renaming `data/lab/ledger.json` to `ledger 2.json` … `ledger 103.json` on each save. Restart then loaded an empty ledger, so coverage collapsed after re-import.
+- Lab data now lives under local AppData when the repo is on iCloud/OneDrive. Startup recovers the newest numbered `ledger*.json` if the canonical file is missing.
+- Production ignores `LAB_LOGIN_ENABLED` (shared JSON is not a per-user store). Real tenants stay on Google Sheets.
+
+---
+
 ## 2026-08-15 — New ET becomes Expense tracking
 
 - Removed the legacy Spending / Groups / AI-desk Categorize UI.

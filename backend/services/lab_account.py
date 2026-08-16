@@ -19,18 +19,111 @@ LAB_NAME = "Lab Account"
 # Process singleton (path → repo)
 _LAB_REPOS: dict[str, DiskBackedSheetsRepository] = {}
 
+_CLOUD_DIR_MARKERS = ("iclouddrive", "icloud drive", "onedrive", "dropbox")
+
+
+def path_is_cloud_synced(path: Path) -> bool:
+    """True when *path* lives under iCloud / OneDrive / Dropbox (conflict-prone)."""
+    try:
+        parts = [p.lower() for p in path.resolve().parts]
+    except OSError:
+        return False
+    return any(marker in parts for marker in _CLOUD_DIR_MARKERS)
+
+
+def local_lab_data_dir() -> Path:
+    """Machine-local lab dir (not iCloud). Windows: %LOCALAPPDATA%\\GauntletFinance\\lab."""
+    raw = os.environ.get("LOCALAPPDATA", "").strip()
+    if raw:
+        return Path(raw) / "GauntletFinance" / "lab"
+    return Path.home() / ".gauntlet-finance" / "lab"
+
+
+def newest_ledger_snapshot(directory: Path) -> Path | None:
+    """Newest ``ledger*.json`` in *directory* (canonical or iCloud numbered copies)."""
+    if not directory.is_dir():
+        return None
+    candidates: list[Path] = []
+    try:
+        names = list(directory.iterdir())
+    except OSError:
+        return None
+    for p in names:
+        if not p.is_file():
+            continue
+        name = p.name.lower()
+        if not name.startswith("ledger") or not name.endswith(".json"):
+            continue
+        if ".tmp" in name:
+            continue
+        try:
+            if p.stat().st_size <= 0:
+                continue
+        except OSError:
+            continue
+        candidates.append(p)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: (p.stat().st_mtime, p.stat().st_size))
+
+
+def recover_canonical_ledger(dest: Path, *search_dirs: Path) -> Path | None:
+    """
+    If *dest* is missing/empty, copy the newest ledger snapshot from *search_dirs*.
+
+    iCloud Drive on Windows renames ``ledger.json`` to ``ledger 2.json`` on
+    concurrent sync, so the app would otherwise boot an empty ledger.
+    """
+    try:
+        if dest.is_file() and dest.stat().st_size > 0:
+            return dest
+    except OSError:
+        pass
+    found: Path | None = None
+    for directory in search_dirs:
+        cand = newest_ledger_snapshot(directory)
+        if cand is None:
+            continue
+        if found is None:
+            found = cand
+            continue
+        try:
+            if cand.stat().st_mtime > found.stat().st_mtime:
+                found = cand
+        except OSError:
+            continue
+    if found is None:
+        return None
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(found.read_bytes())
+    except OSError:
+        logger.exception("lab ledger recover failed from %s to %s", found, dest)
+        return None
+    logger.warning("recovered lab ledger from %s -> %s", found, dest)
+    return dest
+
 
 def lab_data_dir(settings: Settings) -> Path:
     """
     Directory for the lab disk ledger.
 
     Prefer explicit ``LAB_DATA_DIR``. Otherwise use ``/data/lab`` when a
-    Railway (or similar) volume is mounted at ``/data``, else project ``data/lab``.
+    Railway (or similar) volume is mounted at ``/data``. If the project tree
+    is on iCloud/OneDrive, use a local AppData path so sync cannot steal
+    ``ledger.json``. Else project ``data/lab``.
     """
     raw = (settings.lab_data_dir or "").strip()
     if raw:
         p = Path(raw)
-        return p if p.is_absolute() else project_root() / p
+        candidate = p if p.is_absolute() else project_root() / p
+        if path_is_cloud_synced(candidate):
+            logger.warning(
+                "LAB_DATA_DIR resolves onto a cloud-synced drive (%s); using local AppData",
+                candidate,
+            )
+            return local_lab_data_dir()
+        return candidate
     volume = Path("/data")
     if volume.is_dir():
         try:
@@ -40,7 +133,10 @@ def lab_data_dir(settings: Settings) -> Path:
             pass
         # Volume present but permission check failed — still prefer it
         return volume / "lab"
-    return project_root() / "data" / "lab"
+    project_lab = project_root() / "data" / "lab"
+    if path_is_cloud_synced(project_root()):
+        return local_lab_data_dir()
+    return project_lab
 
 
 def lab_ledger_path(settings: Settings) -> Path:
@@ -50,6 +146,8 @@ def lab_ledger_path(settings: Settings) -> Path:
 def get_lab_repository(settings: Settings) -> DiskBackedSheetsRepository:
     """Disk-backed ledger for the single shared lab principal."""
     path = lab_ledger_path(settings)
+    project_lab = project_root() / "data" / "lab"
+    recover_canonical_ledger(path, path.parent, project_lab)
     key = str(path.resolve())
     repo = _LAB_REPOS.get(key)
     if repo is None:
@@ -181,6 +279,9 @@ def ensure_lab_session(settings: Settings) -> SessionUser:
 
 
 def lab_login_configured(settings: Settings) -> bool:
+    """Lab password login is a shared test principal — never on production hosts."""
+    if settings.is_production:
+        return False
     return bool(
         settings.lab_login_enabled and (settings.lab_password or "").strip()
     )
