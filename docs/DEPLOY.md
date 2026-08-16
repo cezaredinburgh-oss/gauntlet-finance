@@ -73,6 +73,8 @@ Or use wizard step **Deploy → Generate env vars**.
 
 **Lab account:** optional tester that signs in with `LAB_EMAIL` / `LAB_PASSWORD` like a normal user. Ledger is `DiskBackedSheetsRepository` on the Railway volume (`/data/lab` when `/data` is mounted; or set `LAB_DATA_DIR=/data/lab`). Invited Google users stay on their own Sheets — they never share this JSON. Do not set `LAB_DATA_DIR` on iCloud/OneDrive.
 
+Wipe the **host you are signed into** (in-process, so Railway hits the volume): Settings → Wipe lab ledger, or `POST /api/lab/reset` with `{ "confirm": "WIPE LAB" }`. A Windows CLI reset does not empty the Railway volume.
+
 ### Public demos (marketing)
 
 | Variable | Effect |

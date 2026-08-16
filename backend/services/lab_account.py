@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 LAB_SHEET_ID = "lab-account"
 LAB_USER_ID = "lab-account"
 LAB_NAME = "Lab Account"
+LAB_RESET_CONFIRM = "WIPE LAB"
 
 # Process singleton (path → repo)
 _LAB_REPOS: dict[str, DiskBackedSheetsRepository] = {}

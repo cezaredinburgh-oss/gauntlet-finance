@@ -467,6 +467,84 @@ def test_cloud_synced_lab_dir_redirects_to_local(monkeypatch: pytest.MonkeyPatch
     assert la.lab_data_dir(S()) == tmp_path / "local-lab"
 
 
+def test_lab_reset_api_dry_run_and_wipe(lab_env: Path):
+    from datetime import date, datetime, timezone
+    from decimal import Decimal
+    from uuid import uuid4
+
+    from backend.schema.models import Transaction
+    from backend.services.lab_account import get_lab_repository
+
+    now = datetime.now(timezone.utc)
+    get_lab_repository(get_settings()).upsert_rows(
+        "Transactions",
+        [
+            Transaction(
+                id=uuid4(),
+                account_id=uuid4(),
+                booking_date=date(2026, 1, 2),
+                amount=Decimal("-3.00"),
+                currency="USD",
+                fee_amount=Decimal("0"),
+                merchant="WIPE-ME",
+                source_institution="Revolut",
+                created_at=now,
+                updated_at=now,
+            )
+        ],
+    )
+
+    with _client() as client:
+        login = client.post(
+            "/api/auth/password",
+            json={"email": "testaccount@o2.pl", "password": "lab-secret-pass"},
+        )
+        assert login.status_code == 200, login.text
+        assert client.get("/api/transactions").json()["total"] == 1
+
+        denied = client.post("/api/lab/reset", json={})
+        assert denied.status_code == 400
+
+        preview = client.post("/api/lab/reset", json={"dry_run": True})
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["dry_run"] is True
+        assert preview.json()["before"]["Transactions"] == 1
+        assert client.get("/api/transactions").json()["total"] == 1
+
+        wiped = client.post("/api/lab/reset", json={"confirm": "WIPE LAB"})
+        assert wiped.status_code == 200, wiped.text
+        body = wiped.json()
+        assert body["ok"] is True
+        assert body["after"]["Transactions"] == 0
+        assert body["after"]["InvestmentLots"] == 0
+        assert int(body["after"]["Categories"]) > 0
+        assert client.get("/api/transactions").json()["total"] == 0
+
+
+def test_lab_reset_api_forbidden_for_other_user(lab_env: Path):
+    from backend.api.auth import SessionUser, create_session_token
+
+    with _client() as client:
+        tok = create_session_token(
+            get_settings(),
+            SessionUser(
+                email="alice@example.com",
+                name="Alice",
+                picture=None,
+                access_token="t",
+                refresh_token=None,
+                token_expiry=None,
+                user_id="alice",
+                role="user",
+                spreadsheet_id="mem-alice",
+                is_demo=False,
+            ),
+        )
+        client.cookies.set("gf_session", tok)
+        r = client.post("/api/lab/reset", json={"confirm": "WIPE LAB"})
+        assert r.status_code in (401, 403)
+
+
 def test_reset_wipes_numbered_copies_and_does_not_recover(lab_env: Path):
     """Intentional wipe must delete iCloud numbered copies, not just ledger.json."""
     from datetime import date, datetime, timezone

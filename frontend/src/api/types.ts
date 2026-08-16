@@ -47,6 +47,8 @@ export type SheetsStatus = {
   tabs?: string[];
   ok?: boolean;
   message?: string;
+  path?: string | null;
+  demo_kind?: string | null;
 };
 
 export type CleanupScopePreview = {

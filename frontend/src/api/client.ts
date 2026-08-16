@@ -218,6 +218,20 @@ export const api = {
       },
     ),
 
+  /** Wipe the lab disk ledger on this API host (Railway volume or local AppData). */
+  resetLabLedger: (opts: { confirm?: string; dry_run?: boolean }) =>
+    request<{
+      ok?: boolean;
+      dry_run: boolean;
+      path: string;
+      before: Record<string, number>;
+      after: Record<string, number>;
+      deleted?: string[];
+    }>("/lab/reset", {
+      method: "POST",
+      body: JSON.stringify(opts),
+    }),
+
   /** One-click empty ephemeral sandbox (no email/password). */
   enterDemoSandbox: () =>
     request<{

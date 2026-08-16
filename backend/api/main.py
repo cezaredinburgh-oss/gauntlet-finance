@@ -28,6 +28,7 @@ from backend.api.routes import (
     fx as fx_routes,
     investments,
     invites,
+    lab as lab_routes,
     prices,
     setup_wizard,
     sheets_status,
@@ -219,6 +220,7 @@ def create_app() -> FastAPI:
         return _health_payload()
 
     api.include_router(auth_routes.router)
+    api.include_router(lab_routes.router)
     api.include_router(sheets_status.router)
     api.include_router(upload.router)
     api.include_router(transactions.router)

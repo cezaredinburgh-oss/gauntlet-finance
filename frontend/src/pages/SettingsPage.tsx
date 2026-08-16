@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ExternalLink, Save, Trash2 } from "lucide-react";
 import { api, setupWizardUrl } from "../api/client";
 import type {
@@ -12,7 +12,7 @@ import type {
 } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { EmptyState, PageLoader, Spinner } from "../components/Spinner";
-import { onboardingPath } from "../lib/onboarding";
+import { onboardingPath, resetEmptyLabClientState } from "../lib/onboarding";
 
 const STORAGE_KEY = "cf_ui_settings";
 
@@ -33,6 +33,11 @@ function loadUi(): UiSettings {
 
 export function SettingsPage() {
   const { user, isDevMode, logout, refresh, isReadOnly } = useAuth();
+  const navigate = useNavigate();
+  const [labWipeConfirm, setLabWipeConfirm] = useState("");
+  const [labWipeBusy, setLabWipeBusy] = useState(false);
+  const [labWipeError, setLabWipeError] = useState<string | null>(null);
+  const [labWipeMsg, setLabWipeMsg] = useState<string | null>(null);
   const [ui, setUi] = useState<UiSettings>(loadUi);
   const [saved, setSaved] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
@@ -277,6 +282,59 @@ export function SettingsPage() {
           Sign out
         </button>
       </section>
+
+      {user?.demo_kind === "lab" && (
+        <section className="card space-y-3 border border-amber-400/30 p-5">
+          <h2 className="text-sm font-semibold">Wipe lab ledger</h2>
+          <p className="text-xs text-ink-muted">
+            Empties the disk ledger on <strong>this host</strong> (Railway volume or local
+            AppData). Does not touch Google Sheets or other accounts. Type{" "}
+            <code className="text-ink">WIPE LAB</code> to confirm.
+          </p>
+          {sheets?.path && (
+            <p className="text-xs text-ink-faint break-all">Ledger: {sheets.path}</p>
+          )}
+          {labWipeError && <p className="text-sm text-danger">{labWipeError}</p>}
+          {labWipeMsg && <p className="text-sm text-emerald-300">{labWipeMsg}</p>}
+          <input
+            className="input"
+            value={labWipeConfirm}
+            onChange={(e) => setLabWipeConfirm(e.target.value)}
+            placeholder="WIPE LAB"
+            autoComplete="off"
+            disabled={labWipeBusy || isReadOnly}
+          />
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={labWipeBusy || isReadOnly || labWipeConfirm.trim() !== "WIPE LAB"}
+            onClick={() => {
+              void (async () => {
+                setLabWipeBusy(true);
+                setLabWipeError(null);
+                setLabWipeMsg(null);
+                try {
+                  const out = await api.resetLabLedger({ confirm: "WIPE LAB" });
+                  resetEmptyLabClientState();
+                  const txs = Number(out.after?.Transactions ?? -1);
+                  setLabWipeMsg(
+                    txs === 0
+                      ? "Lab ledger wiped. Opening new-user setup…"
+                      : "Wipe finished with unexpected leftovers.",
+                  );
+                  navigate("/onboarding", { replace: true });
+                } catch (e) {
+                  setLabWipeError(e instanceof Error ? e.message : "Wipe failed");
+                } finally {
+                  setLabWipeBusy(false);
+                }
+              })();
+            }}
+          >
+            {labWipeBusy ? "Wiping…" : "Wipe lab on this host"}
+          </button>
+        </section>
+      )}
 
       {user?.role === "platform_admin" && user.multi_tenant && (
         <>

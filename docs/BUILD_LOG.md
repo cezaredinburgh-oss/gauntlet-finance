@@ -13,6 +13,7 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 - Landing no longer hides the lab form when open-auth auto-signs you in as Dev User. Switch-account form prefills the lab email. Start-App opens `127.0.0.1` (same host as Vite) so cookies are not split from `localhost`.
 - Lab login 503 “set LAB_PASSWORD” was a production hard-block, not a missing secret. Single-tenant hosts honor `LAB_*`. Error text matches the real reason.
 - Lab password login is allowed on multi-tenant production when `LAB_*` is set. Storage is the Railway volume (`/data/lab`), not a shared Sheets tenant. OAuth users stay isolated.
+- `POST /api/lab/reset` (confirm `WIPE LAB`) wipes the lab ledger **in the running API process** so Railway `/data/lab` can be emptied. Local CLI reset never touched that volume.
 
 ---
 
