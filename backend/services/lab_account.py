@@ -143,11 +143,40 @@ def lab_ledger_path(settings: Settings) -> Path:
     return lab_data_dir(settings) / "ledger.json"
 
 
-def get_lab_repository(settings: Settings) -> DiskBackedSheetsRepository:
+def wipe_lab_ledger_files(directory: Path) -> list[str]:
+    """Delete canonical + numbered + tmp ``ledger*`` snapshots in *directory* only."""
+    deleted: list[str] = []
+    if not directory.is_dir():
+        return deleted
+    try:
+        names = list(directory.iterdir())
+    except OSError:
+        return deleted
+    for p in names:
+        if not p.is_file():
+            continue
+        name = p.name.lower()
+        if not name.startswith("ledger"):
+            continue
+        if not (name.endswith(".json") or ".tmp" in name):
+            continue
+        try:
+            p.unlink()
+        except OSError:
+            logger.exception("lab ledger wipe failed: %s", p)
+            raise
+        deleted.append(p.name)
+    return deleted
+
+
+def get_lab_repository(
+    settings: Settings, *, skip_recover: bool = False
+) -> DiskBackedSheetsRepository:
     """Disk-backed ledger for the single shared lab principal."""
     path = lab_ledger_path(settings)
-    project_lab = project_root() / "data" / "lab"
-    recover_canonical_ledger(path, path.parent, project_lab)
+    if not skip_recover:
+        project_lab = project_root() / "data" / "lab"
+        recover_canonical_ledger(path, path.parent, project_lab)
     key = str(path.resolve())
     repo = _LAB_REPOS.get(key)
     if repo is None:
@@ -161,14 +190,16 @@ def clear_lab_repos_for_tests() -> None:
     _LAB_REPOS.clear()
 
 
-def ensure_lab_seeded(settings: Settings) -> DiskBackedSheetsRepository:
+def ensure_lab_seeded(
+    settings: Settings, *, skip_recover: bool = False
+) -> DiskBackedSheetsRepository:
     """
     Ensure lab ledger exists with public default categories (empty new-user pack).
 
     Idempotent: only seeds when Categories tab is empty.
     Never copies owner Google Sheets data.
     """
-    repo = get_lab_repository(settings)
+    repo = get_lab_repository(settings, skip_recover=skip_recover)
     try:
         cats = repo.list_rows("Categories")
     except Exception:  # noqa: BLE001
@@ -207,43 +238,59 @@ def lab_ledger_stats(settings: Settings) -> dict[str, int]:
     return out
 
 
+def _empty_money_tabs(stats: dict[str, int]) -> bool:
+    return all(
+        int(stats.get(tab, 0) or 0) == 0
+        for tab in (
+            "Transactions",
+            "InvestmentLots",
+            "InvestmentEvents",
+            "StatementFiles",
+        )
+    )
+
+
 def reset_lab_ledger(settings: Settings, *, dry_run: bool = False) -> dict[str, object]:
     """
     Wipe lab disk ledger and re-seed public categories only (true empty new-user).
 
+    Deletes every ``ledger*.json`` (canonical + numbered iCloud copies) in the
+    lab data dir so recover cannot resurrect the old account. Does not touch
+    the iCloud archive folder or Google Sheets.
+
     Clears process singleton so the next request reloads from disk.
     """
     path = lab_ledger_path(settings)
+    directory = path.parent
     before = lab_ledger_stats(settings) if path.is_file() or _LAB_REPOS else {}
+    existing = []
+    if directory.is_dir():
+        existing = [
+            p.name
+            for p in directory.iterdir()
+            if p.is_file()
+            and p.name.lower().startswith("ledger")
+            and (p.name.lower().endswith(".json") or ".tmp" in p.name.lower())
+        ]
     result: dict[str, object] = {
         "path": str(path),
         "dry_run": dry_run,
         "before": before,
+        "would_delete": existing,
     }
     if dry_run:
-        result["would_delete"] = path.is_file()
         result["after"] = before
         return result
 
     clear_lab_repos_for_tests()
-    if path.is_file():
-        try:
-            path.unlink()
-        except OSError as exc:
-            logger.exception("lab ledger delete failed: %s", exc)
-            raise
-    # Drop tmp siblings if any
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    if tmp.is_file():
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
+    result["deleted"] = wipe_lab_ledger_files(directory)
 
-    ensure_lab_seeded(settings)
+    # Skip recover so a leftover project-tree snapshot cannot undo the wipe.
+    ensure_lab_seeded(settings, skip_recover=True)
     after = lab_ledger_stats(settings)
     result["after"] = after
-    result["ok"] = after.get("Transactions", 0) == 0 and after.get("InvestmentLots", 0) == 0
+    cats = int(after.get("Categories", 0) or 0)
+    result["ok"] = _empty_money_tabs(after) and cats > 0
     try:
         from backend.services.response_cache import cache_invalidate
         from backend.tenancy.context import reset_tenant_id, set_tenant_id
@@ -279,9 +326,12 @@ def ensure_lab_session(settings: Settings) -> SessionUser:
 
 
 def lab_login_configured(settings: Settings) -> bool:
-    """Lab password login is a shared test principal — never on production hosts."""
-    if settings.is_production:
-        return False
-    return bool(
-        settings.lab_login_enabled and (settings.lab_password or "").strip()
-    )
+    """
+    Lab password login is one optional tester principal.
+
+    On when LAB_LOGIN_ENABLED and LAB_PASSWORD are set — including Railway
+    multi-tenant production. Ledger is DiskBackedSheetsRepository on the
+    volume (``/data/lab``), never a Google Sheet. Invited OAuth tenants stay
+    on their own Sheets; they do not share this JSON.
+    """
+    return bool(settings.lab_login_enabled and (settings.lab_password or "").strip())

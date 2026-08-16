@@ -23,8 +23,10 @@ export type PublicAuthConfig = {
   demo_email: string | null;
   demo_sandbox_enabled?: boolean;
   demo_tour_enabled?: boolean;
-  /** Host password lab account (disk ledger; not advertised email). */
+  /** Host password lab account (volume disk ledger, including Railway). */
   lab_login_enabled?: boolean;
+  /** Lab email for the landing form when lab login is enabled. */
+  lab_email?: string | null;
   owner_login_enabled?: boolean;
   google_login_available: boolean;
   open_auth?: boolean;

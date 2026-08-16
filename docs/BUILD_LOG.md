@@ -4,6 +4,18 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-16 — Lab reset wipes numbered snapshots
+
+- `reset_lab_ledger` now deletes every `ledger*.json` in the lab data dir (canonical + iCloud numbered copies) and reseeds without recover, so a wipe cannot be undone by the next boot.
+- `ok` requires zero Transactions / lots / events / StatementFiles and a non-empty public category pack.
+- Intentional reset still does not touch Google Sheets or `%LOCALAPPDATA%\\GauntletFinance\\icloud-ledger-archive`.
+- Lab password login on an empty ledger resets first-run client state (onboarding, Categorize wizard, Grok+ session) so it behaves like a brand-new user.
+- Landing no longer hides the lab form when open-auth auto-signs you in as Dev User. Switch-account form prefills the lab email. Start-App opens `127.0.0.1` (same host as Vite) so cookies are not split from `localhost`.
+- Lab login 503 “set LAB_PASSWORD” was a production hard-block, not a missing secret. Single-tenant hosts honor `LAB_*`. Error text matches the real reason.
+- Lab password login is allowed on multi-tenant production when `LAB_*` is set. Storage is the Railway volume (`/data/lab`), not a shared Sheets tenant. OAuth users stay isolated.
+
+---
+
 ## 2026-08-15 — Lab ledger survives iCloud rename
 
 - iCloud Drive was renaming `data/lab/ledger.json` to `ledger 2.json` … `ledger 103.json` on each save. Restart then loaded an empty ledger, so coverage collapsed after re-import.

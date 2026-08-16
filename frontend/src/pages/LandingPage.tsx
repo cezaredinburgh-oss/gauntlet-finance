@@ -12,7 +12,7 @@ import { api, ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { Spinner } from "../components/Spinner";
 import { cn } from "../lib/cn";
-import { resetDemoOnboarding } from "../lib/onboarding";
+import { resetDemoOnboarding, resetEmptyLabClientState } from "../lib/onboarding";
 
 const USPS = [
   {
@@ -55,6 +55,7 @@ type PublicConfig = {
   demo_sandbox_enabled?: boolean;
   demo_tour_enabled?: boolean;
   lab_login_enabled?: boolean;
+  lab_email?: string | null;
   owner_login_enabled?: boolean;
   google_login_available: boolean;
   open_auth?: boolean;
@@ -103,6 +104,8 @@ export function LandingPage() {
           setPublicCfg(cfg);
           if (cfg.demo_login_enabled && cfg.demo_email) {
             setEmail(cfg.demo_email);
+          } else if (cfg.lab_login_enabled && cfg.lab_email) {
+            setEmail(cfg.lab_email);
           }
           // Owner email is not exposed publicly — user types their own.
         }
@@ -157,6 +160,19 @@ export function LandingPage() {
       setFormError(null);
       try {
         await loginWithPassword(email.trim(), password);
+        const me = await api.me();
+        if (me.demo_kind === "lab") {
+          try {
+            const txs = await api.transactions({ limit: 1 });
+            if ((txs.total ?? 0) === 0) {
+              resetEmptyLabClientState();
+              navigate("/onboarding", { replace: true });
+              return;
+            }
+          } catch {
+            /* still enter the app */
+          }
+        }
         navigate("/", { replace: true });
       } catch (err) {
         const msg =
@@ -188,11 +204,18 @@ export function LandingPage() {
   const ownerOn = publicCfg?.owner_login_enabled === true;
   const labOn = publicCfg?.lab_login_enabled === true;
   const passwordOn = demoOn || ownerOn || labOn;
+  const signedIn = Boolean(user);
+  const signedInAsLab =
+    signedIn &&
+    user?.demo_kind === "lab" &&
+    Boolean(user.email) &&
+    Boolean(publicCfg?.lab_email) &&
+    user.email.toLowerCase() === (publicCfg?.lab_email || "").toLowerCase();
+  const showPasswordForm = passwordOn && !signedInAsLab;
   const googleOn = publicCfg?.google_login_available === true;
   const notInvited = authError === "not_invited";
   /** Only when host allows unauthenticated full access (dangerous on public URLs). */
   const openAuth = publicCfg?.open_auth === true;
-  const signedIn = Boolean(user);
 
   return (
     <div className="min-h-screen bg-surface text-ink">
@@ -256,7 +279,9 @@ export function LandingPage() {
                     <div className="mt-1 text-xs text-amber-200">
                       {user.demo_kind === "tour"
                         ? "Sample portfolio (read-only demo)"
-                        : "Sandbox demo session"}
+                        : user.demo_kind === "lab"
+                          ? "Lab account — empty disk ledger (not Google Sheets)"
+                          : "Sandbox demo session"}
                     </div>
                   )}
                   {openAuth && !user?.is_demo && (
@@ -317,10 +342,10 @@ export function LandingPage() {
               </div>
             )}
 
-            {!signedIn && passwordOn && (
+            {showPasswordForm && (
               <form className="space-y-3" onSubmit={(e) => void onDemoSubmit(e)}>
                 <div className="text-xs font-semibold uppercase tracking-wide text-brand">
-                  Email &amp; password
+                  {signedIn ? "Switch account" : "Email & password"}
                 </div>
                 <div>
                   <label className="label" htmlFor="account-email">
@@ -366,8 +391,9 @@ export function LandingPage() {
                   )}
                   {labOn && (
                     <li>
-                      <strong className="text-ink-muted">Lab account:</strong> host-configured
-                      test login — full app on a persistent disk ledger (not Sheets).
+                      <strong className="text-ink-muted">Lab account:</strong>{" "}
+                      {publicCfg?.lab_email || "host-configured email"} — volume disk ledger
+                      (not Google Sheets). Same app as a real user; use LAB_PASSWORD.
                     </li>
                   )}
                 </ul>

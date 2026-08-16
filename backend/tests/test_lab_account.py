@@ -51,8 +51,8 @@ def test_public_config_lab_flag(lab_env):
         assert body["lab_login_enabled"] is True
         assert "lab_password" not in body
         assert "LAB_PASSWORD" not in str(body)
-        # Email not advertised publicly
-        assert body.get("lab_email") is None
+        # Email is for the landing prefill; password must never appear.
+        assert body.get("lab_email") == "testaccount@o2.pl"
 
 
 def test_lab_login_success_and_writable(lab_env):
@@ -93,6 +93,18 @@ def test_lab_wrong_password(lab_env):
             json={"email": "testaccount@o2.pl", "password": "wrong"},
         )
         assert r.status_code == 401
+
+
+def test_lab_missing_password_is_503(lab_env, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("LAB_PASSWORD", "")
+    get_settings.cache_clear()
+    with _client() as client:
+        r = client.post(
+            "/api/auth/password",
+            json={"email": "testaccount@o2.pl", "password": "lab-secret-pass"},
+        )
+        assert r.status_code == 503
+        assert "LAB_PASSWORD" in r.json()["detail"]
 
 
 def test_lab_disabled(lab_env, monkeypatch: pytest.MonkeyPatch):
@@ -265,12 +277,175 @@ def test_disk_repo_recovers_when_canonical_missing(tmp_path: Path):
     assert canonical.is_file()
 
 
-def test_lab_login_disabled_in_production(lab_env, monkeypatch: pytest.MonkeyPatch):
+def test_lab_login_allowed_on_single_tenant_production(lab_env, monkeypatch: pytest.MonkeyPatch):
     from backend.services.lab_account import lab_login_configured
 
     monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MULTI_TENANT", "false")
     get_settings.cache_clear()
-    assert lab_login_configured(get_settings()) is False
+    assert lab_login_configured(get_settings()) is True
+
+
+def test_lab_login_allowed_on_multitenant_production(lab_env, monkeypatch: pytest.MonkeyPatch):
+    from backend.services.lab_account import lab_login_configured
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MULTI_TENANT", "true")
+    get_settings.cache_clear()
+    assert lab_login_configured(get_settings()) is True
+
+
+def test_lab_password_login_on_mt_production_uses_disk(
+    lab_env: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Railway-shaped host: MT + production + lab password → disk ledger, not Sheets."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MULTI_TENANT", "true")
+    monkeypatch.setenv("MULTI_TENANT_MEMORY_SHEETS", "true")
+    monkeypatch.setenv("CONTROL_DB_PATH", str(lab_env / "control.db"))
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "admin@example.com")
+    get_settings.cache_clear()
+    clear_repo_cache()
+    clear_lab_repos_for_tests()
+
+    with _client() as client:
+        cfg = client.get("/api/auth/public-config")
+        assert cfg.status_code == 200
+        assert cfg.json()["lab_login_enabled"] is True
+        assert cfg.json().get("lab_email") == "testaccount@o2.pl"
+        assert "lab_password" not in cfg.json()
+
+        r = client.post(
+            "/api/auth/password",
+            json={"email": "testaccount@o2.pl", "password": "lab-secret-pass"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["demo_kind"] == "lab"
+        assert r.json()["is_demo"] is True
+
+        st = client.get("/api/sheets/status")
+        assert st.status_code == 200, st.text
+        body = st.json()
+        assert body["backend"] == "disk_memory"
+        assert body.get("demo_kind") == "lab"
+        assert "12l4QhVe" not in str(body.get("spreadsheet_id") or "")
+
+        txs = client.get("/api/transactions", params={"limit": 5})
+        assert txs.status_code == 200
+        assert txs.json()["total"] == 0
+
+        cats = client.get("/api/categories")
+        assert cats.status_code == 200
+        items = cats.json().get("items") if isinstance(cats.json(), dict) else cats.json()
+        assert isinstance(items, list)
+        assert len(items) > 0
+
+
+def test_lab_disk_isolated_from_mt_memory_tenant(
+    lab_env: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """OAuth tenant memory ledger and lab disk ledger must not mix."""
+    from datetime import date, datetime, timezone
+    from decimal import Decimal
+    from uuid import uuid4
+
+    from backend.api.auth import SessionUser, create_session_token
+    from backend.api.deps import get_memory_repo_for_tenant
+    from backend.schema.models import Transaction
+    from backend.services.lab_account import get_lab_repository
+    from backend.tenancy.store import get_control_store, reset_control_store_for_tests
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MULTI_TENANT", "true")
+    monkeypatch.setenv("MULTI_TENANT_MEMORY_SHEETS", "true")
+    monkeypatch.setenv("CONTROL_DB_PATH", str(lab_env / "control.db"))
+    monkeypatch.setenv("PLATFORM_ADMIN_EMAILS", "admin@example.com")
+    get_settings.cache_clear()
+    reset_control_store_for_tests()
+    clear_repo_cache()
+    clear_lab_repos_for_tests()
+
+    store = get_control_store()
+    alice = store.upsert_user_from_oauth(
+        email="alice@example.com",
+        google_sub="sub-alice",
+        name="Alice",
+        picture=None,
+    )
+    sheet = f"mem-{alice.id}"
+    store.set_spreadsheet_id(alice.id, sheet)
+    now = datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)
+    get_memory_repo_for_tenant(sheet).upsert_rows(
+        "Transactions",
+        [
+            Transaction(
+                id=uuid4(),
+                account_id=uuid4(),
+                booking_date=date(2026, 8, 1),
+                amount=Decimal("-5.00"),
+                currency="USD",
+                fee_amount=Decimal("0"),
+                merchant="ONLY_ALICE",
+                description="ONLY_ALICE",
+                source_institution="TestBank",
+                created_at=now,
+                updated_at=now,
+            )
+        ],
+    )
+    get_lab_repository(get_settings()).upsert_rows(
+        "Transactions",
+        [
+            Transaction(
+                id=uuid4(),
+                account_id=uuid4(),
+                booking_date=date(2026, 8, 1),
+                amount=Decimal("-9.00"),
+                currency="USD",
+                fee_amount=Decimal("0"),
+                merchant="ONLY_LAB",
+                description="ONLY_LAB",
+                source_institution="TestBank",
+                created_at=now,
+                updated_at=now,
+            )
+        ],
+    )
+
+    def _merchants(payload: dict) -> set[str]:
+        items = payload.get("items") or payload.get("transactions") or []
+        return {str(t.get("merchant") or "") for t in items}
+
+    with _client() as client:
+        login = client.post(
+            "/api/auth/password",
+            json={"email": "testaccount@o2.pl", "password": "lab-secret-pass"},
+        )
+        assert login.status_code == 200, login.text
+        lab_body = client.get("/api/transactions").json()
+        lab_m = _merchants(lab_body)
+        assert "ONLY_LAB" in lab_m
+        assert "ONLY_ALICE" not in lab_m
+
+        tok = create_session_token(
+            get_settings(),
+            SessionUser(
+                email=alice.email,
+                name="Alice",
+                picture=None,
+                access_token="test-token",
+                refresh_token=None,
+                token_expiry=None,
+                user_id=alice.id,
+                role="user",
+                spreadsheet_id=sheet,
+            ),
+        )
+        client.cookies.set("gf_session", tok)
+        alice_body = client.get("/api/transactions").json()
+        alice_m = _merchants(alice_body)
+        assert "ONLY_ALICE" in alice_m
+        assert "ONLY_LAB" not in alice_m
 
 
 def test_path_is_cloud_synced_detects_icloud():
@@ -290,3 +465,62 @@ def test_cloud_synced_lab_dir_redirects_to_local(monkeypatch: pytest.MonkeyPatch
         lab_data_dir = "data/lab"
 
     assert la.lab_data_dir(S()) == tmp_path / "local-lab"
+
+
+def test_reset_wipes_numbered_copies_and_does_not_recover(lab_env: Path):
+    """Intentional wipe must delete iCloud numbered copies, not just ledger.json."""
+    from datetime import date, datetime, timezone
+    from decimal import Decimal
+    from uuid import uuid4
+
+    from backend.schema.models import Transaction
+    from backend.services.lab_account import (
+        ensure_lab_seeded,
+        get_lab_repository,
+        reset_lab_ledger,
+    )
+
+    settings = get_settings()
+    repo = ensure_lab_seeded(settings)
+    now = datetime.now(timezone.utc)
+    repo.upsert_rows(
+        "Transactions",
+        [
+            Transaction(
+                id=uuid4(),
+                account_id=uuid4(),
+                booking_date=date(2026, 1, 2),
+                amount=Decimal("-10.00"),
+                currency="USD",
+                fee_amount=Decimal("0"),
+                description="wipe-me",
+                merchant="Old Life",
+                source_institution="Revolut",
+                archived=False,
+                created_at=now,
+                updated_at=now,
+            )
+        ],
+    )
+    lab_dir = lab_env / "lab"
+    canonical = lab_dir / "ledger.json"
+    numbered = lab_dir / "ledger 3.json"
+    assert canonical.is_file()
+    numbered.write_bytes(canonical.read_bytes())
+    assert len(repo.list_rows("Transactions")) == 1
+
+    result = reset_lab_ledger(settings, dry_run=False)
+    assert result["ok"] is True
+    assert result["after"]["Transactions"] == 0
+    assert result["after"]["InvestmentLots"] == 0
+    assert result["after"]["InvestmentEvents"] == 0
+    assert result["after"]["StatementFiles"] == 0
+    assert int(result["after"]["Categories"]) > 0
+    assert not numbered.is_file()
+    assert "ledger 3.json" in (result.get("deleted") or [])
+
+    clear_lab_repos_for_tests()
+    clean = get_lab_repository(settings)
+    assert len(clean.list_rows("Transactions")) == 0
+    names = {str(getattr(c, "name", "")) for c in clean.list_rows("Categories")}
+    assert "Groceries" in names or len(names) > 0

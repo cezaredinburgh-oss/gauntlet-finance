@@ -104,8 +104,8 @@ class Settings(BaseSettings):
     demo_tour_enabled: bool = False  # env DEMO_TOUR_ENABLED — synthetic read-only sample
     demo_sandbox_max_active: int = 50  # env DEMO_SANDBOX_MAX_ACTIVE
 
-    # Lab test account: full writable new-user surface, disk-backed ledger (not Sheets).
-    # Survives logout and process restarts. Off until LAB_PASSWORD is set.
+    # Lab tester: full writable new-user surface, disk/volume ledger (not Sheets).
+    # Survives logout and process restarts. On when LAB_LOGIN_ENABLED + LAB_PASSWORD.
     lab_login_enabled: bool = False  # env LAB_LOGIN_ENABLED
     lab_email: str = "testaccount@o2.pl"  # env LAB_EMAIL
     lab_password: str = ""  # env LAB_PASSWORD — never commit real secrets

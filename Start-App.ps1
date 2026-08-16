@@ -322,7 +322,9 @@ try {
 
     Write-Log ("API ready http://127.0.0.1:{0}" -f $ApiPort)
     Write-Log ("UI ready  http://127.0.0.1:{0}" -f $UiPort)
-    Start-Process ("http://localhost:{0}{1}" -f $UiPort, $openPath)
+    # Same host Vite binds (127.0.0.1). localhost can be IPv6 (::1) and a
+    # different cookie jar, which hides lab login behind open-auth Dev User.
+    Start-Process ("http://127.0.0.1:{0}{1}" -f $UiPort, $openPath)
     Write-Log "Browser opened."
 
     # Stay alive (hidden) so stdout/stderr drain jobs keep working.

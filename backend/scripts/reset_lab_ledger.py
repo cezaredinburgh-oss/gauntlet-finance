@@ -5,8 +5,9 @@ Usage (repo root)::
     python -m backend.scripts.reset_lab_ledger --dry-run
     python -m backend.scripts.reset_lab_ledger
 
-Wipes ``LAB_DATA_DIR/ledger.json`` and re-seeds public categories only.
-Does not touch Google Sheets or the owner ledger.
+Wipes every ``ledger*.json`` in the lab data dir (canonical + numbered
+iCloud copies) and re-seeds public categories only.
+Does not touch Google Sheets, the owner ledger, or the iCloud archive.
 """
 
 from __future__ import annotations

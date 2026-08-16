@@ -147,15 +147,20 @@ def authenticate_password_login(
 
     lab_email = normalize_email(settings.lab_email) or "testaccount@o2.pl"
     lab_pw = (settings.lab_password or "").strip()
-    if settings.lab_login_enabled and lab_pw and _email_eq(got_email, lab_email):
-        if not lab_login_configured(settings):
+    if _email_eq(got_email, lab_email) and settings.lab_login_enabled:
+        if lab_login_configured(settings):
+            if _secret_ok(pw, lab_pw):
+                return ensure_lab_session(settings)
+            raise DemoAuthError("Invalid email or password.")
+        if not lab_pw:
             raise DemoAuthError(
                 "Lab login is not configured (set LAB_PASSWORD).",
                 status_code=503,
             )
-        if _secret_ok(pw, lab_pw):
-            return ensure_lab_session(settings)
-        raise DemoAuthError("Invalid email or password.")
+        raise DemoAuthError(
+            "Lab login is disabled on this host.",
+            status_code=403,
+        )
 
     # --- Owner: real Google Sheet (single-tenant only) ---
     owner_email = normalize_email(settings.owner_email)

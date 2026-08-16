@@ -250,6 +250,9 @@ async def me(
 async def public_auth_config(settings: SettingsDep) -> dict:
     """Unauthenticated flags for the landing page (no secrets)."""
     # In AUTH_MODE=dev the API always returns a session — demo/Google login UIs are secondary.
+    from backend.services.lab_account import lab_login_configured
+
+    _lab_on = lab_login_configured(settings)
     return {
         "auth_mode": settings.auth_mode,
         "multi_tenant": settings.multi_tenant,
@@ -263,9 +266,11 @@ async def public_auth_config(settings: SettingsDep) -> dict:
         ),
         "demo_sandbox_enabled": bool(settings.demo_sandbox_enabled),
         "demo_tour_enabled": bool(settings.demo_tour_enabled),
-        # Lab: password form on landing when enabled; email not advertised.
-        "lab_login_enabled": bool(
-            settings.lab_login_enabled and (settings.lab_password or "").strip()
+        # Lab: local test principal only (off in production). Email is for the
+        # landing form prefill — never send LAB_PASSWORD.
+        "lab_login_enabled": _lab_on,
+        "lab_email": (
+            (settings.lab_email or "testaccount@o2.pl").strip().lower() if _lab_on else None
         ),
         # Owner password is single-tenant only (blocked under MULTI_TENANT).
         # Do not expose owner_email publicly (reduces targeted guessing).

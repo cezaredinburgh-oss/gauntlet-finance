@@ -189,6 +189,24 @@ export function resetDemoOnboarding(kind: DemoOnboardingKind): OnboardingState {
   return next;
 }
 
+const EMPTY_LAB_CLIENT_KEYS = [
+  "gauntlet.newet.categorize_wizard",
+  "gauntlet.grokplus.session",
+  "gauntlet.alerts.seen.v3",
+] as const;
+
+/** Empty lab ledger should feel like a brand-new user (wizard + onboarding). */
+export function resetEmptyLabClientState(): OnboardingState {
+  for (const key of EMPTY_LAB_CLIENT_KEYS) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* private mode */
+    }
+  }
+  return resetDemoOnboarding("lab");
+}
+
 export function shouldForceDemoOnboarding(opts: {
   isDemo?: boolean | null;
   demoKind?: string | null;
