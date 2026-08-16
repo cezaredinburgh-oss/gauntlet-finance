@@ -318,7 +318,7 @@ def vendor_suggest_plus(
         hint=body.hint,
         date_from="",
         date_to="",
-        sandbox=False,
+        sandbox=_is_writable_sandbox(user),
         web_search=False,
         plus=True,
     )
@@ -345,7 +345,7 @@ def vendor_suggest(
         hint=body.hint,
         date_from="",
         date_to="",
-        sandbox=False,
+        sandbox=_is_writable_sandbox(user),
         web_search=True,
     )
     return _suggest_response(result)

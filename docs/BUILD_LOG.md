@@ -15,6 +15,7 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 - Lab password login is allowed on multi-tenant production when `LAB_*` is set. Storage is the Railway volume (`/data/lab`), not a shared Sheets tenant. OAuth users stay isolated.
 - `POST /api/lab/reset` (confirm `WIPE LAB`) wipes the lab ledger **in the running API process** so Railway `/data/lab` can be emptied. Local CLI reset never touched that volume.
 - Railway `LAB_DATA_DIR` had been set to the literal `LAB_DATA_DIR=/data/lab`, so lab wrote `/app/LAB_DATA_DIR=/data/lab` (empty) while the real 14,657-tx ledger sat on the volume. Env is now `/data/lab`; parser strips a pasted `KEY=` prefix and prefers the `/data` volume. Volume wiped in-process (0 txs).
+- Grok+ (`/ai/vendor-suggest-plus`) hardcoded `sandbox=False`, so lab on Railway (no `AI_ENABLED` / `XAI_API_KEY`) hard-failed. Plus/vendor-suggest now use the same writable-sandbox flag as categorize-suggest.
 
 ---
 

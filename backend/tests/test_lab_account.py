@@ -548,6 +548,58 @@ def test_lab_reset_api_dry_run_and_wipe(lab_env: Path):
         assert client.get("/api/transactions").json()["total"] == 0
 
 
+def test_lab_grok_plus_uses_sandbox_fallback_without_key(
+    lab_env: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Ask Grok+ on lab must not hard-fail when Railway has no XAI_API_KEY."""
+    monkeypatch.setenv("AI_ENABLED", "false")
+    monkeypatch.setenv("XAI_API_KEY", "")
+    monkeypatch.setenv("AI_SANDBOX_FALLBACK", "true")
+    get_settings.cache_clear()
+
+    from datetime import date, datetime, timezone
+    from decimal import Decimal
+    from uuid import uuid4
+
+    from backend.schema.models import Transaction
+    from backend.services.lab_account import get_lab_repository
+
+    now = datetime.now(timezone.utc)
+    get_lab_repository(get_settings()).upsert_rows(
+        "Transactions",
+        [
+            Transaction(
+                id=uuid4(),
+                account_id=uuid4(),
+                booking_date=date(2026, 1, 2),
+                amount=Decimal("-12.00"),
+                currency="CZK",
+                fee_amount=Decimal("0"),
+                merchant="Lidl Praha",
+                description="Lidl Praha",
+                source_institution="Revolut",
+                created_at=now,
+                updated_at=now,
+            )
+        ],
+    )
+
+    with _client() as client:
+        login = client.post(
+            "/api/auth/password",
+            json={"email": "testaccount@o2.pl", "password": "lab-secret-pass"},
+        )
+        assert login.status_code == 200, login.text
+        st = client.get("/api/ai/status")
+        assert st.status_code == 200, st.text
+        assert st.json()["configured"] is True
+        plus = client.post("/api/ai/vendor-suggest-plus", json={"limit": 12})
+        assert plus.status_code == 200, plus.text
+        body = plus.json()
+        assert body["configured"] is True
+        assert body.get("model") == "sandbox-heuristic"
+
+
 def test_lab_reset_api_forbidden_for_other_user(lab_env: Path):
     from backend.api.auth import SessionUser, create_session_token
 

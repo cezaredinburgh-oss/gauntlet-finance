@@ -75,6 +75,8 @@ Or use wizard step **Deploy → Generate env vars**.
 
 Wipe the **host you are signed into** (in-process, so Railway hits the volume): Settings → Wipe lab ledger, or `POST /api/lab/reset` with `{ "confirm": "WIPE LAB" }`. A Windows CLI reset does not empty the Railway volume.
 
+**Grok+:** set `AI_ENABLED=true` and `XAI_API_KEY` on the host (never commit the key). Lab/sandbox can fall back to local heuristics if the key is missing; real leftover Grok+ matching needs the key.
+
 ### Public demos (marketing)
 
 | Variable | Effect |
