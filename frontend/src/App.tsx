@@ -17,7 +17,7 @@ import { InvestmentsPageGate } from "./pages/InvestmentsPageGate";
 import { InvestmentsAnalysisPageGate } from "./pages/InvestmentsAnalysisPageGate";
 import { InvestmentsDcaPageGate } from "./pages/InvestmentsDcaPageGate";
 import { TaxPageGate } from "./pages/TaxPageGate";
-import { AlertsPage } from "./pages/AlertsPage";
+import { AlertsPageGate } from "./pages/AlertsPageGate";
 import { UploadPageGate } from "./pages/UploadPageGate";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ChartPopoutPage } from "./pages/ChartPopoutPage";
@@ -174,7 +174,7 @@ export default function App() {
                 />
               }
             />
-            <Route path="alerts" element={<AlertsPage />} />
+            <Route path="alerts" element={<AlertsPageGate />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
