@@ -21,7 +21,9 @@ import {
 } from "../features/investments";
 import { HoldingsDeskTotals } from "../features/investments/next/HoldingsDeskTotals";
 import { HoldingsHonestyStrip } from "../features/investments/next/HoldingsHonestyStrip";
+import { HoldingsLotsSection } from "../features/investments/next/HoldingsLotsSection";
 import { HoldingsTableNext } from "../features/investments/next/HoldingsTableNext";
+import { useTickerLots } from "../features/investments/next/useTickerLots";
 
 function defaultChartScope(tickers: TickerDigest[]): ChartScope | null {
   if (tickers.length > 0) return { kind: "all" };
@@ -189,6 +191,13 @@ export function InvestmentsPageNext() {
     [digests, selectedTicker],
   );
 
+  const {
+    summary: lotSummary,
+    loading: lotsLoading,
+    error: lotsError,
+    retry: retryLots,
+  } = useTickerLots(selectedTicker);
+
   const chartDigests = useMemo(
     () => [...digests].sort((a, b) => comparePerformance(a, b, performanceMode)),
     [digests, performanceMode],
@@ -293,21 +302,29 @@ export function InvestmentsPageNext() {
                   />
                 </div>
                 {selectedDigest ? (
-                  <HoldingsDetailPanel
-                    digest={selectedDigest}
-                    copied={copied}
-                    onCopy={async () => {
-                      try {
-                        await navigator.clipboard.writeText(
-                          formatQty(selectedDigest.quantity_total),
-                        );
-                        setCopied(true);
-                        setTimeout(() => setCopied(false), 1500);
-                      } catch {
-                        /* ignore */
-                      }
-                    }}
-                  />
+                  <div className="space-y-3">
+                    <HoldingsDetailPanel
+                      digest={selectedDigest}
+                      copied={copied}
+                      onCopy={async () => {
+                        try {
+                          await navigator.clipboard.writeText(
+                            formatQty(selectedDigest.quantity_total),
+                          );
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 1500);
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                    />
+                    <HoldingsLotsSection
+                      summary={lotSummary}
+                      loading={lotsLoading}
+                      error={lotsError}
+                      onRetry={retryLots}
+                    />
+                  </div>
                 ) : (
                   <div className="card flex min-h-[12rem] items-center justify-center p-6 text-sm text-ink-faint">
                     Select a holding to verify quantities
