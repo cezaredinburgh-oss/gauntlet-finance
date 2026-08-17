@@ -13,10 +13,10 @@ import {
   type HoldingsAssetFilter,
   type HoldingsSortMode,
   HoldingsDetailPanel,
-  InvestmentsPageShell,
   PositionHistoryChart,
   type ChartScope,
 } from "../features/investments";
+import { InvestmentsNextChrome } from "../features/investments/lab-chrome/InvestmentsNextChrome";
 import { HoldingsDeskTotals } from "../features/investments/next/HoldingsDeskTotals";
 import { HoldingsHonestyStrip } from "../features/investments/next/HoldingsHonestyStrip";
 import { HoldingsLotsSection } from "../features/investments/next/HoldingsLotsSection";
@@ -206,23 +206,15 @@ export function InvestmentsPageNext() {
 
   if (loading && !digestsResponse) {
     return (
-      <InvestmentsPageShell
-        active="holdings"
-        title="Investments"
-        subtitle="Verify holdings · digest book · live chart"
-      >
+      <InvestmentsNextChrome active="holdings">
         <PageLoader label="Loading investments…" />
-      </InvestmentsPageShell>
+      </InvestmentsNextChrome>
     );
   }
 
   if (error && !digestsResponse) {
     return (
-      <InvestmentsPageShell
-        active="holdings"
-        title="Investments"
-        subtitle="Verify holdings · digest book · live chart"
-      >
+      <InvestmentsNextChrome active="holdings">
         <EmptyState
           title="Couldn’t load investments"
           description={error}
@@ -232,16 +224,12 @@ export function InvestmentsPageNext() {
             </button>
           }
         />
-      </InvestmentsPageShell>
+      </InvestmentsNextChrome>
     );
   }
 
   return (
-    <InvestmentsPageShell
-      active="holdings"
-      title="Investments"
-      subtitle="Verify holdings · digest book · live chart"
-    >
+    <InvestmentsNextChrome active="holdings">
       {softError && digestsResponse && (
         <div className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
           Couldn’t refresh marks: {softError}
@@ -342,6 +330,6 @@ export function InvestmentsPageNext() {
           </>
         )
       )}
-    </InvestmentsPageShell>
+    </InvestmentsNextChrome>
   );
 }

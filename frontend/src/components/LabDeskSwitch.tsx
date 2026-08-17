@@ -8,14 +8,19 @@ export function LabDeskSwitch({
   desk,
   onSelectDesk,
   label,
+  embedded = false,
 }: {
   desk: LabDesk;
   onSelectDesk: (next: LabDesk) => void;
   label: string;
+  embedded?: boolean;
 }) {
   return (
     <div
-      className="mb-3 flex h-8 w-fit items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-1.5"
+      className={cn(
+        "flex h-8 w-fit items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-1.5",
+        !embedded && "mb-3",
+      )}
       role="group"
       aria-label={label}
     >

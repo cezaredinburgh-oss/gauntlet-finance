@@ -19,7 +19,7 @@ export function AnalysisCapitalHeroNext({
   const staking = snap.staking;
 
   return (
-    <section className="space-y-6 lg:sticky lg:top-12 lg:max-h-[calc(100dvh-4rem)] lg:self-start lg:overflow-y-auto">
+    <section className="space-y-6 lg:sticky lg:top-12 lg:self-start">
       <div className="lg:hidden">
         <AnalysisCapitalBridge snap={snap} monthsPref={monthsPref} />
       </div>

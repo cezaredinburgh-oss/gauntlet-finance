@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import type { PortfolioSnapshot } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
 import { FxUsdCzkChart } from "../components/FxUsdCzkChart";
-import { InvestmentsPageShell } from "../features/investments/InvestmentsPageShell";
+import { InvestmentsNextChrome } from "../features/investments/lab-chrome/InvestmentsNextChrome";
 import { AnalysisCapitalBridge } from "../features/investments/analysis-next/AnalysisCapitalBridge";
 import { AnalysisCapitalHeroNext } from "../features/investments/analysis-next/AnalysisCapitalHeroNext";
 import { AnalysisHonestyStrip } from "../features/investments/analysis-next/AnalysisHonestyStrip";
@@ -80,11 +80,7 @@ export function InvestmentsAnalysisPageNext() {
   const hasCashflow = !!cashflow && cashflow.length > 0;
 
   return (
-    <InvestmentsPageShell
-      active="analysis"
-      title="Investments analysis"
-      subtitle="Statement cash · living draw · fees · staking · stored CNB  (not a return %)"
-    >
+    <InvestmentsNextChrome active="analysis">
       {loading && !snap && <PageLoader label="Loading analysis…" />}
 
       {error && !snap && (
@@ -151,6 +147,6 @@ export function InvestmentsAnalysisPageNext() {
           <AnalysisFxWrap portfolioUsd={snap.total_market_value_usd} />
         </>
       )}
-    </InvestmentsPageShell>
+    </InvestmentsNextChrome>
   );
 }

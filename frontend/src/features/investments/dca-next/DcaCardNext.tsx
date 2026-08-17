@@ -40,7 +40,6 @@ export function DcaCardNext({
   historyAvailable: boolean;
 }) {
   const tone = opportunityTone(item, rankIndex, listLength, historyAvailable);
-  const blockers = item.gate_blockers;
   const threeMTitle = item.high_3m ? `3M high ${formatUsd(item.high_3m)}` : undefined;
   const avg52Title = item.avg_52w ? `52w avg ${formatUsd(item.avg_52w)}` : undefined;
 
@@ -60,15 +59,6 @@ export function DcaCardNext({
             </span>
             <span className="text-[11px] tabular-nums text-ink-faint">
               score {item.score.toFixed(1)}
-            </span>
-            <span
-              className={cn(
-                "rounded-md px-1.5 py-0.5 text-[10px] font-medium",
-                item.eligible ? "bg-ok/15 text-ok" : "bg-white/5 text-ink-faint",
-              )}
-              title={blockers.length > 0 ? blockers.join(", ") : undefined}
-            >
-              {item.eligible ? "alert-eligible" : "display only"}
             </span>
           </div>
 

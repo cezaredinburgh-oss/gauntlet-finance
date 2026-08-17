@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { DcaBoardResponse } from "../api/types";
 import { EmptyState, PageLoader } from "../components/Spinner";
-import { InvestmentsPageShell } from "../features/investments/InvestmentsPageShell";
+import { InvestmentsNextChrome } from "../features/investments/lab-chrome/InvestmentsNextChrome";
 import { DcaBoardNext } from "../features/investments/dca-next/DcaBoardNext";
 import { DcaHonestyStrip } from "../features/investments/dca-next/DcaHonestyStrip";
 
@@ -41,11 +41,7 @@ export function InvestmentsDcaPageNext() {
   const crypto = board?.crypto ?? [];
 
   return (
-    <InvestmentsPageShell
-      active="dca"
-      title="DCA opportunities"
-      subtitle="Planning board · rank ≠ advice"
-    >
+    <InvestmentsNextChrome active="dca">
       {loading && !board && <PageLoader label="Loading DCA board…" />}
 
       {error && !board && (
@@ -74,6 +70,6 @@ export function InvestmentsDcaPageNext() {
           </p>
         </>
       )}
-    </InvestmentsPageShell>
+    </InvestmentsNextChrome>
   );
 }

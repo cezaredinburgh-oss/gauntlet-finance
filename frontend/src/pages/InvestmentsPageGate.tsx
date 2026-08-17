@@ -29,7 +29,7 @@ export function InvestmentsPageGate() {
 
   return (
     <>
-      {isLabSession(user) ? (
+      {isLabSession(user) && desk === "classic" ? (
         <HoldingsDeskSwitch desk={desk} onSelectDesk={onSelectDesk} />
       ) : null}
       {desk === "next" ? (

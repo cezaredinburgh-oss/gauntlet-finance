@@ -1,5 +1,5 @@
 /**
- * Self-test for DCA next tone: missing history cannot paint hot.
+ * Self-test for DCA next tone: color follows rank, not eligibility / history.
  * Run: npx --yes tsx src/features/investments/dca-next/opportunityTone.selftest.ts  (from frontend/)
  */
 import type { DcaOpportunityItem } from "../../../api/types";
@@ -46,15 +46,22 @@ const deepEligible = item({
 assertEq(historyIncomplete(deepEligible, false), true, "offline board is incomplete");
 assertEq(
   opportunityTone(deepEligible, 0, 5, false),
-  "cool",
-  "offline + eligible + deep discount → cool",
+  "hot",
+  "rank 0 stays hot even when history is offline",
 );
 
 assertEq(historyIncomplete(deepEligible, true), false, "priced complete series is complete");
+assertEq(opportunityTone(deepEligible, 0, 5, true), "hot", "rank 0 of 5 → hot");
+assertEq(opportunityTone(deepEligible, 1, 5, true), "hot", "rank 1 of 5 → hot");
+assertEq(opportunityTone(deepEligible, 2, 5, true), "strong", "rank 2 of 5 → strong");
+assertEq(opportunityTone(deepEligible, 3, 5, true), "warm", "rank 3 of 5 → warm");
+assertEq(opportunityTone(deepEligible, 4, 5, true), "cool", "rank 4 of 5 → cool");
+
+const ineligible = item({ eligible: false, gate_blockers: ["cooldown"] });
 assertEq(
-  opportunityTone(deepEligible, 0, 5, true),
+  opportunityTone(ineligible, 0, 5, true),
   "hot",
-  "complete history + eligible + deep → hot",
+  "ineligible #1 is still hot — eligibility is not a color axis",
 );
 
 const nullPullback = item({
@@ -64,15 +71,10 @@ const nullPullback = item({
   below_52w_avg_pct: 10,
 });
 assertEq(historyIncomplete(nullPullback, true), true, "null 3M series is incomplete");
-assertEq(opportunityTone(nullPullback, 0, 5, true), "cool", "null 3M series → cool");
-
-const null52w = item({
-  eligible: true,
-  discount_vs_cost_pct: 30,
-  pullback_pct: 15,
-  below_52w_avg_pct: null,
-});
-assertEq(historyIncomplete(null52w, true), true, "null 52w series is incomplete");
-assertEq(opportunityTone(null52w, 0, 5, true), "cool", "null 52w series → cool");
+assertEq(
+  opportunityTone(nullPullback, 0, 5, true),
+  "hot",
+  "null 3M does not mute a top-rank chip",
+);
 
 console.log("opportunityTone.selftest: ok");

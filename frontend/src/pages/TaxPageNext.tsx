@@ -4,7 +4,7 @@ import { Download } from "lucide-react";
 import { api, API_BASE } from "../api/client";
 import type { TaxReport, TaxYearsSummary } from "../api/types";
 import { PageLoader } from "../components/Spinner";
-import { InvestmentsPageShell } from "../features/investments/InvestmentsPageShell";
+import { InvestmentsNextChrome } from "../features/investments/lab-chrome/InvestmentsNextChrome";
 import { TaxDisposalsTable } from "../features/investments/tax-next/TaxDisposalsTable";
 import { TaxFilingKitLegend } from "../features/investments/tax-next/TaxFilingKitLegend";
 import { TaxGainsChart } from "../features/investments/tax-next/TaxGainsChart";
@@ -101,11 +101,7 @@ export function TaxPageNext() {
   }
 
   return (
-    <InvestmentsPageShell
-      active="tax"
-      title="Tax report"
-      subtitle="On-screen FIFO · not a filing · official use is the pack"
-    >
+    <InvestmentsNextChrome active="tax">
       {error && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
           <span>{error}</span>
@@ -223,6 +219,6 @@ export function TaxPageNext() {
           </p>
         </>
       )}
-    </InvestmentsPageShell>
+    </InvestmentsNextChrome>
   );
 }

@@ -31,7 +31,7 @@ export function InvestmentsAnalysisPageGate() {
 
   return (
     <>
-      {isLabSession(user) ? (
+      {isLabSession(user) && desk === "classic" ? (
         <LabDeskSwitch desk={desk} onSelectDesk={onSelectDesk} label="Analysis desk" />
       ) : null}
       {desk === "next" ? (
