@@ -21,6 +21,10 @@ import { HoldingsDeskTotals } from "../features/investments/next/HoldingsDeskTot
 import { HoldingsHonestyStrip } from "../features/investments/next/HoldingsHonestyStrip";
 import { HoldingsLotsSection } from "../features/investments/next/HoldingsLotsSection";
 import { HoldingsTableNext } from "../features/investments/next/HoldingsTableNext";
+import {
+  applyTableAssetFilter,
+  assetFilterFromChartScope,
+} from "../features/investments/next/syncAssetFilter";
 import { useTickerLots } from "../features/investments/next/useTickerLots";
 
 function defaultChartScope(tickers: TickerDigest[]): ChartScope | null {
@@ -64,11 +68,25 @@ export function InvestmentsPageNext() {
     setChartScope({ kind: "ticker", ticker });
   }
 
+  function onTableAssetFilter(next: HoldingsAssetFilter) {
+    const synced = applyTableAssetFilter(next, {
+      chartScope,
+      selectedTicker,
+      tickers: digestsResponse?.tickers ?? [],
+    });
+    setAssetFilter(synced.assetFilter);
+    setChartScope(synced.chartScope);
+    setSelectedTicker(synced.selectedTicker);
+  }
+
   function onChartScope(scope: ChartScope) {
     setChartScope(scope);
     if (scope.kind === "ticker") {
       setSelectedTicker(scope.ticker);
+      return;
     }
+    const nextFilter = assetFilterFromChartScope(scope);
+    if (nextFilter != null) setAssetFilter(nextFilter);
   }
 
   const loadGen = useRef(0);
@@ -275,8 +293,9 @@ export function InvestmentsPageNext() {
                     performanceMode={performanceMode}
                     onPerformanceMode={setPerformanceModePersist}
                     assetFilter={assetFilter}
-                    onAssetFilter={setAssetFilter}
+                    onAssetFilter={onTableAssetFilter}
                     totalCount={digests.length}
+                    highlightTaxFree={focus === "tax_runway"}
                   />
                 </div>
                 {selectedDigest ? (

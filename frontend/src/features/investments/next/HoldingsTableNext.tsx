@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Layers, Search } from "lucide-react";
 import type { TaxTranche, TickerDigest } from "../../../api/types";
 import { d, formatQty, formatUsd } from "../../../lib/money";
@@ -164,10 +164,21 @@ function HonestMvCell({ t }: { t: TickerDigest }) {
   );
 }
 
-function TaxFreeCell({ t }: { t: TickerDigest }) {
+function TaxFreeCell({
+  t,
+  highlight,
+}: {
+  t: TickerDigest;
+  highlight?: boolean;
+}) {
   const freePct = taxFreeSharePct(t);
   return (
-    <td className="min-w-[5.5rem] px-3 py-2 text-right text-xs">
+    <td
+      className={cn(
+        "min-w-[5.5rem] px-3 py-2 text-right text-xs",
+        highlight && "ring-2 ring-brand/50",
+      )}
+    >
       {freePct != null ? (
         <span
           className={
@@ -186,6 +197,15 @@ function TaxFreeCell({ t }: { t: TickerDigest }) {
   );
 }
 
+function viewForTaxRunwayFocus(
+  stored: HoldingsColumnView,
+  highlightTaxFree: boolean,
+): HoldingsColumnView {
+  // Wealth has no tax-free column; Verify keeps qty visible (do not jump to Tax).
+  if (highlightTaxFree && stored === "wealth") return "verify";
+  return stored;
+}
+
 /**
  * Lab next table. Owns Verify / Wealth / Tax presets + sort so hidden
  * columns cannot remain the active sort key.
@@ -199,6 +219,7 @@ export function HoldingsTableNext({
   assetFilter,
   onAssetFilter,
   totalCount,
+  highlightTaxFree = false,
 }: {
   rows: TickerDigest[];
   selectedTicker: string | null;
@@ -208,15 +229,31 @@ export function HoldingsTableNext({
   assetFilter: HoldingsAssetFilter;
   onAssetFilter: (f: HoldingsAssetFilter) => void;
   totalCount: number;
+  highlightTaxFree?: boolean;
 }) {
-  const [view, setView] = useState<HoldingsColumnView>(() => loadPersistedColumnView());
-  const [sort, setSort] = useState(() =>
-    resolvePersistedSortForView(loadPersistedColumnView()),
+  const [view, setView] = useState<HoldingsColumnView>(() =>
+    viewForTaxRunwayFocus(loadPersistedColumnView(), highlightTaxFree),
   );
+  const [sort, setSort] = useState(() => {
+    const initialView = viewForTaxRunwayFocus(
+      loadPersistedColumnView(),
+      highlightTaxFree,
+    );
+    if (highlightTaxFree) return { column: "unlock" as const, dir: "desc" as const };
+    return resolvePersistedSortForView(initialView);
+  });
   const [tickerQuery, setTickerQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const rowEls = useRef(new Map<string, HTMLTableRowElement>());
+  const taxFocusApplied = useRef(highlightTaxFree);
   const { column: sortColumn, dir: sortDir } = sort;
+
+  useEffect(() => {
+    if (!highlightTaxFree || taxFocusApplied.current) return;
+    taxFocusApplied.current = true;
+    setView((prev) => viewForTaxRunwayFocus(prev, true));
+    setSort({ column: "unlock", dir: "desc" });
+  }, [highlightTaxFree]);
 
   function onView(next: HoldingsColumnView) {
     setView(next);
@@ -481,7 +518,10 @@ export function HoldingsTableNext({
                     dir={sortDir}
                     onSort={onSort}
                     align="right"
-                    className="min-w-[5.5rem] px-3"
+                    className={cn(
+                      "min-w-[5.5rem] px-3",
+                      highlightTaxFree && "ring-2 ring-brand/50",
+                    )}
                     title="Tax-free share of position (MV when priced)"
                   />
                 </>
@@ -579,7 +619,10 @@ export function HoldingsTableNext({
                     dir={sortDir}
                     onSort={onSort}
                     align="right"
-                    className="min-w-[5.5rem] px-3"
+                    className={cn(
+                      "min-w-[5.5rem] px-3",
+                      highlightTaxFree && "ring-2 ring-brand/50",
+                    )}
                     title="Tax-free share of position (MV when priced)"
                   />
                   <SortTh
@@ -689,7 +732,7 @@ export function HoldingsTableNext({
                         <td className="px-2 py-2 text-right tabular-nums text-ink-muted">
                           {formatUsd(t.avg_cost_usd)}
                         </td>
-                        <TaxFreeCell t={t} />
+                        <TaxFreeCell t={t} highlight={highlightTaxFree} />
                       </>
                     ) : null}
                     {view === "wealth" ? (
@@ -742,7 +785,7 @@ export function HoldingsTableNext({
                         <td className="px-2 py-2 text-right tabular-nums font-medium">
                           {formatQty(t.quantity_total)}
                         </td>
-                        <TaxFreeCell t={t} />
+                        <TaxFreeCell t={t} highlight={highlightTaxFree} />
                         <td className="px-2 py-2">
                           <TrancheMiniBar tranches={t.tax_tranches} />
                         </td>
