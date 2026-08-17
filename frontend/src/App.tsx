@@ -12,7 +12,7 @@ import { Layout } from "./components/Layout";
 import { PageLoader } from "./components/Spinner";
 import { DashboardPage } from "./pages/DashboardPage";
 import { NewEtSpendingPageGate } from "./pages/NewEtSpendingPageGate";
-import { NewEtCategorizePage } from "./pages/NewEtCategorizePage";
+import { NewEtCategorizePageGate } from "./pages/NewEtCategorizePageGate";
 import { InvestmentsPageGate } from "./pages/InvestmentsPageGate";
 import { InvestmentsAnalysisPageGate } from "./pages/InvestmentsAnalysisPageGate";
 import { InvestmentsDcaPageGate } from "./pages/InvestmentsDcaPageGate";
@@ -126,7 +126,7 @@ export default function App() {
             <Route path="expenses">
               <Route index element={<Navigate to="spending" replace />} />
               <Route path="spending" element={<NewEtSpendingPageGate />} />
-              <Route path="categorize" element={<NewEtCategorizePage />} />
+              <Route path="categorize" element={<NewEtCategorizePageGate />} />
               <Route
                 path="alerts"
                 element={<Navigate to="/alerts" replace />}
