@@ -16,7 +16,7 @@ import { NewEtCategorizePage } from "./pages/NewEtCategorizePage";
 import { InvestmentsPageGate } from "./pages/InvestmentsPageGate";
 import { InvestmentsAnalysisPageGate } from "./pages/InvestmentsAnalysisPageGate";
 import { InvestmentsDcaPageGate } from "./pages/InvestmentsDcaPageGate";
-import { TaxPage } from "./pages/TaxPage";
+import { TaxPageGate } from "./pages/TaxPageGate";
 import { AlertsPage } from "./pages/AlertsPage";
 import { UploadPage } from "./pages/UploadPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -160,7 +160,7 @@ export default function App() {
             <Route path="investments" element={<InvestmentsPageGate />} />
             <Route path="investments/analysis" element={<InvestmentsAnalysisPageGate />} />
             <Route path="investments/dca" element={<InvestmentsDcaPageGate />} />
-            <Route path="investments/tax" element={<TaxPage />} />
+            <Route path="investments/tax" element={<TaxPageGate />} />
             <Route path="upload" element={<UploadPage />} />
             <Route path="onboarding" element={<OnboardingPage />} />
             <Route path="settings" element={<SettingsPage />} />

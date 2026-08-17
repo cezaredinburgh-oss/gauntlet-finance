@@ -800,6 +800,17 @@ export type TaxDisposal = {
   notes?: string | null;
 };
 
+export type TaxOpenLot = {
+  lot_id: string;
+  quantity_remaining: string;
+  acquisition_date: string;
+  tax_free_on: string;
+  holding_period_days: number;
+  qualifies_3y_exemption: boolean;
+  cost_basis_czk: string;
+  cost_basis_usd: string;
+};
+
 export type TaxOpenPosition = {
   ticker: string;
   total_quantity: string;
@@ -809,6 +820,8 @@ export type TaxOpenPosition = {
   cost_basis_czk: string;
   cost_basis_usd: string;
   native_currency: string;
+  /** Already on GET /tax-report; omitted from the classic page type until now. */
+  lots?: TaxOpenLot[];
 };
 
 export type TaxReport = {
