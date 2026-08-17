@@ -33,7 +33,7 @@ export function AnalysisCapitalHeroNext({
           </p>
         </div>
 
-        <DrawMetricsCard embedded compact />
+        <DrawMetricsCard embedded narrow />
 
         {(fees || staking) && (
           <div className="min-w-0 space-y-6 border-t border-white/10 pt-5">

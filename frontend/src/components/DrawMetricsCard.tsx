@@ -17,10 +17,17 @@ type Props = {
   compact?: boolean;
   /** Nested in a parent hero — no outer card chrome */
   embedded?: boolean;
+  /** Fit a narrow column: stack metrics, wrap note. Does not hide copy. */
+  narrow?: boolean;
   className?: string;
 };
 
-export function DrawMetricsCard({ compact = false, embedded = false, className }: Props) {
+export function DrawMetricsCard({
+  compact = false,
+  embedded = false,
+  narrow = false,
+  className,
+}: Props) {
   const [data, setData] = useState<DrawMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [softUpdating, setSoftUpdating] = useState(false);
@@ -99,18 +106,18 @@ export function DrawMetricsCard({ compact = false, embedded = false, className }
   return (
     <div
       className={cn(
-        "space-y-3",
+        "min-w-0 max-w-full space-y-3",
         embedded ? "p-0" : "card p-5",
         className,
       )}
     >
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
+      <div className="flex min-w-0 w-full items-start gap-2">
+        <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold tracking-wide text-ok">
             Living draw vs safe draw
           </h2>
           {!compact && (
-            <p className="text-xs text-ink-faint">
+            <p className="min-w-0 max-w-full text-pretty text-xs text-ink-faint">
               Trailing 12m investment cash (sells − buys) vs capacity{" "}
               <span className="text-ink-muted">min(4% × MV, tax-free now)</span>
             </p>
@@ -121,7 +128,7 @@ export function DrawMetricsCard({ compact = false, embedded = false, className }
         </div>
         <span
           className={cn(
-            "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1",
+            "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1",
             STATUS_STYLE[status] || STATUS_STYLE["n/a"],
           )}
         >
@@ -129,7 +136,12 @@ export function DrawMetricsCard({ compact = false, embedded = false, className }
         </span>
       </div>
 
-      <div className={cn("grid gap-3", compact ? "sm:grid-cols-2" : "sm:grid-cols-3")}>
+      <div
+        className={cn(
+          "grid min-w-0 gap-3",
+          narrow ? "grid-cols-1" : compact ? "sm:grid-cols-2" : "sm:grid-cols-3",
+        )}
+      >
         <Metric
           label="Living draw (12m)"
           value={formatUsd(living)}
@@ -166,8 +178,10 @@ export function DrawMetricsCard({ compact = false, embedded = false, className }
         <BarRow label="Safe capacity" widthPct={safeW} color="bg-brand" />
       </div>
 
-      {!compact && (
-        <p className="text-[11px] leading-relaxed text-ink-faint">{data.note}</p>
+      {!compact && data.note && (
+        <p className="min-w-0 max-w-full text-pretty break-words text-[11px] leading-relaxed text-ink-faint">
+          {data.note}
+        </p>
       )}
     </div>
   );
@@ -195,14 +209,18 @@ function Metric({
             ? "text-brand"
             : "text-ink";
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5">
+    <div className="min-w-0 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5">
       <div className="text-[10px] font-medium uppercase tracking-wide text-ink-faint">
         {label}
       </div>
-      <div className={cn("mt-0.5 text-base font-semibold tabular-nums", toneCls)}>
+      <div className={cn("mt-0.5 break-all text-base font-semibold tabular-nums", toneCls)}>
         {value}
       </div>
-      {sub && <div className="mt-0.5 text-[10px] text-ink-faint">{sub}</div>}
+      {sub && (
+        <div className="mt-0.5 min-w-0 max-w-full text-pretty text-[10px] text-ink-faint">
+          {sub}
+        </div>
+      )}
     </div>
   );
 }
@@ -218,9 +236,9 @@ function BarRow({
 }) {
   return (
     <div>
-      <div className="mb-0.5 flex justify-between text-[10px] text-ink-faint">
-        <span>{label}</span>
-        <span>{widthPct.toFixed(0)}%</span>
+      <div className="mb-0.5 flex min-w-0 justify-between gap-2 text-[10px] text-ink-faint">
+        <span className="min-w-0 truncate">{label}</span>
+        <span className="shrink-0 tabular-nums">{widthPct.toFixed(0)}%</span>
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-white/10">
         <div className={cn("h-full rounded-full", color)} style={{ width: `${widthPct}%` }} />
