@@ -10,7 +10,7 @@ import {
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { Layout } from "./components/Layout";
 import { PageLoader } from "./components/Spinner";
-import { DashboardPageGate } from "./pages/DashboardPageGate";
+import { DashboardPage } from "./pages/DashboardPage";
 import { NewEtSpendingPage } from "./pages/NewEtSpendingPage";
 import { NewEtCategorizePage } from "./pages/NewEtCategorizePage";
 import { InvestmentsPageGate } from "./pages/InvestmentsPageGate";
@@ -121,7 +121,7 @@ export default function App() {
               </Protected>
             }
           >
-            <Route index element={<DashboardPageGate />} />
+            <Route index element={<DashboardPage />} />
             <Route path="dashboard" element={<Navigate to="/" replace />} />
             <Route path="expenses">
               <Route index element={<Navigate to="spending" replace />} />
