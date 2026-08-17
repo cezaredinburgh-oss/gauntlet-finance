@@ -18,7 +18,7 @@ import { InvestmentsAnalysisPageGate } from "./pages/InvestmentsAnalysisPageGate
 import { InvestmentsDcaPageGate } from "./pages/InvestmentsDcaPageGate";
 import { TaxPageGate } from "./pages/TaxPageGate";
 import { AlertsPage } from "./pages/AlertsPage";
-import { UploadPage } from "./pages/UploadPage";
+import { UploadPageGate } from "./pages/UploadPageGate";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ChartPopoutPage } from "./pages/ChartPopoutPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
@@ -161,7 +161,7 @@ export default function App() {
             <Route path="investments/analysis" element={<InvestmentsAnalysisPageGate />} />
             <Route path="investments/dca" element={<InvestmentsDcaPageGate />} />
             <Route path="investments/tax" element={<TaxPageGate />} />
-            <Route path="upload" element={<UploadPage />} />
+            <Route path="upload" element={<UploadPageGate />} />
             <Route path="onboarding" element={<OnboardingPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="transactions" element={<RedirectPreserveSearch to="/expenses/categorize" />} />
