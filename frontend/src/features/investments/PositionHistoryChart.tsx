@@ -483,297 +483,294 @@ export function PositionHistoryChart({
       )}
     >
       {/*
-        Title left · values always top-right (ml-auto).
-        Portfolio legs make the block wider; without ml-auto flex-wrap parks it on the left.
-        Same layout for embedded + popout variants.
+        Two rows so a 2xl last-price cannot overflow Pop out in the narrow column.
+        Values stay ml-auto / justify-end so Portfolio legs do not park left of the title.
       */}
-      <div
-        className={cn(
-          "flex w-full items-start gap-2 sm:gap-3",
-          isPopout && "shrink-0",
-        )}
-      >
-        <div className="min-w-0 max-w-full flex-1 basis-[12rem]">
-          <h2 className={cn("font-semibold", isPopout ? "text-xs sm:text-sm" : "text-sm")}>
-            {isPopout ? "Live chart · " : "Price history · "}
-            {title}
-          </h2>
-          <p className={cn("text-ink-faint", isPopout ? "text-[10px] sm:text-xs" : "text-xs")}>
-            {scope.kind === "ticker"
-              ? intraday
-                ? data?.meta?.session_status === "prior_session"
-                  ? "Prior session · waiting for today’s open · Yahoo 5m path"
+      <div className={cn("flex w-full min-w-0 flex-col gap-2", isPopout && "shrink-0")}>
+        <div className="flex w-full min-w-0 items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <h2 className={cn("font-semibold", isPopout ? "text-xs sm:text-sm" : "text-sm")}>
+              {isPopout ? "Live chart · " : "Price history · "}
+              {title}
+            </h2>
+            <p className={cn("text-ink-faint", isPopout ? "text-[10px] sm:text-xs" : "text-xs")}>
+              {scope.kind === "ticker"
+                ? intraday
+                  ? data?.meta?.session_status === "prior_session"
+                    ? "Prior session · waiting for today’s open · Yahoo 5m path"
+                    : data?.meta?.session_status === "last_24h"
+                      ? "Last 24h · Yahoo 5m path (not desk book)"
+                      : "US regular session · Yahoo 5m path (not desk book)"
+                  : "Daily close (USD) · avg cost from open lots"
+                : data?.meta?.session_status === "prior_session"
+                  ? "Prior session · waiting for today’s open · Yahoo path"
                   : data?.meta?.session_status === "last_24h"
-                    ? "Last 24h · Yahoo 5m path (not desk book)"
-                    : "US regular session · Yahoo 5m path (not desk book)"
-                : "Daily close (USD) · avg cost from open lots"
-              : data?.meta?.session_status === "prior_session"
-                ? "Prior session · waiting for today’s open · Yahoo path"
-                : data?.meta?.session_status === "last_24h"
-                  ? scope.kind === "all"
-                    ? "Last 24h · Yahoo 5m path · desk book is the executive total"
-                    : "Last 24h · Yahoo path · desk book shown separately"
-                  : data?.meta?.session_status === "regular"
-                    ? "US regular session · Yahoo path · desk book shown separately"
-                    : "Holdings as of each day × market prices · free Yahoo data"}
-            {showTrades ? " · buy/sell markers" : ""}
-            {range === "1d" && " · auto-refresh 60s"}
-          </p>
-        </div>
-        <div className="ml-auto flex shrink-0 flex-wrap items-start justify-end gap-2 sm:gap-3">
-          {last && (
-            <div className="flex items-start justify-end gap-2 text-right">
-              <div className="min-w-0">
-                <div className="text-[11px] uppercase tracking-wide text-ink-faint">
-                  {range === "1d"
-                    ? isPrice
-                      ? "Chart last"
-                      : "Chart MV"
-                    : isPrice
-                      ? "Last price"
-                      : "Market value"}
-                </div>
-                <div
-                  className={cn(
-                    "font-semibold tabular-nums tracking-tight text-brand",
-                    isPopout ? "text-xl sm:text-2xl" : "text-2xl sm:text-3xl",
-                  )}
-                >
-                  {fmt(last.value)}
-                </div>
-                {range === "1d" &&
-                  (() => {
-                    const bookRaw = isPrice
-                      ? data?.meta?.book_price_usd
-                      : data?.meta?.book_market_value_usd;
-                    if (bookRaw == null || bookRaw === "") return null;
-                    const bookN = d(bookRaw);
-                    const pathN = last.value;
-                    const delta =
-                      data?.meta?.book_vs_path_abs != null
-                        ? d(data.meta.book_vs_path_abs)
-                        : pathN - bookN;
-                    return (
-                      <div
-                        className="mt-0.5 max-w-[16rem] text-[11px] leading-snug text-ink-faint"
-                        title="Desk book uses Prices-tab marks × open lots (same as Home portfolio). Chart tip is the last Yahoo 5m bar on the path — they can differ without either being wrong."
-                      >
-                        <span className="text-ink-muted">Desk book </span>
-                        <span className="tabular-nums text-ink-muted">
-                          {isPrice ? formatPrice(bookN) : formatUsd(bookN)}
-                        </span>
-                        <span className="text-ink-faint">
-                          {" "}
-                          · path Δ{" "}
-                          <span
-                            className={cn(
-                              "tabular-nums",
-                              delta >= 0 ? "text-ok/80" : "text-danger/80",
-                            )}
-                          >
-                            {delta >= 0 ? "+" : ""}
-                            {isPrice ? formatPrice(delta) : formatUsd(delta)}
-                          </span>
-                        </span>
-                      </div>
-                    );
-                  })()}
-                {primaryAbs != null && (
-                  <div
-                    className={cn(
-                      "font-medium tabular-nums",
-                      isPopout ? "text-xs sm:text-sm" : "text-sm",
-                      primaryAbs >= 0 ? "text-ok" : "text-danger",
-                    )}
-                    title={headline.primaryTitle}
-                  >
-                    {primaryAbs >= 0 ? "+" : ""}
-                    {fmt(primaryAbs)}
-                    {primaryPct != null && (
-                      <span>
-                        {" "}
-                        ({primaryPct >= 0 ? "+" : ""}
-                        {primaryPct.toFixed(1)}%)
-                      </span>
-                    )}
-                    <span className="font-normal text-ink-faint">
-                      {" "}
-                      {headline.primaryLabel}
-                    </span>
-                  </div>
-                )}
-                {headline.performanceUnavailable && (
-                  <div className="text-[11px] text-ink-faint">
-                    Performance unavailable for this window
-                  </div>
-                )}
-                {headline.secondary && (
-                  <div
-                    className="mt-0.5 space-y-0.5 text-[11px] tabular-nums text-ink-faint"
-                    title={
-                      headline.secondary.otherTitle +
-                      ". Cash/qty effect is market value Δ minus performance (buys/sells and residual)."
-                    }
-                  >
-                    <div>
-                      {headline.secondary.otherAbs != null && (
-                        <span
-                          className={cn(
-                            headline.secondary.otherAbs >= 0 ? "text-ok" : "text-danger",
-                          )}
-                        >
-                          {headline.secondary.otherLabel}{" "}
-                          {headline.secondary.otherAbs >= 0 ? "+" : ""}
-                          {formatUsd(headline.secondary.otherAbs)}
-                        </span>
-                      )}
-                      {headline.secondary.otherPct != null && (
-                        <span>
-                          {" "}
-                          ({headline.secondary.otherPct >= 0 ? "+" : ""}
-                          {headline.secondary.otherPct.toFixed(1)}%)
-                        </span>
-                      )}
-                      {headline.secondary.netCapitalAbs != null && (
-                        <span>
-                          {" · Cash/qty effect "}
-                          {headline.secondary.netCapitalAbs >= 0 ? "+" : ""}
-                          {formatUsd(headline.secondary.netCapitalAbs)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {scope.kind === "all" && (stockWin != null || cryptoWin != null) && (
-                  <div className="mt-0.5 space-y-0.5 text-right">
-                    <div className="flex flex-wrap justify-end gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-ink-faint">
-                      {stockWin != null && (
-                        <span
-                          className={cn(
-                            stockWin >= 0 ? "text-ok" : "text-danger",
-                          )}
-                          title={
-                            bookMode
-                              ? range === "1d"
-                                ? "Stocks market value Δ this session (leg; may not match headline on 1D)"
-                                : "Stocks market value Δ over this range"
-                              : range === "1d"
-                                ? "Stocks US session performance (leg; not the chart headline on 1D)"
-                                : "Stocks performance over this range"
-                          }
-                        >
-                          Stocks
-                          {range === "1d"
-                            ? bookMode
-                              ? " (session MV)"
-                              : " (session)"
-                            : bookMode
-                              ? " MV Δ"
-                              : " performance"}{" "}
-                          {stockWin >= 0 ? "+" : ""}
-                          {formatUsd(stockWin)}
-                          {stockWinPct != null && (
-                            <span className="text-ink-faint">
-                              {" "}
-                              ({stockWinPct >= 0 ? "+" : ""}
-                              {stockWinPct.toFixed(1)}%)
-                            </span>
-                          )}
-                        </span>
-                      )}
-                      {cryptoWin != null && (
-                        <span
-                          className={cn(
-                            cryptoWin >= 0 ? "text-ok" : "text-danger",
-                          )}
-                          title={
-                            bookMode
-                              ? range === "1d"
-                                ? "Crypto market value Δ last 24h (leg; may not match headline on 1D)"
-                                : "Crypto market value Δ over this range"
-                              : range === "1d"
-                                ? "Crypto last-24h performance (leg; not the chart headline on 1D)"
-                                : "Crypto performance over this range"
-                          }
-                        >
-                          Crypto
-                          {range === "1d"
-                            ? bookMode
-                              ? " (24h MV)"
-                              : " (24h)"
-                            : bookMode
-                              ? " MV Δ"
-                              : " performance"}{" "}
-                          {cryptoWin >= 0 ? "+" : ""}
-                          {formatUsd(cryptoWin)}
-                          {cryptoWinPct != null && (
-                            <span className="text-ink-faint">
-                              {" "}
-                              ({cryptoWinPct >= 0 ? "+" : ""}
-                              {cryptoWinPct.toFixed(1)}%)
-                            </span>
-                          )}
-                        </span>
-                      )}
-                    </div>
-                    {range === "1d" && (
-                      <p className="max-w-[16rem] text-[10px] leading-snug text-ink-faint/90">
-                        Session legs use stock RTH + crypto 24h; may not sum to the chart
-                        above.
-                      </p>
-                    )}
-                  </div>
-                )}
-                {dayPct != null && range !== "1d" && (
-                  <div
-                    className={cn(
-                      "text-xs tabular-nums",
-                      dayPositive ? "text-ok" : "text-danger",
-                    )}
-                  >
-                    Today{" "}
-                    {dayAbs != null && (
-                      <span>
-                        {dayAbs >= 0 ? "+" : ""}
-                        {fmt(dayAbs)}{" "}
-                      </span>
-                    )}
-                    ({dayPct >= 0 ? "+" : ""}
-                    {dayPct.toFixed(1)}%)
-                  </div>
-                )}
-                {costRef != null && (
-                  <div className="text-sm text-ink-muted">
-                    {isPrice ? "Avg cost " : "Cost basis "}
-                    <span className="font-medium tabular-nums text-ink">
-                      {fmt(costRef)}
-                    </span>
-                  </div>
-                )}
-              </div>
-              {/* Reserved width so soft refresh does not reflow the chart */}
-              <span
-                className={cn(
-                  "mt-5 w-[4.25rem] shrink-0 text-left text-[11px] leading-tight text-ink-faint",
-                  softUpdating ? "visible" : "invisible",
-                )}
-                aria-live="polite"
-              >
-                Updating…
-              </span>
-            </div>
+                    ? scope.kind === "all"
+                      ? "Last 24h · Yahoo 5m path · desk book is the executive total"
+                      : "Last 24h · Yahoo path · desk book shown separately"
+                    : data?.meta?.session_status === "regular"
+                      ? "US regular session · Yahoo path · desk book shown separately"
+                      : "Holdings as of each day × market prices · free Yahoo data"}
+              {showTrades ? " · buy/sell markers" : ""}
+              {range === "1d" && " · auto-refresh 60s"}
+            </p>
+          </div>
+          {showPopOut && (
+            <button
+              type="button"
+              title="Open chart in a separate window"
+              onClick={() => openChartPopout(scope, range)}
+              className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-lg bg-white/5 px-2.5 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-white/10 hover:text-ink"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Pop out
+            </button>
           )}
         </div>
-        {showPopOut && (
-          <button
-            type="button"
-            title="Open chart in a separate window"
-            onClick={() => openChartPopout(scope, range)}
-            className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-lg bg-white/5 px-2.5 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-white/10 hover:text-ink"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            Pop out
-          </button>
+        {last && (
+          <div className="ml-auto flex w-full min-w-0 flex-wrap items-start justify-end text-right">
+            <div className="relative min-w-0">
+              <div
+                className={cn(
+                  "text-[11px] uppercase tracking-wide text-ink-faint",
+                  softUpdating && "invisible",
+                )}
+              >
+                {range === "1d"
+                  ? isPrice
+                    ? "Chart last"
+                    : "Chart MV"
+                  : isPrice
+                    ? "Last price"
+                    : "Market value"}
+              </div>
+              <div
+                className={cn(
+                  "font-semibold tabular-nums tracking-tight text-brand",
+                  isPopout ? "text-2xl sm:text-3xl" : "text-xl sm:text-2xl",
+                )}
+              >
+                {fmt(last.value)}
+              </div>
+              {range === "1d" &&
+                (() => {
+                  const bookRaw = isPrice
+                    ? data?.meta?.book_price_usd
+                    : data?.meta?.book_market_value_usd;
+                  if (bookRaw == null || bookRaw === "") return null;
+                  const bookN = d(bookRaw);
+                  const pathN = last.value;
+                  const delta =
+                    data?.meta?.book_vs_path_abs != null
+                      ? d(data.meta.book_vs_path_abs)
+                      : pathN - bookN;
+                  return (
+                    <div
+                      className="mt-0.5 max-w-[16rem] text-[11px] leading-snug text-ink-faint"
+                      title="Desk book uses Prices-tab marks × open lots (same as Home portfolio). Chart tip is the last Yahoo 5m bar on the path — they can differ without either being wrong."
+                    >
+                      <span className="text-ink-muted">Desk book </span>
+                      <span className="tabular-nums text-ink-muted">
+                        {isPrice ? formatPrice(bookN) : formatUsd(bookN)}
+                      </span>
+                      <span className="text-ink-faint">
+                        {" "}
+                        · path Δ{" "}
+                        <span
+                          className={cn(
+                            "tabular-nums",
+                            delta >= 0 ? "text-ok/80" : "text-danger/80",
+                          )}
+                        >
+                          {delta >= 0 ? "+" : ""}
+                          {isPrice ? formatPrice(delta) : formatUsd(delta)}
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })()}
+              {primaryAbs != null && (
+                <div
+                  className={cn(
+                    "font-medium tabular-nums",
+                    isPopout ? "text-xs sm:text-sm" : "text-sm",
+                    primaryAbs >= 0 ? "text-ok" : "text-danger",
+                  )}
+                  title={headline.primaryTitle}
+                >
+                  {primaryAbs >= 0 ? "+" : ""}
+                  {fmt(primaryAbs)}
+                  {primaryPct != null && (
+                    <span>
+                      {" "}
+                      ({primaryPct >= 0 ? "+" : ""}
+                      {primaryPct.toFixed(1)}%)
+                    </span>
+                  )}
+                  <span className="font-normal text-ink-faint">
+                    {" "}
+                    {headline.primaryLabel}
+                  </span>
+                </div>
+              )}
+              {headline.performanceUnavailable && (
+                <div className="text-[11px] text-ink-faint">
+                  Performance unavailable for this window
+                </div>
+              )}
+              {headline.secondary && (
+                <div
+                  className="mt-0.5 space-y-0.5 text-[11px] tabular-nums text-ink-faint"
+                  title={
+                    headline.secondary.otherTitle +
+                    ". Cash/qty effect is market value Δ minus performance (buys/sells and residual)."
+                  }
+                >
+                  <div>
+                    {headline.secondary.otherAbs != null && (
+                      <span
+                        className={cn(
+                          headline.secondary.otherAbs >= 0 ? "text-ok" : "text-danger",
+                        )}
+                      >
+                        {headline.secondary.otherLabel}{" "}
+                        {headline.secondary.otherAbs >= 0 ? "+" : ""}
+                        {formatUsd(headline.secondary.otherAbs)}
+                      </span>
+                    )}
+                    {headline.secondary.otherPct != null && (
+                      <span>
+                        {" "}
+                        ({headline.secondary.otherPct >= 0 ? "+" : ""}
+                        {headline.secondary.otherPct.toFixed(1)}%)
+                      </span>
+                    )}
+                    {headline.secondary.netCapitalAbs != null && (
+                      <span>
+                        {" · Cash/qty effect "}
+                        {headline.secondary.netCapitalAbs >= 0 ? "+" : ""}
+                        {formatUsd(headline.secondary.netCapitalAbs)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+              {scope.kind === "all" && (stockWin != null || cryptoWin != null) && (
+                <div className="mt-0.5 space-y-0.5 text-right">
+                  <div className="flex flex-wrap justify-end gap-x-2 gap-y-0.5 text-[11px] tabular-nums text-ink-faint">
+                    {stockWin != null && (
+                      <span
+                        className={cn(
+                          stockWin >= 0 ? "text-ok" : "text-danger",
+                        )}
+                        title={
+                          bookMode
+                            ? range === "1d"
+                              ? "Stocks market value Δ this session (leg; may not match headline on 1D)"
+                              : "Stocks market value Δ over this range"
+                            : range === "1d"
+                              ? "Stocks US session performance (leg; not the chart headline on 1D)"
+                              : "Stocks performance over this range"
+                        }
+                      >
+                        Stocks
+                        {range === "1d"
+                          ? bookMode
+                            ? " (session MV)"
+                            : " (session)"
+                          : bookMode
+                            ? " MV Δ"
+                            : " performance"}{" "}
+                        {stockWin >= 0 ? "+" : ""}
+                        {formatUsd(stockWin)}
+                        {stockWinPct != null && (
+                          <span className="text-ink-faint">
+                            {" "}
+                            ({stockWinPct >= 0 ? "+" : ""}
+                            {stockWinPct.toFixed(1)}%)
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    {cryptoWin != null && (
+                      <span
+                        className={cn(
+                          cryptoWin >= 0 ? "text-ok" : "text-danger",
+                        )}
+                        title={
+                          bookMode
+                            ? range === "1d"
+                              ? "Crypto market value Δ last 24h (leg; may not match headline on 1D)"
+                              : "Crypto market value Δ over this range"
+                            : range === "1d"
+                              ? "Crypto last-24h performance (leg; not the chart headline on 1D)"
+                              : "Crypto performance over this range"
+                        }
+                      >
+                        Crypto
+                        {range === "1d"
+                          ? bookMode
+                            ? " (24h MV)"
+                            : " (24h)"
+                          : bookMode
+                            ? " MV Δ"
+                            : " performance"}{" "}
+                        {cryptoWin >= 0 ? "+" : ""}
+                        {formatUsd(cryptoWin)}
+                        {cryptoWinPct != null && (
+                          <span className="text-ink-faint">
+                            {" "}
+                            ({cryptoWinPct >= 0 ? "+" : ""}
+                            {cryptoWinPct.toFixed(1)}%)
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  {range === "1d" && (
+                    <p className="max-w-[16rem] text-[10px] leading-snug text-ink-faint/90">
+                      Session legs use stock RTH + crypto 24h; may not sum to the chart
+                      above.
+                    </p>
+                  )}
+                </div>
+              )}
+              {dayPct != null && range !== "1d" && (
+                <div
+                  className={cn(
+                    "text-xs tabular-nums",
+                    dayPositive ? "text-ok" : "text-danger",
+                  )}
+                >
+                  Today{" "}
+                  {dayAbs != null && (
+                    <span>
+                      {dayAbs >= 0 ? "+" : ""}
+                      {fmt(dayAbs)}{" "}
+                    </span>
+                  )}
+                  ({dayPct >= 0 ? "+" : ""}
+                  {dayPct.toFixed(1)}%)
+                </div>
+              )}
+              {costRef != null && (
+                <div className="text-sm text-ink-muted">
+                  {isPrice ? "Avg cost " : "Cost basis "}
+                  <span className="font-medium tabular-nums text-ink">
+                    {fmt(costRef)}
+                  </span>
+                </div>
+              )}
+              {softUpdating && (
+                <span
+                  className="pointer-events-none absolute right-0 top-0 text-[11px] leading-tight text-ink-faint"
+                  aria-live="polite"
+                >
+                  Updating…
+                </span>
+              )}
+            </div>
+          </div>
         )}
       </div>
 
