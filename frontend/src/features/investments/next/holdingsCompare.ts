@@ -1,6 +1,10 @@
 import type { TickerDigest } from "../../../api/types";
 import { d } from "../../../lib/money";
-import { compareNullableNumber, taxFreeSharePct } from "../holdingsSort";
+import {
+  compareNullableNumber,
+  taxFreeSharePct,
+  type HoldingsSortMode,
+} from "../holdingsSort";
 
 export type NextSortColumn =
   | "ticker"
@@ -25,12 +29,10 @@ export type SortStorage = Pick<Storage, "getItem" | "setItem">;
 export const NEXT_SORT_COLUMN_KEY = "gauntlet.holdings.sortColumn";
 export const NEXT_SORT_DIR_KEY = "gauntlet.holdings.sortDir";
 
-/** Verify columns that may persist / sort this PR. */
+/** Verify scan columns (platforms + last live in the detail panel). */
 export const VERIFY_SORT_COLUMNS: readonly NextSortColumn[] = [
   "ticker",
   "qty",
-  "platforms",
-  "last",
   "mv",
   "fifoAvg",
   "unlock",
@@ -172,6 +174,7 @@ export function compareNextHoldingsColumn(
   b: TickerDigest,
   column: NextSortColumn,
   dir: NextSortDir,
+  performanceMode: HoldingsSortMode = "total",
 ): number {
   const mul = dir === "asc" ? 1 : -1;
   let cmp = 0;
@@ -231,8 +234,14 @@ export function compareNextHoldingsColumn(
       cmp = d(a.cost_basis_usd) - d(b.cost_basis_usd);
       break;
     case "unrealized": {
-      const am = a.unrealized_pct;
-      const bm = b.unrealized_pct;
+      const am =
+        performanceMode === "annualized"
+          ? (a.annualized_unrealized_pct ?? null)
+          : a.unrealized_pct;
+      const bm =
+        performanceMode === "annualized"
+          ? (b.annualized_unrealized_pct ?? null)
+          : b.unrealized_pct;
       const n = compareNullableNumber(am, bm, mul);
       if (am == null || bm == null) {
         if (!(am == null && bm == null)) {

@@ -80,8 +80,13 @@ function tickers(sorted: TickerDigest[]): string[] {
   return sorted.map((t) => t.ticker);
 }
 
-function sortBy(rows: TickerDigest[], col: NextSortColumn, dir: "asc" | "desc"): TickerDigest[] {
-  return [...rows].sort((a, b) => compareNextHoldingsColumn(a, b, col, dir));
+function sortBy(
+  rows: TickerDigest[],
+  col: NextSortColumn,
+  dir: "asc" | "desc",
+  mode: "total" | "annualized" = "total",
+): TickerDigest[] {
+  return [...rows].sort((a, b) => compareNextHoldingsColumn(a, b, col, dir, mode));
 }
 
 function memoryStorage(initial: Record<string, string> = {}): SortStorage & {
@@ -110,6 +115,31 @@ function memoryStorage(initial: Record<string, string> = {}): SortStorage & {
   ];
   assertEq(tickers(sortBy(rows, "qty", "desc")).join(","), "BIG,MID,SMALL", "qty desc numeric");
   assertEq(tickers(sortBy(rows, "qty", "asc")).join(","), "SMALL,MID,BIG", "qty asc numeric");
+}
+
+// --- Wealth Unreal. ann. sorts by annualized %, not total unrealized ---
+{
+  const highTotalLowAnn = digest({
+    ticker: "TOTAL",
+    unrealized_pct: 80,
+    annualized_unrealized_pct: 4,
+  });
+  const lowTotalHighAnn = digest({
+    ticker: "ANN",
+    unrealized_pct: 10,
+    annualized_unrealized_pct: 45,
+  });
+  const rows = [highTotalLowAnn, lowTotalHighAnn];
+  assertEq(
+    tickers(sortBy(rows, "unrealized", "desc", "total")).join(","),
+    "TOTAL,ANN",
+    "total mode sorts by unrealized_pct",
+  );
+  assertEq(
+    tickers(sortBy(rows, "unrealized", "desc", "annualized")).join(","),
+    "ANN,TOTAL",
+    "annualized mode sorts by annualized_unrealized_pct",
+  );
 }
 
 // --- null MV sorts last in both directions (no cost fallback) ---
@@ -205,8 +235,8 @@ function memoryStorage(initial: Record<string, string> = {}): SortStorage & {
   assertEq(rejected.column, "qty", "unrealized not in Verify set → qty");
   assertEq(rejected.dir, "desc", "invalid column resets dir to Verify default");
 
-  const kept = resolveNextSort("last", "asc", VERIFY_SORT_COLUMNS);
-  assertEq(kept.column, "last", "valid Verify column kept");
+  const kept = resolveNextSort("mv", "asc", VERIFY_SORT_COLUMNS);
+  assertEq(kept.column, "mv", "valid Verify column kept");
   assertEq(kept.dir, "asc", "valid dir kept");
 
   const garbage = resolveNextSort("not-a-column", "sideways");
@@ -261,9 +291,9 @@ function memoryStorage(initial: Record<string, string> = {}): SortStorage & {
   assertEq(taxRejectsUnrealized.column, "unlock", "Tax rejects hidden unrealized");
   assertEq(taxRejectsUnrealized.dir, "desc", "Tax invalid resets to unlock desc");
 
-  const taxKeepsLots = resolveSortForView("tax", "lots", "asc");
-  assertEq(taxKeepsLots.column, "lots", "Tax keeps lots");
-  assertEq(taxKeepsLots.dir, "asc", "Tax keeps dir when column valid");
+  const taxKeepsTranche = resolveSortForView("tax", "tranche", "asc");
+  assertEq(taxKeepsTranche.column, "tranche", "Tax keeps tranche");
+  assertEq(taxKeepsTranche.dir, "asc", "Tax keeps dir when column valid");
 
   assert(
     VIEW_SORT_COLUMNS.verify === VERIFY_SORT_COLUMNS,

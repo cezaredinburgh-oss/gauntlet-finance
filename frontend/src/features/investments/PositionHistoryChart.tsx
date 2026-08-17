@@ -489,7 +489,7 @@ export function PositionHistoryChart({
       */}
       <div
         className={cn(
-          "flex w-full flex-wrap items-start gap-2 sm:gap-3",
+          "flex w-full items-start gap-2 sm:gap-3",
           isPopout && "shrink-0",
         )}
       >
@@ -763,18 +763,18 @@ export function PositionHistoryChart({
               </span>
             </div>
           )}
-          {showPopOut && (
-            <button
-              type="button"
-              title="Open chart in a separate window"
-              onClick={() => openChartPopout(scope, range)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-2.5 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-white/10 hover:text-ink"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Pop out
-            </button>
-          )}
         </div>
+        {showPopOut && (
+          <button
+            type="button"
+            title="Open chart in a separate window"
+            onClick={() => openChartPopout(scope, range)}
+            className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-lg bg-white/5 px-2.5 py-1.5 text-xs font-medium text-ink-muted transition hover:bg-white/10 hover:text-ink"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Pop out
+          </button>
+        )}
       </div>
 
       {/* Book filters only — tickers live under the chart with range performance */}

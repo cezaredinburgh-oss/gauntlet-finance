@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Layers, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import type { TaxTranche, TickerDigest } from "../../../api/types";
 import { d, formatQty, formatUsd } from "../../../lib/money";
 import { cn } from "../../../lib/cn";
@@ -46,7 +46,7 @@ function SortTh({
   activeCol,
   dir,
   onSort,
-  align = "left",
+  align = "center",
   title,
   className,
 }: {
@@ -55,7 +55,7 @@ function SortTh({
   activeCol: NextSortColumn;
   dir: NextSortDir;
   onSort: (col: NextSortColumn) => void;
-  align?: "left" | "right";
+  align?: "left" | "right" | "center";
   title?: string;
   className?: string;
 }) {
@@ -64,7 +64,11 @@ function SortTh({
     <th
       className={cn(
         "cursor-pointer select-none px-2 py-2 font-medium transition hover:text-ink",
-        align === "right" ? "text-right" : "text-left",
+        align === "right"
+          ? "text-right"
+          : align === "center"
+            ? "text-center"
+            : "text-left",
         active ? "text-brand" : "text-ink-faint",
         className,
       )}
@@ -77,11 +81,6 @@ function SortTh({
       ) : null}
     </th>
   );
-}
-
-function platformTooltip(t: TickerDigest): string {
-  const sources = t.by_platform.map((p) => p.source).filter(Boolean);
-  return sources.length ? sources.join("\n") : "Multi-platform";
 }
 
 function taxFreeTooltip(t: TickerDigest): string {
@@ -140,7 +139,7 @@ function TrancheMiniBar({ tranches }: { tranches: TaxTranche[] }) {
 
 function TickerCell({ t }: { t: TickerDigest }) {
   return (
-    <td className="px-2 py-2">
+    <td className="px-2 py-2 text-left">
       <div className="font-semibold text-ink">{t.ticker}</div>
       {t.asset_class ? (
         <div className="text-[10px] text-ink-faint">{t.asset_class}</div>
@@ -151,7 +150,7 @@ function TickerCell({ t }: { t: TickerDigest }) {
 
 function HonestMvCell({ t }: { t: TickerDigest }) {
   return (
-    <td className="px-2 py-2 text-right tabular-nums font-medium">
+    <td className="px-2 py-2 text-center tabular-nums font-medium">
       {t.market_value_usd != null ? (
         formatUsd(t.market_value_usd)
       ) : (
@@ -175,7 +174,7 @@ function TaxFreeCell({
   return (
     <td
       className={cn(
-        "min-w-[5.5rem] px-3 py-2 text-right text-xs",
+        "px-2 py-2 text-center text-xs",
         highlight && "ring-2 ring-brand/50",
       )}
     >
@@ -282,8 +281,11 @@ export function HoldingsTableNext({
   }
 
   const sortedRows = useMemo(
-    () => [...rows].sort((a, b) => compareNextHoldingsColumn(a, b, sortColumn, sortDir)),
-    [rows, sortColumn, sortDir],
+    () =>
+      [...rows].sort((a, b) =>
+        compareNextHoldingsColumn(a, b, sortColumn, sortDir, performanceMode),
+      ),
+    [rows, sortColumn, sortDir, performanceMode],
   );
 
   const matches = useMemo(
@@ -296,7 +298,7 @@ export function HoldingsTableNext({
     () => (view === "wealth" ? uniqueGradeKeyPairs(rows) : []),
     [view, rows],
   );
-  const colSpan = view === "tax" ? 6 : 7;
+  const colSpan = view === "wealth" ? 6 : 5;
 
   return (
     <div className="card flex flex-col">
@@ -449,13 +451,8 @@ export function HoldingsTableNext({
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table
-          className={cn(
-            "w-full text-left text-xs",
-            view === "tax" ? "min-w-[40rem]" : "min-w-[48rem]",
-          )}
-        >
+      <div>
+        <table className="w-full table-fixed text-center text-xs">
           <thead>
             <tr className="border-b border-white/10">
               {view === "verify" ? (
@@ -466,6 +463,7 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
+                    align="left"
                   />
                   <SortTh
                     label="Qty"
@@ -473,25 +471,7 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    align="right"
                     title="Fee-net quantity on open lots"
-                  />
-                  <SortTh
-                    label="Platforms"
-                    col="platforms"
-                    activeCol={sortColumn}
-                    dir={sortDir}
-                    onSort={onSort}
-                    title="Broker / venue split"
-                  />
-                  <SortTh
-                    label="Last / as-of"
-                    col="last"
-                    activeCol={sortColumn}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="right"
-                    title="Live mark and as-of — not cost"
                   />
                   <SortTh
                     label="MV"
@@ -499,7 +479,6 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    align="right"
                     title="Market value — unpriced rows show labeled cost, not a quote"
                   />
                   <SortTh
@@ -508,7 +487,6 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    align="right"
                     title="Average cost per unit (FIFO)"
                   />
                   <SortTh
@@ -517,11 +495,7 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    align="right"
-                    className={cn(
-                      "min-w-[5.5rem] px-3",
-                      highlightTaxFree && "ring-2 ring-brand/50",
-                    )}
+                    className={cn(highlightTaxFree && "ring-2 ring-brand/50")}
                     title="Tax-free share of position (MV when priced)"
                   />
                 </>
@@ -534,6 +508,7 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
+                    align="left"
                   />
                   <SortTh
                     label="MV"
@@ -541,7 +516,6 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    align="right"
                     title="Market value — unpriced rows show labeled cost, not a quote"
                   />
                   <SortTh
@@ -550,7 +524,6 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    align="right"
                     title="Open FIFO cost basis"
                   />
                   <SortTh
@@ -559,7 +532,6 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    align="right"
                     title={
                       performanceMode === "annualized"
                         ? "Annualized open ROI %"
@@ -572,7 +544,6 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    align="right"
                   />
                   <SortTh
                     label="Grade"
@@ -580,17 +551,7 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    align="right"
                     title="Total ROI grade — not tied to Total/Ann"
-                  />
-                  <SortTh
-                    label="Share"
-                    col="share"
-                    activeCol={sortColumn}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="right"
-                    title="Share of portfolio unrealized"
                   />
                 </>
               ) : null}
@@ -602,6 +563,7 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
+                    align="left"
                   />
                   <SortTh
                     label="Qty"
@@ -609,7 +571,6 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    align="right"
                     title="Fee-net quantity on open lots"
                   />
                   <SortTh
@@ -618,11 +579,7 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    align="right"
-                    className={cn(
-                      "min-w-[5.5rem] px-3",
-                      highlightTaxFree && "ring-2 ring-brand/50",
-                    )}
+                    className={cn(highlightTaxFree && "ring-2 ring-brand/50")}
                     title="Tax-free share of position (MV when priced)"
                   />
                   <SortTh
@@ -634,20 +591,11 @@ export function HoldingsTableNext({
                     title="Tax-status mix (MV, qty if unpriced)"
                   />
                   <th
-                    className="px-2 py-2 text-left font-medium text-ink-faint"
+                    className="px-2 py-2 text-center font-medium text-ink-faint"
                     title="Next 1095 unlock"
                   >
                     Next unlock
                   </th>
-                  <SortTh
-                    label="Lots"
-                    col="lots"
-                    activeCol={sortColumn}
-                    dir={sortDir}
-                    onSort={onSort}
-                    align="right"
-                    title="Open lot count"
-                  />
                 </>
               ) : null}
             </tr>
@@ -662,7 +610,6 @@ export function HoldingsTableNext({
             ) : (
               visibleRows.map((t) => {
                 const active = selectedTicker === t.ticker;
-                const noQuote = t.missing_price || t.price_usd == null;
                 const roi =
                   performanceMode === "annualized"
                     ? t.annualized_unrealized_pct
@@ -693,43 +640,11 @@ export function HoldingsTableNext({
                     {view === "verify" ? (
                       <>
                         <TickerCell t={t} />
-                        <td className="px-2 py-2 text-right tabular-nums font-medium">
+                        <td className="px-2 py-2 text-center tabular-nums font-medium">
                           {formatQty(t.quantity_total)}
                         </td>
-                        <td className="px-2 py-2">
-                          {t.multi_platform ? (
-                            <span
-                              className="inline-flex items-center text-ink-muted"
-                              title={platformTooltip(t)}
-                            >
-                              <Layers className="h-3.5 w-3.5" />
-                            </span>
-                          ) : (
-                            <span className="text-[11px] text-ink-faint">
-                              {t.by_platform[0]?.source ?? "—"}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-2 py-2 text-right">
-                          {noQuote ? (
-                            <span className="inline-flex rounded-md bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold text-warn">
-                              No quote
-                            </span>
-                          ) : (
-                            <>
-                              <div className="tabular-nums font-medium">
-                                {formatUsd(t.price_usd)}
-                              </div>
-                              {t.price_as_of ? (
-                                <div className="text-[10px] tabular-nums text-ink-faint">
-                                  {t.price_as_of}
-                                </div>
-                              ) : null}
-                            </>
-                          )}
-                        </td>
                         <HonestMvCell t={t} />
-                        <td className="px-2 py-2 text-right tabular-nums text-ink-muted">
+                        <td className="px-2 py-2 text-center tabular-nums text-ink-muted">
                           {formatUsd(t.avg_cost_usd)}
                         </td>
                         <TaxFreeCell t={t} highlight={highlightTaxFree} />
@@ -739,10 +654,10 @@ export function HoldingsTableNext({
                       <>
                         <TickerCell t={t} />
                         <HonestMvCell t={t} />
-                        <td className="px-2 py-2 text-right tabular-nums text-ink-muted">
+                        <td className="px-2 py-2 text-center tabular-nums text-ink-muted">
                           {formatUsd(t.cost_basis_usd)}
                         </td>
-                        <td className="px-2 py-2 text-right">
+                        <td className="px-2 py-2 text-center">
                           {pctCell(roi ?? null)}
                           {t.unrealized_usd != null && performanceMode === "total" ? (
                             <div className="text-[10px] text-ink-faint">
@@ -751,10 +666,10 @@ export function HoldingsTableNext({
                             </div>
                           ) : null}
                         </td>
-                        <td className="px-2 py-2 text-right tabular-nums text-ink-muted">
+                        <td className="px-2 py-2 text-center tabular-nums text-ink-muted">
                           {t.portfolio_weight_pct.toFixed(1)}%
                         </td>
-                        <td className="px-2 py-2 text-right">
+                        <td className="px-2 py-2 text-center">
                           <span
                             className={cn(
                               "inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded-md px-1 text-[11px] font-bold ring-1",
@@ -765,31 +680,21 @@ export function HoldingsTableNext({
                             {t.roi_grade}
                           </span>
                         </td>
-                        <td className="px-2 py-2 text-right tabular-nums">
-                          {t.unrealized_share_pct == null ? (
-                            <span className="text-ink-faint">—</span>
-                          ) : (
-                            <span className="text-ink-muted">
-                              {t.unrealized_share_pct.toFixed(
-                                t.unrealized_share_pct % 1 === 0 ? 0 : 1,
-                              )}
-                              %
-                            </span>
-                          )}
-                        </td>
                       </>
                     ) : null}
                     {view === "tax" ? (
                       <>
                         <TickerCell t={t} />
-                        <td className="px-2 py-2 text-right tabular-nums font-medium">
+                        <td className="px-2 py-2 text-center tabular-nums font-medium">
                           {formatQty(t.quantity_total)}
                         </td>
                         <TaxFreeCell t={t} highlight={highlightTaxFree} />
-                        <td className="px-2 py-2">
-                          <TrancheMiniBar tranches={t.tax_tranches} />
+                        <td className="px-2 py-2 text-center">
+                          <div className="inline-flex justify-center">
+                            <TrancheMiniBar tranches={t.tax_tranches} />
+                          </div>
                         </td>
-                        <td className="px-2 py-2">
+                        <td className="px-2 py-2 text-center">
                           {t.next_unlock_date ? (
                             <>
                               <div className="tabular-nums">{t.next_unlock_date}</div>
@@ -802,9 +707,6 @@ export function HoldingsTableNext({
                           ) : (
                             <span className="text-ok">All eligible</span>
                           )}
-                        </td>
-                        <td className="px-2 py-2 text-right tabular-nums">
-                          {t.open_lot_count}
                         </td>
                       </>
                     ) : null}

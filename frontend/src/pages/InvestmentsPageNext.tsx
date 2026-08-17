@@ -328,7 +328,7 @@ export function InvestmentsPageNext() {
                   </div>
                 )}
               </div>
-              <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto lg:col-span-5 lg:sticky lg:top-12 lg:self-start">
+              <div className="lg:col-span-5 lg:sticky lg:top-12 lg:self-start">
                 {digests.length > 0 && chartScope && (
                   <PositionHistoryChart
                     digests={chartDigests}

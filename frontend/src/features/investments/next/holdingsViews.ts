@@ -24,7 +24,6 @@ export const WEALTH_SORT_COLUMNS: readonly NextSortColumn[] = [
   "unrealized",
   "weight",
   "grade",
-  "share",
 ];
 
 export const TAX_SORT_COLUMNS: readonly NextSortColumn[] = [
@@ -32,7 +31,6 @@ export const TAX_SORT_COLUMNS: readonly NextSortColumn[] = [
   "qty",
   "unlock",
   "tranche",
-  "lots",
 ];
 
 export const WEALTH_DEFAULT_COLUMN: NextSortColumn = "unrealized";
