@@ -45,6 +45,16 @@ export const SETTINGS_DESK: LabDeskConfig = {
   defaultDesk: "next",
 };
 
+export const SPENDING_DESK: LabDeskConfig = {
+  persistKey: "gauntlet.spending.desk",
+  defaultDesk: "next",
+};
+
+export const CATEGORIZE_DESK: LabDeskConfig = {
+  persistKey: "gauntlet.categorize.desk",
+  defaultDesk: "next",
+};
+
 export function loadLabDesk(
   config: LabDeskConfig,
   storage: DeskStorage = window.localStorage,
