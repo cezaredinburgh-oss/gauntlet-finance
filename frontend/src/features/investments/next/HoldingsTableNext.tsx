@@ -1,25 +1,21 @@
+import { useMemo, useState } from "react";
 import { Layers } from "lucide-react";
 import type { TickerDigest } from "../../../api/types";
-import { d, formatQty, formatUsd } from "../../../lib/money";
+import { formatQty, formatUsd } from "../../../lib/money";
 import { cn } from "../../../lib/cn";
-import { gradeStyleClass } from "../gradeStyles";
 import {
   type HoldingsAssetFilter,
   type HoldingsSortColumn,
   type HoldingsSortMode,
   taxFreeSharePct,
 } from "../holdingsSort";
-
-function pctCell(pct: number | null | undefined, suffix = "%") {
-  if (pct == null) return <span className="text-ink-faint">—</span>;
-  return (
-    <span className={cn("tabular-nums", pct >= 0 ? "text-ok" : "text-danger")}>
-      {pct >= 0 ? "+" : ""}
-      {pct.toFixed(1)}
-      {suffix}
-    </span>
-  );
-}
+import {
+  compareNextHoldingsColumn,
+  resolvePersistedNextSort,
+  savePersistedNextSort,
+  type NextSortColumn,
+  type NextSortDir,
+} from "./holdingsCompare";
 
 function SortTh({
   label,
@@ -29,14 +25,16 @@ function SortTh({
   onSort,
   align = "left",
   title,
+  className,
 }: {
   label: string;
-  col: HoldingsSortColumn;
-  activeCol: HoldingsSortColumn;
-  dir: "asc" | "desc";
-  onSort: (col: HoldingsSortColumn) => void;
+  col: NextSortColumn;
+  activeCol: NextSortColumn;
+  dir: NextSortDir;
+  onSort: (col: NextSortColumn) => void;
   align?: "left" | "right";
   title?: string;
+  className?: string;
 }) {
   const active = activeCol === col;
   return (
@@ -45,6 +43,7 @@ function SortTh({
         "cursor-pointer select-none px-2 py-2 font-medium transition hover:text-ink",
         align === "right" ? "text-right" : "text-left",
         active ? "text-brand" : "text-ink-faint",
+        className,
       )}
       title={title}
       onClick={() => onSort(col)}
@@ -57,15 +56,24 @@ function SortTh({
   );
 }
 
+function platformTooltip(t: TickerDigest): string {
+  const sources = t.by_platform.map((p) => p.source).filter(Boolean);
+  return sources.length ? sources.join("\n") : "Multi-platform";
+}
+
+function taxFreeTooltip(t: TickerDigest): string {
+  if (!t.tax_tranches.length) return "Tax-free share of position (MV when priced)";
+  return t.tax_tranches.map((x) => `${x.label}: ${formatQty(x.quantity)}`).join("\n");
+}
+
+/**
+ * Lab next Verify table. Owns sort so qty / last / honest MV work without
+ * widening classic HoldingsSortColumn or using compareHoldingsColumn.
+ */
 export function HoldingsTableNext({
   rows,
   selectedTicker,
   onSelect,
-  sortColumn,
-  sortDir,
-  onSortColumn,
-  performanceMode,
-  onPerformanceMode,
   assetFilter,
   onAssetFilter,
   totalCount,
@@ -73,15 +81,38 @@ export function HoldingsTableNext({
   rows: TickerDigest[];
   selectedTicker: string | null;
   onSelect: (ticker: string) => void;
+  /** Kept so PR3 page wiring typechecks; Verify owns sort below. */
   sortColumn: HoldingsSortColumn;
   sortDir: "asc" | "desc";
   onSortColumn: (col: HoldingsSortColumn) => void;
+  /** Wealth-only in PR5 — hidden on this Verify default. */
   performanceMode: HoldingsSortMode;
   onPerformanceMode: (mode: HoldingsSortMode) => void;
   assetFilter: HoldingsAssetFilter;
   onAssetFilter: (f: HoldingsAssetFilter) => void;
   totalCount: number;
 }) {
+  const [sort, setSort] = useState(resolvePersistedNextSort);
+  const { column: sortColumn, dir: sortDir } = sort;
+
+  function onSort(col: NextSortColumn) {
+    const nextDir: NextSortDir =
+      sortColumn === col
+        ? sortDir === "asc"
+          ? "desc"
+          : "asc"
+        : col === "ticker"
+          ? "asc"
+          : "desc";
+    setSort({ column: col, dir: nextDir });
+    savePersistedNextSort(col, nextDir);
+  }
+
+  const sortedRows = useMemo(
+    () => [...rows].sort((a, b) => compareNextHoldingsColumn(a, b, sortColumn, sortDir)),
+    [rows, sortColumn, sortDir],
+  );
+
   return (
     <div className="card flex flex-col">
       <div className="flex flex-wrap items-start justify-between gap-2 border-b border-white/5 px-4 py-3">
@@ -115,34 +146,6 @@ export function HoldingsTableNext({
               </button>
             ))}
           </div>
-          <div className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
-            <button
-              type="button"
-              onClick={() => onPerformanceMode("total")}
-              className={cn(
-                "rounded-md px-2 py-1 text-[11px] font-semibold transition",
-                performanceMode === "total"
-                  ? "bg-brand/20 text-brand"
-                  : "text-ink-faint hover:text-ink-muted",
-              )}
-              title="Sort ROI column by total unrealized %"
-            >
-              Total
-            </button>
-            <button
-              type="button"
-              onClick={() => onPerformanceMode("annualized")}
-              className={cn(
-                "rounded-md px-2 py-1 text-[11px] font-semibold transition",
-                performanceMode === "annualized"
-                  ? "bg-brand/20 text-brand"
-                  : "text-ink-faint hover:text-ink-muted",
-              )}
-              title="Sort ROI column by annualized open ROI %"
-            >
-              Ann.
-            </button>
-          </div>
           <span className="badge bg-white/5 text-ink-muted">
             {rows.length}
             {rows.length !== totalCount ? ` / ${totalCount}` : ""} tickers
@@ -151,7 +154,7 @@ export function HoldingsTableNext({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[36rem] text-left text-xs">
+        <table className="w-full min-w-[48rem] text-left text-xs">
           <thead>
             <tr className="border-b border-white/10">
               <SortTh
@@ -159,79 +162,76 @@ export function HoldingsTableNext({
                 col="ticker"
                 activeCol={sortColumn}
                 dir={sortDir}
-                onSort={onSortColumn}
+                onSort={onSort}
+              />
+              <SortTh
+                label="Qty"
+                col="qty"
+                activeCol={sortColumn}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+                title="Fee-net quantity on open lots"
+              />
+              <SortTh
+                label="Platforms"
+                col="platforms"
+                activeCol={sortColumn}
+                dir={sortDir}
+                onSort={onSort}
+                title="Broker / venue split"
+              />
+              <SortTh
+                label="Last / as-of"
+                col="last"
+                activeCol={sortColumn}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+                title="Live mark and as-of — not cost"
               />
               <SortTh
                 label="MV"
                 col="mv"
                 activeCol={sortColumn}
                 dir={sortDir}
-                onSort={onSortColumn}
+                onSort={onSort}
                 align="right"
+                title="Market value — unpriced rows show labeled cost, not a quote"
               />
               <SortTh
-                label="Cost"
-                col="cost"
+                label="FIFO avg"
+                col="fifoAvg"
                 activeCol={sortColumn}
                 dir={sortDir}
-                onSort={onSortColumn}
+                onSort={onSort}
                 align="right"
-              />
-              <SortTh
-                label={performanceMode === "annualized" ? "ROI ann." : "ROI"}
-                col="unrealized"
-                activeCol={sortColumn}
-                dir={sortDir}
-                onSort={onSortColumn}
-                align="right"
-                title={
-                  performanceMode === "annualized"
-                    ? "Annualized open ROI %"
-                    : "Total unrealized ROI %"
-                }
-              />
-              <SortTh
-                label="Wt"
-                col="weight"
-                activeCol={sortColumn}
-                dir={sortDir}
-                onSort={onSortColumn}
-                align="right"
-              />
-              <SortTh
-                label="Grade"
-                col="grade"
-                activeCol={sortColumn}
-                dir={sortDir}
-                onSort={onSortColumn}
-                align="right"
+                title="Average cost per unit (FIFO)"
               />
               <SortTh
                 label="Tax-free"
                 col="unlock"
                 activeCol={sortColumn}
                 dir={sortDir}
-                onSort={onSortColumn}
+                onSort={onSort}
                 align="right"
-                title="Sort by tax-free share of MV (then next unlock date)"
+                className="min-w-[5.5rem] px-3"
+                title="Tax-free share of position (MV when priced)"
               />
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
-            {rows.length === 0 ? (
+            {sortedRows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-3 py-8 text-center text-ink-faint">
                   No holdings match this filter.
                 </td>
               </tr>
             ) : (
-              rows.map((t) => {
+              sortedRows.map((t) => {
                 const active = selectedTicker === t.ticker;
-                const roi =
-                  performanceMode === "annualized"
-                    ? t.annualized_unrealized_pct
-                    : t.unrealized_pct;
                 const freePct = taxFreeSharePct(t);
+                const noQuote = t.missing_price || t.price_usd == null;
                 return (
                   <tr
                     key={t.ticker}
@@ -252,64 +252,65 @@ export function HoldingsTableNext({
                     )}
                   >
                     <td className="px-2 py-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-semibold text-ink">{t.ticker}</span>
-                        {t.multi_platform && (
-                          <span title="Multi-platform">
-                            <Layers className="h-3 w-3 text-ink-faint" />
-                          </span>
-                        )}
-                        {t.missing_price && (
-                          <span className="text-[10px] text-warn">no px</span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-ink-faint">
-                        {formatQty(t.quantity_total)}
-                        {t.asset_class ? ` · ${t.asset_class}` : ""}
-                      </div>
+                      <div className="font-semibold text-ink">{t.ticker}</div>
+                      {t.asset_class ? (
+                        <div className="text-[10px] text-ink-faint">{t.asset_class}</div>
+                      ) : null}
+                    </td>
+                    <td className="px-2 py-2 text-right tabular-nums font-medium">
+                      {formatQty(t.quantity_total)}
+                    </td>
+                    <td className="px-2 py-2">
+                      {t.multi_platform ? (
+                        <span
+                          className="inline-flex items-center text-ink-muted"
+                          title={platformTooltip(t)}
+                        >
+                          <Layers className="h-3.5 w-3.5" />
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-ink-faint">
+                          {t.by_platform[0]?.source ?? "—"}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      {noQuote ? (
+                        <span className="inline-flex rounded-md bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold text-warn">
+                          No quote
+                        </span>
+                      ) : (
+                        <>
+                          <div className="tabular-nums font-medium">
+                            {formatUsd(t.price_usd)}
+                          </div>
+                          {t.price_as_of ? (
+                            <div className="text-[10px] tabular-nums text-ink-faint">
+                              {t.price_as_of}
+                            </div>
+                          ) : null}
+                        </>
+                      )}
                     </td>
                     <td className="px-2 py-2 text-right tabular-nums font-medium">
                       {t.market_value_usd != null ? (
                         formatUsd(t.market_value_usd)
                       ) : (
                         <span
-                          className="text-ink-faint"
-                          title="No live quote — showing cost basis, not market value"
+                          className="block text-ink-faint"
+                          title="No live quote — not market value"
                         >
-                          <span className="block text-[10px] font-normal uppercase tracking-wide">
-                            cost
+                          <span className="text-[10px] font-semibold uppercase tracking-wide">
+                            COST ·{" "}
                           </span>
                           {formatUsd(t.cost_basis_usd)}
                         </span>
                       )}
                     </td>
                     <td className="px-2 py-2 text-right tabular-nums text-ink-muted">
-                      {formatUsd(t.cost_basis_usd)}
+                      {formatUsd(t.avg_cost_usd)}
                     </td>
-                    <td className="px-2 py-2 text-right">
-                      {pctCell(roi)}
-                      {t.unrealized_usd != null && performanceMode === "total" && (
-                        <div className="text-[10px] text-ink-faint">
-                          {d(t.unrealized_usd) >= 0 ? "+" : ""}
-                          {formatUsd(t.unrealized_usd)}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-right tabular-nums text-ink-muted">
-                      {t.portfolio_weight_pct.toFixed(1)}%
-                    </td>
-                    <td className="px-2 py-2 text-right">
-                      <span
-                        className={cn(
-                          "inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded-md px-1 text-[11px] font-bold ring-1",
-                          gradeStyleClass(t.roi_grade),
-                        )}
-                        title={t.roi_grade_label}
-                      >
-                        {t.roi_grade}
-                      </span>
-                    </td>
-                    <td className="px-2 py-2 text-right text-[11px]">
+                    <td className="min-w-[5.5rem] px-3 py-2 text-right text-xs">
                       {freePct != null ? (
                         <span
                           className={
@@ -319,17 +320,14 @@ export function HoldingsTableNext({
                                 ? "text-warn"
                                 : "text-ink-muted"
                           }
-                          title="Tax-free share of position (MV when priced)"
+                          title={taxFreeTooltip(t)}
                         >
                           {freePct.toFixed(freePct % 1 === 0 ? 0 : 1)}%
                         </span>
                       ) : (
-                        <span className="text-ink-faint">—</span>
-                      )}
-                      {t.next_unlock_date && (
-                        <div className="text-[10px] text-warn tabular-nums">
-                          {t.next_unlock_date}
-                        </div>
+                        <span className="text-ink-faint" title={taxFreeTooltip(t)}>
+                          —
+                        </span>
                       )}
                     </td>
                   </tr>
