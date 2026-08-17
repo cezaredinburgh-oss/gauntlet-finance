@@ -11,7 +11,7 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { Layout } from "./components/Layout";
 import { PageLoader } from "./components/Spinner";
 import { DashboardPage } from "./pages/DashboardPage";
-import { NewEtSpendingPage } from "./pages/NewEtSpendingPage";
+import { NewEtSpendingPageGate } from "./pages/NewEtSpendingPageGate";
 import { NewEtCategorizePage } from "./pages/NewEtCategorizePage";
 import { InvestmentsPageGate } from "./pages/InvestmentsPageGate";
 import { InvestmentsAnalysisPageGate } from "./pages/InvestmentsAnalysisPageGate";
@@ -125,7 +125,7 @@ export default function App() {
             <Route path="dashboard" element={<Navigate to="/" replace />} />
             <Route path="expenses">
               <Route index element={<Navigate to="spending" replace />} />
-              <Route path="spending" element={<NewEtSpendingPage />} />
+              <Route path="spending" element={<NewEtSpendingPageGate />} />
               <Route path="categorize" element={<NewEtCategorizePage />} />
               <Route
                 path="alerts"
