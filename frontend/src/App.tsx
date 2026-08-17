@@ -13,7 +13,7 @@ import { PageLoader } from "./components/Spinner";
 import { DashboardPage } from "./pages/DashboardPage";
 import { NewEtSpendingPage } from "./pages/NewEtSpendingPage";
 import { NewEtCategorizePage } from "./pages/NewEtCategorizePage";
-import { InvestmentsPage } from "./pages/InvestmentsPage";
+import { InvestmentsPageGate } from "./pages/InvestmentsPageGate";
 import { InvestmentsAnalysisPage } from "./pages/InvestmentsAnalysisPage";
 import { InvestmentsDcaPage } from "./pages/InvestmentsDcaPage";
 import { TaxPage } from "./pages/TaxPage";
@@ -157,7 +157,7 @@ export default function App() {
                 element={<RedirectPreserveSearch to="/expenses/categorize" />}
               />
             </Route>
-            <Route path="investments" element={<InvestmentsPage />} />
+            <Route path="investments" element={<InvestmentsPageGate />} />
             <Route path="investments/analysis" element={<InvestmentsAnalysisPage />} />
             <Route path="investments/dca" element={<InvestmentsDcaPage />} />
             <Route path="investments/tax" element={<TaxPage />} />
