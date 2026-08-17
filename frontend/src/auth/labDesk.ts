@@ -25,6 +25,26 @@ export const TAX_DESK: LabDeskConfig = {
   defaultDesk: "next",
 };
 
+export const HOME_DESK: LabDeskConfig = {
+  persistKey: "gauntlet.home.desk",
+  defaultDesk: "next",
+};
+
+export const UPLOAD_DESK: LabDeskConfig = {
+  persistKey: "gauntlet.upload.desk",
+  defaultDesk: "next",
+};
+
+export const ALERTS_DESK: LabDeskConfig = {
+  persistKey: "gauntlet.alerts.desk",
+  defaultDesk: "next",
+};
+
+export const SETTINGS_DESK: LabDeskConfig = {
+  persistKey: "gauntlet.settings.desk",
+  defaultDesk: "next",
+};
+
 export function loadLabDesk(
   config: LabDeskConfig,
   storage: DeskStorage = window.localStorage,

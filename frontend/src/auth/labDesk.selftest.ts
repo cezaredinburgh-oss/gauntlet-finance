@@ -1,11 +1,15 @@
 /**
- * Self-test for lab-only Analysis/DCA/Tax desk resolution.
+ * Self-test for lab-only desk resolution (Analysis/DCA/Tax + Home/Upload/Alerts/Settings).
  * Run: npx --yes tsx src/auth/labDesk.selftest.ts  (from frontend/)
  */
 import {
+  ALERTS_DESK,
   ANALYSIS_DESK,
   DCA_DESK,
+  HOME_DESK,
+  SETTINGS_DESK,
   TAX_DESK,
+  UPLOAD_DESK,
   loadLabDesk,
   mergeDeskParam,
   resolveLabDesk,
@@ -170,5 +174,67 @@ const source = params("focus=tax_runway");
 mergeDeskParam(source, untouched);
 assertEq(source.get("desk"), null, "merge does not mutate the source params");
 assertEq(source.get("focus"), "tax_runway", "source focus unchanged");
+
+assertEq(HOME_DESK.persistKey, "gauntlet.home.desk", "home persist key");
+assertEq(UPLOAD_DESK.persistKey, "gauntlet.upload.desk", "upload persist key");
+assertEq(ALERTS_DESK.persistKey, "gauntlet.alerts.desk", "alerts persist key");
+assertEq(SETTINGS_DESK.persistKey, "gauntlet.settings.desk", "settings persist key");
+assertEq(HOME_DESK.defaultDesk, "next", "home default is next");
+assertEq(UPLOAD_DESK.defaultDesk, "next", "upload default is next");
+assertEq(ALERTS_DESK.defaultDesk, "next", "alerts default is next");
+assertEq(SETTINGS_DESK.defaultDesk, "next", "settings default is next");
+
+for (const [label, user] of [
+  ["owner", owner],
+  ["sandbox", sandbox],
+  ["tour", tour],
+  ["null", null],
+] as const) {
+  const store = memoryStorage();
+  const desk = resolveLabDesk(user, params("desk=next"), HOME_DESK, store);
+  assertEq(desk, "classic", `${label} must ignore ?desk=next on home`);
+  assertEq(store.writes.length, 0, `${label} home resolve must not write storage`);
+}
+
+const homeIsolated = memoryStorage({
+  [HOLDINGS_DESK_KEY]: "classic",
+  [ANALYSIS_DESK.persistKey]: "classic",
+  [DCA_DESK.persistKey]: "classic",
+  [TAX_DESK.persistKey]: "next",
+});
+saveLabDesk("next", HOME_DESK, homeIsolated);
+assertEq(homeIsolated.writes.length, 1, "home save writes once");
+assertEq(homeIsolated.writes[0][0], HOME_DESK.persistKey, "home save uses home desk key");
+assertEq(homeIsolated.writes[0][1], "next", "home save writes next");
+assertEq(
+  homeIsolated.getItem(HOLDINGS_DESK_KEY),
+  "classic",
+  "saveLabDesk(HOME_DESK) never writes gauntlet.holdings.desk",
+);
+assertEq(
+  homeIsolated.getItem(ANALYSIS_DESK.persistKey),
+  "classic",
+  "saveLabDesk(HOME_DESK) never writes gauntlet.analysis.desk",
+);
+assertEq(
+  homeIsolated.getItem(DCA_DESK.persistKey),
+  "classic",
+  "saveLabDesk(HOME_DESK) never writes gauntlet.dca.desk",
+);
+assertEq(
+  homeIsolated.getItem(TAX_DESK.persistKey),
+  "next",
+  "saveLabDesk(HOME_DESK) never writes gauntlet.tax.desk",
+);
+assertEq(
+  homeIsolated.writes.some(([key]) =>
+    key === HOLDINGS_DESK_KEY ||
+    key === ANALYSIS_DESK.persistKey ||
+    key === DCA_DESK.persistKey ||
+    key === TAX_DESK.persistKey,
+  ),
+  false,
+  "home save write list never includes holdings/analysis/dca/tax keys",
+);
 
 console.log("labDesk.selftest: ok");
