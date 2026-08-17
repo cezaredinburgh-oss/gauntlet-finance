@@ -140,9 +140,13 @@ export function savePersistedNextSort(
 export function resolvePersistedNextSort(
   storage: SortStorage = window.localStorage,
   allowed: readonly NextSortColumn[] = VERIFY_SORT_COLUMNS,
+  defaults: { column: NextSortColumn; dir: NextSortDir } = {
+    column: VERIFY_DEFAULT_COLUMN,
+    dir: VERIFY_DEFAULT_DIR,
+  },
 ): { column: NextSortColumn; dir: NextSortDir } {
   const stored = loadPersistedNextSort(storage);
-  return resolveNextSort(stored.column, stored.dir, allowed);
+  return resolveNextSort(stored.column, stored.dir, allowed, defaults);
 }
 
 function platformCount(t: TickerDigest): number {

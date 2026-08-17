@@ -6,13 +6,11 @@ import { EmptyState, PageLoader } from "../components/Spinner";
 import { cn } from "../lib/cn";
 import { formatQty } from "../lib/money";
 import {
-  compareHoldingsColumn,
   comparePerformance,
   filterByAssetClass,
   loadHoldingsSortMode,
   saveHoldingsSortMode,
   type HoldingsAssetFilter,
-  type HoldingsSortColumn,
   type HoldingsSortMode,
   HoldingsDetailPanel,
   InvestmentsPageShell,
@@ -48,8 +46,6 @@ export function InvestmentsPageNext() {
   const [performanceMode, setPerformanceMode] = useState<HoldingsSortMode>(() =>
     loadHoldingsSortMode(),
   );
-  const [sortColumn, setSortColumn] = useState<HoldingsSortColumn>("unrealized");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [assetFilter, setAssetFilter] = useState<HoldingsAssetFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,19 +68,6 @@ export function InvestmentsPageNext() {
     setChartScope(scope);
     if (scope.kind === "ticker") {
       setSelectedTicker(scope.ticker);
-    }
-  }
-
-  function onSortColumn(col: HoldingsSortColumn) {
-    if (sortColumn === col) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortColumn(col);
-      if (col === "ticker" || col === "grade") {
-        setSortDir("asc");
-      } else {
-        setSortDir("desc");
-      }
     }
   }
 
@@ -179,12 +162,10 @@ export function InvestmentsPageNext() {
 
   const digests = digestsResponse?.tickers ?? [];
 
-  const tableRows = useMemo(() => {
-    const filtered = filterByAssetClass(digests, assetFilter);
-    return [...filtered].sort((a, b) =>
-      compareHoldingsColumn(a, b, sortColumn, sortDir, performanceMode),
-    );
-  }, [digests, assetFilter, sortColumn, sortDir, performanceMode]);
+  const tableRows = useMemo(
+    () => filterByAssetClass(digests, assetFilter),
+    [digests, assetFilter],
+  );
 
   const selectedDigest = useMemo(
     () => digests.find((t) => t.ticker === selectedTicker) || null,
@@ -291,9 +272,6 @@ export function InvestmentsPageNext() {
                     rows={tableRows}
                     selectedTicker={selectedTicker}
                     onSelect={selectTicker}
-                    sortColumn={sortColumn}
-                    sortDir={sortDir}
-                    onSortColumn={onSortColumn}
                     performanceMode={performanceMode}
                     onPerformanceMode={setPerformanceModePersist}
                     assetFilter={assetFilter}

@@ -1,5 +1,5 @@
 /**
- * Self-test for next Verify sort (honest MV / last, numeric qty, persist).
+ * Self-test for next Verify/Wealth/Tax sort (honest MV / last, numeric qty, persist).
  * Run: npx --yes tsx src/features/investments/next/holdingsCompare.selftest.ts  (from frontend/)
  */
 import type { TickerDigest } from "../../../api/types";
@@ -16,6 +16,24 @@ import {
   resolvePersistedNextSort,
   savePersistedNextSort,
 } from "./holdingsCompare";
+import {
+  HOLDINGS_COLUMN_VIEW_KEY,
+  TAX_DEFAULT_COLUMN,
+  TAX_DEFAULT_DIR,
+  TAX_SORT_COLUMNS,
+  VIEW_DEFAULT_SORT,
+  VIEW_SORT_COLUMNS,
+  WEALTH_DEFAULT_COLUMN,
+  WEALTH_DEFAULT_DIR,
+  WEALTH_SORT_COLUMNS,
+  filterTickersByQuery,
+  loadPersistedColumnView,
+  resolvePersistedSortForView,
+  resolveSortForView,
+  savePersistedColumnView,
+  uniqueGradeKeyPairs,
+  type ViewStorage,
+} from "./holdingsViews";
 
 function assertEq(actual: unknown, expected: unknown, msg: string): void {
   if (actual !== expected) {
@@ -211,6 +229,144 @@ function memoryStorage(initial: Record<string, string> = {}): SortStorage & {
   savePersistedNextSort("unrealized", "desc", store);
   const afterWealthLeak = resolvePersistedNextSort(store);
   assertEq(afterWealthLeak.column, "qty", "stored unrealized rejected for Verify");
+}
+
+// --- view-default sort: Wealth unrealized desc, Tax unlock desc ---
+{
+  const wealthUnset = resolveSortForView("wealth", null, null);
+  assertEq(wealthUnset.column, WEALTH_DEFAULT_COLUMN, "Wealth unset column");
+  assertEq(wealthUnset.dir, WEALTH_DEFAULT_DIR, "Wealth unset dir");
+  assertEq(wealthUnset.column, "unrealized", "Wealth default is unrealized");
+  assertEq(wealthUnset.dir, "desc", "Wealth default dir is desc");
+
+  const taxUnset = resolveSortForView("tax", null, null);
+  assertEq(taxUnset.column, TAX_DEFAULT_COLUMN, "Tax unset column");
+  assertEq(taxUnset.dir, TAX_DEFAULT_DIR, "Tax unset dir");
+  assertEq(taxUnset.column, "unlock", "Tax default is unlock");
+  assertEq(taxUnset.dir, "desc", "Tax default dir is desc");
+
+  const verifyRejectsUnrealized = resolveSortForView("verify", "unrealized", "desc");
+  assertEq(verifyRejectsUnrealized.column, "qty", "Verify rejects hidden unrealized");
+  assertEq(verifyRejectsUnrealized.dir, "desc", "Verify invalid resets to qty desc");
+
+  const wealthKeeps = resolveSortForView("wealth", "unrealized", "asc");
+  assertEq(wealthKeeps.column, "unrealized", "Wealth keeps unrealized");
+  assertEq(wealthKeeps.dir, "asc", "Wealth keeps dir when column valid");
+
+  const wealthRejectsLast = resolveSortForView("wealth", "last", "asc");
+  assertEq(wealthRejectsLast.column, "unrealized", "Wealth rejects Verify-only last");
+  assertEq(wealthRejectsLast.dir, "desc", "Wealth invalid resets to default dir");
+
+  const taxRejectsUnrealized = resolveSortForView("tax", "unrealized", "desc");
+  assertEq(taxRejectsUnrealized.column, "unlock", "Tax rejects hidden unrealized");
+  assertEq(taxRejectsUnrealized.dir, "desc", "Tax invalid resets to unlock desc");
+
+  const taxKeepsLots = resolveSortForView("tax", "lots", "asc");
+  assertEq(taxKeepsLots.column, "lots", "Tax keeps lots");
+  assertEq(taxKeepsLots.dir, "asc", "Tax keeps dir when column valid");
+
+  assert(
+    VIEW_SORT_COLUMNS.verify === VERIFY_SORT_COLUMNS,
+    "Verify column set is the shared Verify list",
+  );
+  assert(VIEW_SORT_COLUMNS.wealth === WEALTH_SORT_COLUMNS, "Wealth column set");
+  assert(VIEW_SORT_COLUMNS.tax === TAX_SORT_COLUMNS, "Tax column set");
+  assertEq(VIEW_DEFAULT_SORT.verify.column, "qty", "VIEW_DEFAULT_SORT verify");
+  assertEq(VIEW_DEFAULT_SORT.wealth.column, "unrealized", "VIEW_DEFAULT_SORT wealth");
+  assertEq(VIEW_DEFAULT_SORT.tax.column, "unlock", "VIEW_DEFAULT_SORT tax");
+}
+
+{
+  const store = memoryStorage();
+  const wealthFromEmpty = resolvePersistedSortForView("wealth", store);
+  assertEq(wealthFromEmpty.column, "unrealized", "empty storage Wealth → unrealized");
+  assertEq(wealthFromEmpty.dir, "desc", "empty storage Wealth → desc");
+  assertEq(loadPersistedNextSort(store).column, null, "Wealth resolve does not seed sort");
+
+  const taxFromEmpty = resolvePersistedSortForView("tax", store);
+  assertEq(taxFromEmpty.column, "unlock", "empty storage Tax → unlock");
+
+  savePersistedNextSort("unrealized", "asc", store);
+  const wealthOk = resolvePersistedSortForView("wealth", store);
+  assertEq(wealthOk.column, "unrealized", "stored unrealized valid on Wealth");
+  assertEq(wealthOk.dir, "asc", "stored dir kept on Wealth");
+
+  const verifyRejects = resolvePersistedSortForView("verify", store);
+  assertEq(verifyRejects.column, "qty", "same stored unrealized rejected on Verify");
+
+  const taxRejects = resolvePersistedSortForView("tax", store);
+  assertEq(taxRejects.column, "unlock", "same stored unrealized rejected on Tax");
+}
+
+// --- columnView persist: unset → verify; write only on save ---
+{
+  function viewStore(initial: Record<string, string> = {}): ViewStorage & {
+    writes: Array<[string, string]>;
+  } {
+    return memoryStorage(initial);
+  }
+
+  const unset = viewStore();
+  assertEq(loadPersistedColumnView(unset), "verify", "unset columnView is verify");
+  assertEq(unset.writes.length, 0, "load columnView does not write");
+  assertEq(
+    unset.getItem(HOLDINGS_COLUMN_VIEW_KEY),
+    null,
+    "do not seed columnView on load",
+  );
+
+  const garbage = viewStore({ [HOLDINGS_COLUMN_VIEW_KEY]: "mosaic" });
+  assertEq(loadPersistedColumnView(garbage), "verify", "invalid columnView → verify");
+
+  savePersistedColumnView("tax", unset);
+  assertEq(loadPersistedColumnView(unset), "tax", "saved tax view");
+  savePersistedColumnView("wealth", unset);
+  assertEq(loadPersistedColumnView(unset), "wealth", "saved wealth view");
+}
+
+// --- ticker substring filter (client-only) ---
+{
+  const book = [
+    digest({ ticker: "AAPL" }),
+    digest({ ticker: "BTC" }),
+    digest({ ticker: "ETH" }),
+    digest({ ticker: "TSLA" }),
+  ];
+  assertEq(
+    filterTickersByQuery(book, "bt")
+      .map((t) => t.ticker)
+      .join(","),
+    "BTC",
+    "substring bt → BTC",
+  );
+  assertEq(
+    filterTickersByQuery(book, "  a  ")
+      .map((t) => t.ticker)
+      .join(","),
+    "AAPL,TSLA",
+    "case-insensitive substring a",
+  );
+  assertEq(
+    filterTickersByQuery(book, "").length,
+    4,
+    "empty query returns the loaded book",
+  );
+}
+
+// --- grade key: unique roi_grade + label pairs from the loaded book ---
+{
+  const book = [
+    digest({ ticker: "A", roi_grade: "A", roi_grade_label: "Strong" }),
+    digest({ ticker: "B", roi_grade: "C", roi_grade_label: "Flat" }),
+    digest({ ticker: "C", roi_grade: "A", roi_grade_label: "Strong" }),
+    digest({ ticker: "D", roi_grade: "A", roi_grade_label: "Exceptional" }),
+  ];
+  const pairs = uniqueGradeKeyPairs(book);
+  assertEq(pairs.length, 3, "duplicate A/Strong collapsed");
+  assertEq(pairs[0]?.grade, "A", "A ranks first");
+  assertEq(pairs[0]?.label, "Exceptional", "same grade ordered by label");
+  assertEq(pairs[1]?.label, "Strong", "second A label");
+  assertEq(pairs[2]?.grade, "C", "C after A");
 }
 
 console.log("holdingsCompare.selftest: ok");

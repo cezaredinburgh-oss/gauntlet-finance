@@ -1,21 +1,44 @@
-import { useMemo, useState } from "react";
-import { Layers } from "lucide-react";
-import type { TickerDigest } from "../../../api/types";
-import { formatQty, formatUsd } from "../../../lib/money";
+import { useMemo, useRef, useState } from "react";
+import { Layers, Search } from "lucide-react";
+import type { TaxTranche, TickerDigest } from "../../../api/types";
+import { d, formatQty, formatUsd } from "../../../lib/money";
 import { cn } from "../../../lib/cn";
+import { gradeStyleClass } from "../gradeStyles";
 import {
   type HoldingsAssetFilter,
-  type HoldingsSortColumn,
   type HoldingsSortMode,
   taxFreeSharePct,
 } from "../holdingsSort";
 import {
   compareNextHoldingsColumn,
-  resolvePersistedNextSort,
   savePersistedNextSort,
   type NextSortColumn,
   type NextSortDir,
 } from "./holdingsCompare";
+import {
+  type HoldingsColumnView,
+  filterTickersByQuery,
+  loadPersistedColumnView,
+  resolvePersistedSortForView,
+  savePersistedColumnView,
+  uniqueGradeKeyPairs,
+} from "./holdingsViews";
+
+/** Copied from classic HoldingsDetailPanel — do not import that frozen file. */
+const TAX_TRANCHE_COLORS: Record<string, string> = {
+  now: "#2dd4a8",
+  later_this_year: "#38bdf8",
+  next_year: "#fbbf24",
+  year_after: "#f87171",
+};
+
+const TRANCHE_KEYS = ["now", "later_this_year", "next_year", "year_after"] as const;
+
+const VIEW_TABS: readonly { id: HoldingsColumnView; label: string }[] = [
+  { id: "verify", label: "Verify" },
+  { id: "wealth", label: "Wealth" },
+  { id: "tax", label: "Tax" },
+];
 
 function SortTh({
   label,
@@ -66,14 +89,113 @@ function taxFreeTooltip(t: TickerDigest): string {
   return t.tax_tranches.map((x) => `${x.label}: ${formatQty(x.quantity)}`).join("\n");
 }
 
+function pctCell(pct: number | null | undefined, suffix = "%") {
+  if (pct == null) return <span className="text-ink-faint">—</span>;
+  return (
+    <span className={cn("tabular-nums", pct >= 0 ? "text-ok" : "text-danger")}>
+      {pct >= 0 ? "+" : ""}
+      {pct.toFixed(1)}
+      {suffix}
+    </span>
+  );
+}
+
+function TrancheMiniBar({ tranches }: { tranches: TaxTranche[] }) {
+  const sumMv = tranches.reduce((s, x) => s + d(x.market_value_usd), 0);
+  const useQty = sumMv <= 0;
+  const denom = useQty
+    ? tranches.reduce((s, x) => s + d(x.quantity), 0)
+    : sumMv;
+  if (denom <= 0 || tranches.length === 0) {
+    return <span className="text-ink-faint">—</span>;
+  }
+  const byKey = new Map(tranches.map((x) => [x.key, x]));
+  const known = new Set<string>(TRANCHE_KEYS);
+  const ordered: TaxTranche[] = [
+    ...TRANCHE_KEYS.map((k) => byKey.get(k)).filter((x): x is TaxTranche => x != null),
+    ...tranches.filter((x) => !known.has(x.key)),
+  ];
+  return (
+    <div className="flex h-2 w-20 overflow-hidden rounded-sm ring-1 ring-white/10">
+      {ordered.map((x) => {
+        const part = useQty ? d(x.quantity) : d(x.market_value_usd);
+        if (part <= 0) return null;
+        const pct = (part / denom) * 100;
+        if (pct <= 0) return null;
+        return (
+          <div
+            key={x.key}
+            title={`${x.label}: ${formatUsd(x.market_value_usd)} · ${formatQty(x.quantity)}`}
+            style={{
+              width: `${pct}%`,
+              background: TAX_TRANCHE_COLORS[x.key] || "#64748b",
+            }}
+            className="h-full"
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function TickerCell({ t }: { t: TickerDigest }) {
+  return (
+    <td className="px-2 py-2">
+      <div className="font-semibold text-ink">{t.ticker}</div>
+      {t.asset_class ? (
+        <div className="text-[10px] text-ink-faint">{t.asset_class}</div>
+      ) : null}
+    </td>
+  );
+}
+
+function HonestMvCell({ t }: { t: TickerDigest }) {
+  return (
+    <td className="px-2 py-2 text-right tabular-nums font-medium">
+      {t.market_value_usd != null ? (
+        formatUsd(t.market_value_usd)
+      ) : (
+        <span className="block text-ink-faint" title="No live quote — not market value">
+          <span className="text-[10px] font-semibold uppercase tracking-wide">COST · </span>
+          {formatUsd(t.cost_basis_usd)}
+        </span>
+      )}
+    </td>
+  );
+}
+
+function TaxFreeCell({ t }: { t: TickerDigest }) {
+  const freePct = taxFreeSharePct(t);
+  return (
+    <td className="min-w-[5.5rem] px-3 py-2 text-right text-xs">
+      {freePct != null ? (
+        <span
+          className={
+            freePct >= 100 ? "text-ok" : freePct <= 0 ? "text-warn" : "text-ink-muted"
+          }
+          title={taxFreeTooltip(t)}
+        >
+          {freePct.toFixed(freePct % 1 === 0 ? 0 : 1)}%
+        </span>
+      ) : (
+        <span className="text-ink-faint" title={taxFreeTooltip(t)}>
+          —
+        </span>
+      )}
+    </td>
+  );
+}
+
 /**
- * Lab next Verify table. Owns sort so qty / last / honest MV work without
- * widening classic HoldingsSortColumn or using compareHoldingsColumn.
+ * Lab next table. Owns Verify / Wealth / Tax presets + sort so hidden
+ * columns cannot remain the active sort key.
  */
 export function HoldingsTableNext({
   rows,
   selectedTicker,
   onSelect,
+  performanceMode,
+  onPerformanceMode,
   assetFilter,
   onAssetFilter,
   totalCount,
@@ -81,19 +203,26 @@ export function HoldingsTableNext({
   rows: TickerDigest[];
   selectedTicker: string | null;
   onSelect: (ticker: string) => void;
-  /** Kept so PR3 page wiring typechecks; Verify owns sort below. */
-  sortColumn: HoldingsSortColumn;
-  sortDir: "asc" | "desc";
-  onSortColumn: (col: HoldingsSortColumn) => void;
-  /** Wealth-only in PR5 — hidden on this Verify default. */
   performanceMode: HoldingsSortMode;
   onPerformanceMode: (mode: HoldingsSortMode) => void;
   assetFilter: HoldingsAssetFilter;
   onAssetFilter: (f: HoldingsAssetFilter) => void;
   totalCount: number;
 }) {
-  const [sort, setSort] = useState(resolvePersistedNextSort);
+  const [view, setView] = useState<HoldingsColumnView>(() => loadPersistedColumnView());
+  const [sort, setSort] = useState(() =>
+    resolvePersistedSortForView(loadPersistedColumnView()),
+  );
+  const [tickerQuery, setTickerQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const rowEls = useRef(new Map<string, HTMLTableRowElement>());
   const { column: sortColumn, dir: sortDir } = sort;
+
+  function onView(next: HoldingsColumnView) {
+    setView(next);
+    savePersistedColumnView(next);
+    setSort(resolvePersistedSortForView(next));
+  }
 
   function onSort(col: NextSortColumn) {
     const nextDir: NextSortDir =
@@ -101,17 +230,36 @@ export function HoldingsTableNext({
         ? sortDir === "asc"
           ? "desc"
           : "asc"
-        : col === "ticker"
+        : col === "ticker" || col === "grade"
           ? "asc"
           : "desc";
     setSort({ column: col, dir: nextDir });
     savePersistedNextSort(col, nextDir);
   }
 
+  function pickTicker(ticker: string) {
+    onSelect(ticker);
+    window.requestAnimationFrame(() => {
+      rowEls.current.get(ticker)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) => compareNextHoldingsColumn(a, b, sortColumn, sortDir)),
     [rows, sortColumn, sortDir],
   );
+
+  const matches = useMemo(
+    () => filterTickersByQuery(sortedRows, tickerQuery),
+    [sortedRows, tickerQuery],
+  );
+
+  const visibleRows = tickerQuery.trim() ? matches : sortedRows;
+  const gradePairs = useMemo(
+    () => (view === "wealth" ? uniqueGradeKeyPairs(rows) : []),
+    [view, rows],
+  );
+  const colSpan = view === "tax" ? 6 : 7;
 
   return (
     <div className="card flex flex-col">
@@ -123,6 +271,28 @@ export function HoldingsTableNext({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <div
+            className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5"
+            role="group"
+            aria-label="Column view"
+          >
+            {VIEW_TABS.map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onView(id)}
+                aria-pressed={view === id}
+                className={cn(
+                  "rounded-md px-2 py-1 text-[11px] font-semibold transition",
+                  view === id
+                    ? "bg-brand/20 text-brand"
+                    : "text-ink-faint hover:text-ink-muted",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
             {(
               [
@@ -146,95 +316,321 @@ export function HoldingsTableNext({
               </button>
             ))}
           </div>
+          {view === "wealth" ? (
+            <div className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
+              <button
+                type="button"
+                onClick={() => onPerformanceMode("total")}
+                className={cn(
+                  "rounded-md px-2 py-1 text-[11px] font-semibold transition",
+                  performanceMode === "total"
+                    ? "bg-brand/20 text-brand"
+                    : "text-ink-faint hover:text-ink-muted",
+                )}
+                title="Show total unrealized %"
+              >
+                Total
+              </button>
+              <button
+                type="button"
+                onClick={() => onPerformanceMode("annualized")}
+                className={cn(
+                  "rounded-md px-2 py-1 text-[11px] font-semibold transition",
+                  performanceMode === "annualized"
+                    ? "bg-brand/20 text-brand"
+                    : "text-ink-faint hover:text-ink-muted",
+                )}
+                title="Show annualized open ROI %"
+              >
+                Ann.
+              </button>
+            </div>
+          ) : null}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ink-faint" />
+            <input
+              type="search"
+              value={tickerQuery}
+              onChange={(e) => {
+                setTickerQuery(e.target.value);
+                setSearchOpen(true);
+              }}
+              onFocus={() => setSearchOpen(true)}
+              onBlur={() => {
+                window.setTimeout(() => setSearchOpen(false), 120);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setTickerQuery("");
+                  setSearchOpen(false);
+                  return;
+                }
+                if (e.key === "Enter" && matches[0]) {
+                  e.preventDefault();
+                  pickTicker(matches[0].ticker);
+                  setSearchOpen(false);
+                }
+              }}
+              placeholder="Find ticker"
+              aria-label="Find ticker"
+              className="h-7 w-32 rounded-md border border-white/10 bg-white/[0.03] pl-6 pr-2 text-[11px] text-ink placeholder:text-ink-faint focus:border-brand/40 focus:outline-none"
+            />
+            {searchOpen && tickerQuery.trim() && matches.length > 0 ? (
+              <ul
+                className="absolute right-0 z-30 mt-1 max-h-48 w-40 overflow-auto rounded-md border border-white/10 bg-surface py-1 shadow-lg"
+                role="listbox"
+              >
+                {matches.slice(0, 12).map((t) => (
+                  <li key={t.ticker}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={selectedTicker === t.ticker}
+                      className={cn(
+                        "flex w-full px-2 py-1 text-left text-[11px] font-semibold",
+                        selectedTicker === t.ticker
+                          ? "bg-brand/15 text-brand"
+                          : "text-ink hover:bg-white/[0.06]",
+                      )}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        pickTicker(t.ticker);
+                        setSearchOpen(false);
+                      }}
+                    >
+                      {t.ticker}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
           <span className="badge bg-white/5 text-ink-muted">
-            {rows.length}
-            {rows.length !== totalCount ? ` / ${totalCount}` : ""} tickers
+            {visibleRows.length}
+            {visibleRows.length !== totalCount ? ` / ${totalCount}` : ""} tickers
           </span>
         </div>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[48rem] text-left text-xs">
+        <table
+          className={cn(
+            "w-full text-left text-xs",
+            view === "tax" ? "min-w-[40rem]" : "min-w-[48rem]",
+          )}
+        >
           <thead>
             <tr className="border-b border-white/10">
-              <SortTh
-                label="Ticker"
-                col="ticker"
-                activeCol={sortColumn}
-                dir={sortDir}
-                onSort={onSort}
-              />
-              <SortTh
-                label="Qty"
-                col="qty"
-                activeCol={sortColumn}
-                dir={sortDir}
-                onSort={onSort}
-                align="right"
-                title="Fee-net quantity on open lots"
-              />
-              <SortTh
-                label="Platforms"
-                col="platforms"
-                activeCol={sortColumn}
-                dir={sortDir}
-                onSort={onSort}
-                title="Broker / venue split"
-              />
-              <SortTh
-                label="Last / as-of"
-                col="last"
-                activeCol={sortColumn}
-                dir={sortDir}
-                onSort={onSort}
-                align="right"
-                title="Live mark and as-of — not cost"
-              />
-              <SortTh
-                label="MV"
-                col="mv"
-                activeCol={sortColumn}
-                dir={sortDir}
-                onSort={onSort}
-                align="right"
-                title="Market value — unpriced rows show labeled cost, not a quote"
-              />
-              <SortTh
-                label="FIFO avg"
-                col="fifoAvg"
-                activeCol={sortColumn}
-                dir={sortDir}
-                onSort={onSort}
-                align="right"
-                title="Average cost per unit (FIFO)"
-              />
-              <SortTh
-                label="Tax-free"
-                col="unlock"
-                activeCol={sortColumn}
-                dir={sortDir}
-                onSort={onSort}
-                align="right"
-                className="min-w-[5.5rem] px-3"
-                title="Tax-free share of position (MV when priced)"
-              />
+              {view === "verify" ? (
+                <>
+                  <SortTh
+                    label="Ticker"
+                    col="ticker"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                  />
+                  <SortTh
+                    label="Qty"
+                    col="qty"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    title="Fee-net quantity on open lots"
+                  />
+                  <SortTh
+                    label="Platforms"
+                    col="platforms"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    title="Broker / venue split"
+                  />
+                  <SortTh
+                    label="Last / as-of"
+                    col="last"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    title="Live mark and as-of — not cost"
+                  />
+                  <SortTh
+                    label="MV"
+                    col="mv"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    title="Market value — unpriced rows show labeled cost, not a quote"
+                  />
+                  <SortTh
+                    label="FIFO avg"
+                    col="fifoAvg"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    title="Average cost per unit (FIFO)"
+                  />
+                  <SortTh
+                    label="Tax-free"
+                    col="unlock"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    className="min-w-[5.5rem] px-3"
+                    title="Tax-free share of position (MV when priced)"
+                  />
+                </>
+              ) : null}
+              {view === "wealth" ? (
+                <>
+                  <SortTh
+                    label="Ticker"
+                    col="ticker"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                  />
+                  <SortTh
+                    label="MV"
+                    col="mv"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    title="Market value — unpriced rows show labeled cost, not a quote"
+                  />
+                  <SortTh
+                    label="FIFO cost"
+                    col="cost"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    title="Open FIFO cost basis"
+                  />
+                  <SortTh
+                    label={performanceMode === "annualized" ? "Unreal. ann." : "Unrealized"}
+                    col="unrealized"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    title={
+                      performanceMode === "annualized"
+                        ? "Annualized open ROI %"
+                        : "Total unrealized $ / %"
+                    }
+                  />
+                  <SortTh
+                    label="Weight"
+                    col="weight"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                  />
+                  <SortTh
+                    label="Grade"
+                    col="grade"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    title="Total ROI grade — not tied to Total/Ann"
+                  />
+                  <SortTh
+                    label="Share"
+                    col="share"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    title="Share of portfolio unrealized"
+                  />
+                </>
+              ) : null}
+              {view === "tax" ? (
+                <>
+                  <SortTh
+                    label="Ticker"
+                    col="ticker"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                  />
+                  <SortTh
+                    label="Qty"
+                    col="qty"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    title="Fee-net quantity on open lots"
+                  />
+                  <SortTh
+                    label="Tax-free"
+                    col="unlock"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    className="min-w-[5.5rem] px-3"
+                    title="Tax-free share of position (MV when priced)"
+                  />
+                  <SortTh
+                    label="Tranche"
+                    col="tranche"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    title="Tax-status mix (MV, qty if unpriced)"
+                  />
+                  <th
+                    className="px-2 py-2 text-left font-medium text-ink-faint"
+                    title="Next 1095 unlock"
+                  >
+                    Next unlock
+                  </th>
+                  <SortTh
+                    label="Lots"
+                    col="lots"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="right"
+                    title="Open lot count"
+                  />
+                </>
+              ) : null}
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
-            {sortedRows.length === 0 ? (
+            {visibleRows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-ink-faint">
+                <td colSpan={colSpan} className="px-3 py-8 text-center text-ink-faint">
                   No holdings match this filter.
                 </td>
               </tr>
             ) : (
-              sortedRows.map((t) => {
+              visibleRows.map((t) => {
                 const active = selectedTicker === t.ticker;
-                const freePct = taxFreeSharePct(t);
                 const noQuote = t.missing_price || t.price_usd == null;
+                const roi =
+                  performanceMode === "annualized"
+                    ? t.annualized_unrealized_pct
+                    : t.unrealized_pct;
                 return (
                   <tr
                     key={t.ticker}
+                    ref={(el) => {
+                      if (el) rowEls.current.set(t.ticker, el);
+                      else rowEls.current.delete(t.ticker);
+                    }}
                     role="button"
                     tabIndex={0}
                     onClick={() => onSelect(t.ticker)}
@@ -251,85 +647,124 @@ export function HoldingsTableNext({
                         : "hover:bg-white/[0.04]",
                     )}
                   >
-                    <td className="px-2 py-2">
-                      <div className="font-semibold text-ink">{t.ticker}</div>
-                      {t.asset_class ? (
-                        <div className="text-[10px] text-ink-faint">{t.asset_class}</div>
-                      ) : null}
-                    </td>
-                    <td className="px-2 py-2 text-right tabular-nums font-medium">
-                      {formatQty(t.quantity_total)}
-                    </td>
-                    <td className="px-2 py-2">
-                      {t.multi_platform ? (
-                        <span
-                          className="inline-flex items-center text-ink-muted"
-                          title={platformTooltip(t)}
-                        >
-                          <Layers className="h-3.5 w-3.5" />
-                        </span>
-                      ) : (
-                        <span className="text-[11px] text-ink-faint">
-                          {t.by_platform[0]?.source ?? "—"}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-right">
-                      {noQuote ? (
-                        <span className="inline-flex rounded-md bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold text-warn">
-                          No quote
-                        </span>
-                      ) : (
-                        <>
-                          <div className="tabular-nums font-medium">
-                            {formatUsd(t.price_usd)}
-                          </div>
-                          {t.price_as_of ? (
-                            <div className="text-[10px] tabular-nums text-ink-faint">
-                              {t.price_as_of}
+                    {view === "verify" ? (
+                      <>
+                        <TickerCell t={t} />
+                        <td className="px-2 py-2 text-right tabular-nums font-medium">
+                          {formatQty(t.quantity_total)}
+                        </td>
+                        <td className="px-2 py-2">
+                          {t.multi_platform ? (
+                            <span
+                              className="inline-flex items-center text-ink-muted"
+                              title={platformTooltip(t)}
+                            >
+                              <Layers className="h-3.5 w-3.5" />
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-ink-faint">
+                              {t.by_platform[0]?.source ?? "—"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          {noQuote ? (
+                            <span className="inline-flex rounded-md bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold text-warn">
+                              No quote
+                            </span>
+                          ) : (
+                            <>
+                              <div className="tabular-nums font-medium">
+                                {formatUsd(t.price_usd)}
+                              </div>
+                              {t.price_as_of ? (
+                                <div className="text-[10px] tabular-nums text-ink-faint">
+                                  {t.price_as_of}
+                                </div>
+                              ) : null}
+                            </>
+                          )}
+                        </td>
+                        <HonestMvCell t={t} />
+                        <td className="px-2 py-2 text-right tabular-nums text-ink-muted">
+                          {formatUsd(t.avg_cost_usd)}
+                        </td>
+                        <TaxFreeCell t={t} />
+                      </>
+                    ) : null}
+                    {view === "wealth" ? (
+                      <>
+                        <TickerCell t={t} />
+                        <HonestMvCell t={t} />
+                        <td className="px-2 py-2 text-right tabular-nums text-ink-muted">
+                          {formatUsd(t.cost_basis_usd)}
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          {pctCell(roi ?? null)}
+                          {t.unrealized_usd != null && performanceMode === "total" ? (
+                            <div className="text-[10px] text-ink-faint">
+                              {d(t.unrealized_usd) >= 0 ? "+" : ""}
+                              {formatUsd(t.unrealized_usd)}
                             </div>
                           ) : null}
-                        </>
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-right tabular-nums font-medium">
-                      {t.market_value_usd != null ? (
-                        formatUsd(t.market_value_usd)
-                      ) : (
-                        <span
-                          className="block text-ink-faint"
-                          title="No live quote — not market value"
-                        >
-                          <span className="text-[10px] font-semibold uppercase tracking-wide">
-                            COST ·{" "}
+                        </td>
+                        <td className="px-2 py-2 text-right tabular-nums text-ink-muted">
+                          {t.portfolio_weight_pct.toFixed(1)}%
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          <span
+                            className={cn(
+                              "inline-flex h-6 min-w-[1.5rem] items-center justify-center rounded-md px-1 text-[11px] font-bold ring-1",
+                              gradeStyleClass(t.roi_grade),
+                            )}
+                            title={t.roi_grade_label}
+                          >
+                            {t.roi_grade}
                           </span>
-                          {formatUsd(t.cost_basis_usd)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-right tabular-nums text-ink-muted">
-                      {formatUsd(t.avg_cost_usd)}
-                    </td>
-                    <td className="min-w-[5.5rem] px-3 py-2 text-right text-xs">
-                      {freePct != null ? (
-                        <span
-                          className={
-                            freePct >= 100
-                              ? "text-ok"
-                              : freePct <= 0
-                                ? "text-warn"
-                                : "text-ink-muted"
-                          }
-                          title={taxFreeTooltip(t)}
-                        >
-                          {freePct.toFixed(freePct % 1 === 0 ? 0 : 1)}%
-                        </span>
-                      ) : (
-                        <span className="text-ink-faint" title={taxFreeTooltip(t)}>
-                          —
-                        </span>
-                      )}
-                    </td>
+                        </td>
+                        <td className="px-2 py-2 text-right tabular-nums">
+                          {t.unrealized_share_pct == null ? (
+                            <span className="text-ink-faint">—</span>
+                          ) : (
+                            <span className="text-ink-muted">
+                              {t.unrealized_share_pct.toFixed(
+                                t.unrealized_share_pct % 1 === 0 ? 0 : 1,
+                              )}
+                              %
+                            </span>
+                          )}
+                        </td>
+                      </>
+                    ) : null}
+                    {view === "tax" ? (
+                      <>
+                        <TickerCell t={t} />
+                        <td className="px-2 py-2 text-right tabular-nums font-medium">
+                          {formatQty(t.quantity_total)}
+                        </td>
+                        <TaxFreeCell t={t} />
+                        <td className="px-2 py-2">
+                          <TrancheMiniBar tranches={t.tax_tranches} />
+                        </td>
+                        <td className="px-2 py-2">
+                          {t.next_unlock_date ? (
+                            <>
+                              <div className="tabular-nums">{t.next_unlock_date}</div>
+                              {t.next_unlock_quantity ? (
+                                <div className="text-[10px] tabular-nums text-ink-faint">
+                                  {formatQty(t.next_unlock_quantity)}
+                                </div>
+                              ) : null}
+                            </>
+                          ) : (
+                            <span className="text-ok">All eligible</span>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-right tabular-nums">
+                          {t.open_lot_count}
+                        </td>
+                      </>
+                    ) : null}
                   </tr>
                 );
               })
@@ -337,6 +772,26 @@ export function HoldingsTableNext({
           </tbody>
         </table>
       </div>
+      {view === "wealth" && gradePairs.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-white/5 px-4 py-2">
+          <span className="mr-1 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+            Grade
+          </span>
+          {gradePairs.map((p) => (
+            <span
+              key={`${p.grade}\0${p.label}`}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold ring-1",
+                gradeStyleClass(p.grade),
+              )}
+              title={p.label}
+            >
+              {p.grade}
+              <span className="font-medium opacity-80">{p.label}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
