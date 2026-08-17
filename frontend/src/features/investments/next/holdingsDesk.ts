@@ -6,7 +6,7 @@ export type HoldingsDesk = "classic" | "next";
 export type DeskStorage = Pick<Storage, "getItem" | "setItem">;
 
 export const HOLDINGS_DESK_KEY = "gauntlet.holdings.desk";
-export const HOLDINGS_DESK_DEFAULT: HoldingsDesk = "classic";
+export const HOLDINGS_DESK_DEFAULT: HoldingsDesk = "next";
 
 export function loadPersistedDesk(
   storage: DeskStorage = window.localStorage,

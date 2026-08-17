@@ -72,12 +72,12 @@ assertEq(
   HOLDINGS_DESK_DEFAULT,
   "lab + ?desk=foo → default",
 );
-assertEq(HOLDINGS_DESK_DEFAULT, "classic", "PR2 default is classic");
+assertEq(HOLDINGS_DESK_DEFAULT, "next", "PR3 default is next");
 
 assertEq(
   resolveHoldingsDesk(lab, params(), memoryStorage()),
-  HOLDINGS_DESK_DEFAULT,
-  "lab + no query + no persist → default",
+  "next",
+  "lab + no query + no persist → next",
 );
 
 const persistNext = memoryStorage({ [HOLDINGS_DESK_KEY]: "next" });
