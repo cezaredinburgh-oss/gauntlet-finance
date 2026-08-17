@@ -126,7 +126,7 @@ export function InvestmentsAnalysisPageNext() {
           <div className="hidden lg:block">
             <AnalysisCapitalBridge snap={snap} monthsPref={monthsPref} />
           </div>
-          <div className="grid gap-6 lg:grid-cols-12">
+          <div className="grid min-w-0 gap-6 lg:grid-cols-12">
             <div className="min-w-0 lg:col-span-7">
               {hasCashflow && cashflow ? (
                 <CashflowMonthlyChartNext
@@ -140,7 +140,7 @@ export function InvestmentsAnalysisPageNext() {
                 </p>
               )}
             </div>
-            <div className="lg:col-span-5">
+            <div className="min-w-0 lg:col-span-5">
               <AnalysisCapitalHeroNext snap={snap} monthsPref={monthsPref} />
             </div>
           </div>
