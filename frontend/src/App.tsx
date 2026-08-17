@@ -14,7 +14,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { NewEtSpendingPage } from "./pages/NewEtSpendingPage";
 import { NewEtCategorizePage } from "./pages/NewEtCategorizePage";
 import { InvestmentsPageGate } from "./pages/InvestmentsPageGate";
-import { InvestmentsAnalysisPage } from "./pages/InvestmentsAnalysisPage";
+import { InvestmentsAnalysisPageGate } from "./pages/InvestmentsAnalysisPageGate";
 import { InvestmentsDcaPage } from "./pages/InvestmentsDcaPage";
 import { TaxPage } from "./pages/TaxPage";
 import { AlertsPage } from "./pages/AlertsPage";
@@ -158,7 +158,7 @@ export default function App() {
               />
             </Route>
             <Route path="investments" element={<InvestmentsPageGate />} />
-            <Route path="investments/analysis" element={<InvestmentsAnalysisPage />} />
+            <Route path="investments/analysis" element={<InvestmentsAnalysisPageGate />} />
             <Route path="investments/dca" element={<InvestmentsDcaPage />} />
             <Route path="investments/tax" element={<TaxPage />} />
             <Route path="upload" element={<UploadPage />} />
