@@ -11,15 +11,15 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { Layout } from "./components/Layout";
 import { PageLoader } from "./components/Spinner";
 import { DashboardPage } from "./pages/DashboardPage";
-import { NewEtSpendingPageGate } from "./pages/NewEtSpendingPageGate";
-import { NewEtCategorizePageGate } from "./pages/NewEtCategorizePageGate";
-import { InvestmentsPageGate } from "./pages/InvestmentsPageGate";
-import { InvestmentsAnalysisPageGate } from "./pages/InvestmentsAnalysisPageGate";
-import { InvestmentsDcaPageGate } from "./pages/InvestmentsDcaPageGate";
-import { TaxPageGate } from "./pages/TaxPageGate";
-import { AlertsPageGate } from "./pages/AlertsPageGate";
-import { UploadPageGate } from "./pages/UploadPageGate";
-import { SettingsPageGate } from "./pages/SettingsPageGate";
+import { NewEtSpendingPageNext } from "./pages/NewEtSpendingPageNext";
+import { NewEtCategorizePageNext } from "./pages/NewEtCategorizePageNext";
+import { InvestmentsPageNext } from "./pages/InvestmentsPageNext";
+import { InvestmentsAnalysisPageNext } from "./pages/InvestmentsAnalysisPageNext";
+import { InvestmentsDcaPageNext } from "./pages/InvestmentsDcaPageNext";
+import { TaxPageNext } from "./pages/TaxPageNext";
+import { AlertsPageNext } from "./pages/AlertsPageNext";
+import { UploadPageNext } from "./pages/UploadPageNext";
+import { SettingsPageNext } from "./pages/SettingsPageNext";
 import { ChartPopoutPage } from "./pages/ChartPopoutPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { LandingPage } from "./pages/LandingPage";
@@ -125,8 +125,8 @@ export default function App() {
             <Route path="dashboard" element={<Navigate to="/" replace />} />
             <Route path="expenses">
               <Route index element={<Navigate to="spending" replace />} />
-              <Route path="spending" element={<NewEtSpendingPageGate />} />
-              <Route path="categorize" element={<NewEtCategorizePageGate />} />
+              <Route path="spending" element={<NewEtSpendingPageNext />} />
+              <Route path="categorize" element={<NewEtCategorizePageNext />} />
               <Route
                 path="alerts"
                 element={<Navigate to="/alerts" replace />}
@@ -157,13 +157,13 @@ export default function App() {
                 element={<RedirectPreserveSearch to="/expenses/categorize" />}
               />
             </Route>
-            <Route path="investments" element={<InvestmentsPageGate />} />
-            <Route path="investments/analysis" element={<InvestmentsAnalysisPageGate />} />
-            <Route path="investments/dca" element={<InvestmentsDcaPageGate />} />
-            <Route path="investments/tax" element={<TaxPageGate />} />
-            <Route path="upload" element={<UploadPageGate />} />
+            <Route path="investments" element={<InvestmentsPageNext />} />
+            <Route path="investments/analysis" element={<InvestmentsAnalysisPageNext />} />
+            <Route path="investments/dca" element={<InvestmentsDcaPageNext />} />
+            <Route path="investments/tax" element={<TaxPageNext />} />
+            <Route path="upload" element={<UploadPageNext />} />
             <Route path="onboarding" element={<OnboardingPage />} />
-            <Route path="settings" element={<SettingsPageGate />} />
+            <Route path="settings" element={<SettingsPageNext />} />
             <Route path="transactions" element={<RedirectPreserveSearch to="/expenses/categorize" />} />
             <Route
               path="categories"
@@ -174,7 +174,7 @@ export default function App() {
                 />
               }
             />
-            <Route path="alerts" element={<AlertsPageGate />} />
+            <Route path="alerts" element={<AlertsPageNext />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
