@@ -45,7 +45,7 @@ def local_midnight(now: datetime, zone: ZoneInfo | str | None = None) -> datetim
 
 
 def resolve_day_timezone(repo: Any) -> str:
-    """Sheets ``Settings.timezone``, else env ``statement_timezone``. No process memo."""
+    """Sheets ``Settings.timezone``, else env ``statement_timezone``."""
     try:
         rows = repo.list_rows("Settings")
     except Exception:  # noqa: BLE001

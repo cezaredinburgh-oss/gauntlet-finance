@@ -470,18 +470,11 @@ def build_portfolio_1d_aligned_closes(
         return {}, "empty"
 
     out = _align_closes_on_grid(closes_full, asset_classes, grid, window_open)
-    status = "local_day"
-    if not out:
-        prior = local_midnight(midnight - timedelta(seconds=1), zone)
-        window_open = _snap_down_5m(prior)
-        grid = _utc_5m_grid(window_open, window_end)
-        if not grid:
-            return {}, "empty"
-        out = _align_closes_on_grid(closes_full, asset_classes, grid, window_open)
-        status = "prior_local_day"
     if not out:
         return {}, "empty"
-    return out, status
+    # Any print produces a carry-forward grid (not an empty book). A second
+    # pass to prior midnight cannot invent data and would span ~48h to now.
+    return out, "local_day"
 
 
 def _scalar_decimal(val: Any) -> Decimal | None:
@@ -2063,7 +2056,7 @@ class PriceHistoryService:
                     stock_daily={},
                     places=places,
                 )
-            # Mixed MV: not last-two-daily of the aggregated series
+            # Last two daily MV bars are UTC-ish dates, not local midnight.
             return self._day_change_from_marks(
                 qty_map,
                 ac_map,
@@ -2392,8 +2385,7 @@ class PriceHistoryService:
             places=2,
         )
         window_components: dict[str, Any] | None = None
-        # Portfolio: optional Stocks/Crypto legs (RTH vs 24h on 1D) — do NOT
-        # override headline. Headline stays chart-series book Δ + same-series mark.
+        # Midnight-grid legs on 1D; do not override the headline.
         if (
             ac_filter is None
             and quantity_basis.startswith("holdings_as_of")

@@ -1214,7 +1214,7 @@ def test_mark_performance_ignores_buy_even_if_yahoo_starts_after_buy():
 
 
 def test_portfolio_window_components_additive():
-    """Portfolio window performance = stock RTH + crypto 24h (ex-flows)."""
+    """Portfolio window performance = stock RTH + crypto local day (ex-flows)."""
     from backend.services.price_history import portfolio_window_from_components
 
     now = datetime(2026, 8, 10, 21, 30, 0, tzinfo=timezone.utc)
