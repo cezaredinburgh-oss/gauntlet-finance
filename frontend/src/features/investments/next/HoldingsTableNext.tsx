@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
-import type { TaxTranche, TickerDigest } from "../../../api/types";
-import { d, formatQty, formatUsd } from "../../../lib/money";
+import { api, ApiError } from "../../../api/client";
+import type { TaxTranche, TickerDigest, WindowPerformanceItem } from "../../../api/types";
+import { d, formatQty, formatUsd, hasMoneyValue } from "../../../lib/money";
 import { cn } from "../../../lib/cn";
 import { gradeStyleClass } from "../gradeStyles";
 import {
@@ -17,11 +18,13 @@ import {
 } from "./holdingsCompare";
 import {
   type HoldingsColumnView,
+  VIEW_TABS,
   filterTickersByQuery,
   loadPersistedColumnView,
   resolvePersistedSortForView,
   savePersistedColumnView,
   uniqueGradeKeyPairs,
+  viewForTaxRunwayFocus,
 } from "./holdingsViews";
 
 /** Copied from classic HoldingsDetailPanel — do not import that frozen file. */
@@ -33,12 +36,6 @@ const TAX_TRANCHE_COLORS: Record<string, string> = {
 };
 
 const TRANCHE_KEYS = ["now", "later_this_year", "next_year", "year_after"] as const;
-
-const VIEW_TABS: readonly { id: HoldingsColumnView; label: string }[] = [
-  { id: "verify", label: "Verify" },
-  { id: "wealth", label: "Wealth" },
-  { id: "tax", label: "Tax" },
-];
 
 function SortTh({
   label,
@@ -137,13 +134,14 @@ function TrancheMiniBar({ tranches }: { tranches: TaxTranche[] }) {
   );
 }
 
-function TickerCell({ t }: { t: TickerDigest }) {
+function TickerCell({ t, subtitle }: { t: TickerDigest; subtitle?: string }) {
   return (
     <td className="px-2 py-2 text-left">
       <div className="font-semibold text-ink">{t.ticker}</div>
       {t.asset_class ? (
         <div className="text-[10px] text-ink-faint">{t.asset_class}</div>
       ) : null}
+      {subtitle ? <div className="text-[10px] text-ink-faint">{subtitle}</div> : null}
     </td>
   );
 }
@@ -196,17 +194,39 @@ function TaxFreeCell({
   );
 }
 
-function viewForTaxRunwayFocus(
-  stored: HoldingsColumnView,
-  highlightTaxFree: boolean,
-): HoldingsColumnView {
-  // Wealth has no tax-free column; Verify keeps qty visible (do not jump to Tax).
-  if (highlightTaxFree && stored === "wealth") return "verify";
-  return stored;
+function perfForTicker(
+  t: TickerDigest,
+  map: Readonly<Record<string, WindowPerformanceItem>>,
+): WindowPerformanceItem | undefined {
+  return map[t.ticker.toUpperCase()];
+}
+
+function dayPnlDisplay(
+  t: TickerDigest,
+  perf: WindowPerformanceItem | undefined,
+): number | null {
+  if (perf && hasMoneyValue(perf.pnl_usd)) return d(perf.pnl_usd);
+  if (perf && hasMoneyValue(perf.change_abs)) return d(t.quantity_total) * d(perf.change_abs);
+  return null;
+}
+
+function signedUsdCell(value: number | null) {
+  if (value == null) return <span className="text-ink-faint">—</span>;
+  return (
+    <span className={cn("tabular-nums", value >= 0 ? "text-ok" : "text-danger")}>
+      {value >= 0 ? "+" : ""}
+      {formatUsd(value)}
+    </span>
+  );
+}
+
+function priorDaySubtitle(status: string | null | undefined): string | undefined {
+  if (status === "prior_session" || status === "prior_local_day") return "Prior day";
+  return undefined;
 }
 
 /**
- * Lab next table. Owns Verify / Wealth / Tax presets + sort so hidden
+ * Lab next table. Owns Verify / Wealth / Tax / Daily presets + sort so hidden
  * columns cannot remain the active sort key.
  */
 export function HoldingsTableNext({
@@ -243,6 +263,11 @@ export function HoldingsTableNext({
   });
   const [tickerQuery, setTickerQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [perfByTicker, setPerfByTicker] = useState<
+    Readonly<Record<string, WindowPerformanceItem>>
+  >({});
+  const [perfError, setPerfError] = useState<string | null>(null);
+  const [perfRefreshTick, setPerfRefreshTick] = useState(0);
   const rowEls = useRef(new Map<string, HTMLTableRowElement>());
   const taxFocusApplied = useRef(highlightTaxFree);
   const { column: sortColumn, dir: sortDir } = sort;
@@ -253,6 +278,43 @@ export function HoldingsTableNext({
     setView((prev) => viewForTaxRunwayFocus(prev, true));
     setSort({ column: "unlock", dir: "desc" });
   }, [highlightTaxFree]);
+
+  useEffect(() => {
+    if (view !== "daily") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.priceWindowPerformance({ range: "1d" });
+        if (cancelled) return;
+        const map: Record<string, WindowPerformanceItem> = {};
+        for (const it of res.items || []) {
+          map[it.ticker.toUpperCase()] = it;
+        }
+        setPerfByTicker(map);
+        setPerfError(null);
+      } catch (e) {
+        if (cancelled) return;
+        setPerfByTicker({});
+        setPerfError(e instanceof ApiError ? e.detail : e instanceof Error ? e.message : "Failed");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [view, perfRefreshTick]);
+
+  useEffect(() => {
+    const onPrices = (ev: Event) => {
+      const soft =
+        typeof CustomEvent !== "undefined" &&
+        ev instanceof CustomEvent &&
+        Boolean((ev.detail as { soft?: boolean } | undefined)?.soft);
+      if (soft || view !== "daily") return;
+      setPerfRefreshTick((n) => n + 1);
+    };
+    window.addEventListener("prices-updated", onPrices);
+    return () => window.removeEventListener("prices-updated", onPrices);
+  }, [view]);
 
   function onView(next: HoldingsColumnView) {
     setView(next);
@@ -283,9 +345,16 @@ export function HoldingsTableNext({
   const sortedRows = useMemo(
     () =>
       [...rows].sort((a, b) =>
-        compareNextHoldingsColumn(a, b, sortColumn, sortDir, performanceMode),
+        compareNextHoldingsColumn(
+          a,
+          b,
+          sortColumn,
+          sortDir,
+          performanceMode,
+          view === "daily" ? perfByTicker : undefined,
+        ),
       ),
-    [rows, sortColumn, sortDir, performanceMode],
+    [rows, sortColumn, sortDir, performanceMode, view, perfByTicker],
   );
 
   const matches = useMemo(
@@ -451,6 +520,12 @@ export function HoldingsTableNext({
         </div>
       </div>
 
+      {view === "daily" && perfError ? (
+        <div className="border-b border-warn/30 bg-warn/10 px-4 py-2 text-xs text-warn">
+          {perfError}
+        </div>
+      ) : null}
+
       <div>
         <table className="w-full table-fixed text-center text-xs">
           <thead>
@@ -598,6 +673,49 @@ export function HoldingsTableNext({
                   </th>
                 </>
               ) : null}
+              {view === "daily" ? (
+                <>
+                  <SortTh
+                    label="Ticker"
+                    col="ticker"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    align="left"
+                  />
+                  <SortTh
+                    label="Last"
+                    col="last"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                  />
+                  <SortTh
+                    label="Day Δ $"
+                    col="dayPnl"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    title="Mark P/L on current open qty × DayPolicy price move."
+                  />
+                  <SortTh
+                    label="Day %"
+                    col="dayPct"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    title="Mark P/L on current open qty × DayPolicy price move."
+                  />
+                  <SortTh
+                    label="MV"
+                    col="mv"
+                    activeCol={sortColumn}
+                    dir={sortDir}
+                    onSort={onSort}
+                    title="Market value — unpriced rows show labeled cost, not a quote"
+                  />
+                </>
+              ) : null}
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
@@ -614,6 +732,7 @@ export function HoldingsTableNext({
                   performanceMode === "annualized"
                     ? t.annualized_unrealized_pct
                     : t.unrealized_pct;
+                const perf = view === "daily" ? perfForTicker(t, perfByTicker) : undefined;
                 return (
                   <tr
                     key={t.ticker}
@@ -708,6 +827,25 @@ export function HoldingsTableNext({
                             <span className="text-ok">All eligible</span>
                           )}
                         </td>
+                      </>
+                    ) : null}
+                    {view === "daily" ? (
+                      <>
+                        <TickerCell t={t} subtitle={priorDaySubtitle(perf?.session_status)} />
+                        <td className="px-2 py-2 text-center tabular-nums font-medium">
+                          {hasMoneyValue(perf?.last_value) ? (
+                            formatUsd(perf?.last_value)
+                          ) : (
+                            <span className="text-ink-faint">—</span>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          {signedUsdCell(dayPnlDisplay(t, perf))}
+                        </td>
+                        <td className="px-2 py-2 text-center">
+                          {pctCell(perf?.change_pct ?? null)}
+                        </td>
+                        <HonestMvCell t={t} />
                       </>
                     ) : null}
                   </tr>

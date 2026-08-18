@@ -1,5 +1,5 @@
-import type { TickerDigest } from "../../../api/types";
-import { d } from "../../../lib/money";
+import type { TickerDigest, WindowPerformanceItem } from "../../../api/types";
+import { d, hasMoneyValue } from "../../../lib/money";
 import {
   compareNullableNumber,
   taxFreeSharePct,
@@ -20,7 +20,9 @@ export type NextSortColumn =
   | "share"
   | "unlock"
   | "tranche"
-  | "lots";
+  | "lots"
+  | "dayPnl"
+  | "dayPct";
 
 export type NextSortDir = "asc" | "desc";
 
@@ -56,6 +58,8 @@ const NEXT_SORT_COLUMN_SET = new Set<string>([
   "unlock",
   "tranche",
   "lots",
+  "dayPnl",
+  "dayPct",
 ]);
 
 const GRADE_RANK: Record<string, number> = {
@@ -151,6 +155,42 @@ export function resolvePersistedNextSort(
   return resolveNextSort(stored.column, stored.dir, allowed, defaults);
 }
 
+function perfItem(
+  t: TickerDigest,
+  perfByTicker: Readonly<Record<string, WindowPerformanceItem>>,
+): WindowPerformanceItem | undefined {
+  return perfByTicker[t.ticker.toUpperCase()];
+}
+
+function lastSortMetric(
+  t: TickerDigest,
+  perfByTicker: Readonly<Record<string, WindowPerformanceItem>>,
+  useWindowLast: boolean,
+): number | null {
+  if (useWindowLast) {
+    const perf = perfItem(t, perfByTicker);
+    return perf && hasMoneyValue(perf.last_value) ? d(perf.last_value) : null;
+  }
+  return lastPriceMetric(t);
+}
+
+function dayPnlMetric(
+  t: TickerDigest,
+  perfByTicker: Readonly<Record<string, WindowPerformanceItem>>,
+): number | null {
+  const perf = perfItem(t, perfByTicker);
+  if (!perf || !hasMoneyValue(perf.pnl_usd)) return null;
+  return d(perf.pnl_usd);
+}
+
+function dayPctMetric(
+  t: TickerDigest,
+  perfByTicker: Readonly<Record<string, WindowPerformanceItem>>,
+): number | null {
+  const pct = perfItem(t, perfByTicker)?.change_pct;
+  return pct == null || !Number.isFinite(pct) ? null : pct;
+}
+
 function platformCount(t: TickerDigest): number {
   return t.by_platform.length;
 }
@@ -175,10 +215,12 @@ export function compareNextHoldingsColumn(
   column: NextSortColumn,
   dir: NextSortDir,
   performanceMode: HoldingsSortMode = "total",
+  perfByTicker: Readonly<Record<string, WindowPerformanceItem>> = {},
 ): number {
   const mul = dir === "asc" ? 1 : -1;
   let cmp = 0;
   let nullsHandled = false;
+  const useWindowLast = Object.keys(perfByTicker).length > 0;
 
   switch (column) {
     case "ticker":
@@ -198,8 +240,38 @@ export function compareNextHoldingsColumn(
       break;
     }
     case "last": {
-      const am = lastPriceMetric(a);
-      const bm = lastPriceMetric(b);
+      const am = lastSortMetric(a, perfByTicker, useWindowLast);
+      const bm = lastSortMetric(b, perfByTicker, useWindowLast);
+      const n = compareNullableNumber(am, bm, mul);
+      if (am == null || bm == null) {
+        if (!(am == null && bm == null)) {
+          cmp = n;
+          nullsHandled = true;
+          break;
+        }
+      } else {
+        cmp = am - bm;
+      }
+      break;
+    }
+    case "dayPnl": {
+      const am = dayPnlMetric(a, perfByTicker);
+      const bm = dayPnlMetric(b, perfByTicker);
+      const n = compareNullableNumber(am, bm, mul);
+      if (am == null || bm == null) {
+        if (!(am == null && bm == null)) {
+          cmp = n;
+          nullsHandled = true;
+          break;
+        }
+      } else {
+        cmp = am - bm;
+      }
+      break;
+    }
+    case "dayPct": {
+      const am = dayPctMetric(a, perfByTicker);
+      const bm = dayPctMetric(b, perfByTicker);
       const n = compareNullableNumber(am, bm, mul);
       if (am == null || bm == null) {
         if (!(am == null && bm == null)) {

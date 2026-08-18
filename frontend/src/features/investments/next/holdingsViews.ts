@@ -10,7 +10,7 @@ import {
   resolvePersistedNextSort,
 } from "./holdingsCompare";
 
-export type HoldingsColumnView = "verify" | "wealth" | "tax";
+export type HoldingsColumnView = "verify" | "wealth" | "tax" | "daily";
 
 export type ViewStorage = Pick<Storage, "getItem" | "setItem">;
 
@@ -33,15 +33,33 @@ export const TAX_SORT_COLUMNS: readonly NextSortColumn[] = [
   "tranche",
 ];
 
+export const DAILY_SORT_COLUMNS: readonly NextSortColumn[] = [
+  "ticker",
+  "last",
+  "dayPnl",
+  "dayPct",
+  "mv",
+];
+
 export const WEALTH_DEFAULT_COLUMN: NextSortColumn = "unrealized";
 export const WEALTH_DEFAULT_DIR: NextSortDir = "desc";
 export const TAX_DEFAULT_COLUMN: NextSortColumn = "unlock";
 export const TAX_DEFAULT_DIR: NextSortDir = "desc";
+export const DAILY_DEFAULT_COLUMN: NextSortColumn = "dayPct";
+export const DAILY_DEFAULT_DIR: NextSortDir = "desc";
+
+export const VIEW_TABS: readonly { id: HoldingsColumnView; label: string }[] = [
+  { id: "verify", label: "Verify" },
+  { id: "wealth", label: "Wealth" },
+  { id: "tax", label: "Tax" },
+  { id: "daily", label: "Daily" },
+];
 
 export const VIEW_SORT_COLUMNS: Record<HoldingsColumnView, readonly NextSortColumn[]> = {
   verify: VERIFY_SORT_COLUMNS,
   wealth: WEALTH_SORT_COLUMNS,
   tax: TAX_SORT_COLUMNS,
+  daily: DAILY_SORT_COLUMNS,
 };
 
 export const VIEW_DEFAULT_SORT: Record<
@@ -51,12 +69,22 @@ export const VIEW_DEFAULT_SORT: Record<
   verify: { column: VERIFY_DEFAULT_COLUMN, dir: VERIFY_DEFAULT_DIR },
   wealth: { column: WEALTH_DEFAULT_COLUMN, dir: WEALTH_DEFAULT_DIR },
   tax: { column: TAX_DEFAULT_COLUMN, dir: TAX_DEFAULT_DIR },
+  daily: { column: DAILY_DEFAULT_COLUMN, dir: DAILY_DEFAULT_DIR },
 };
 
 export function isHoldingsColumnView(
   raw: string | null | undefined,
 ): raw is HoldingsColumnView {
-  return raw === "verify" || raw === "wealth" || raw === "tax";
+  return raw === "verify" || raw === "wealth" || raw === "tax" || raw === "daily";
+}
+
+/** Daily/Wealth have no tax-free column; stay on Verify (do not jump to Tax). */
+export function viewForTaxRunwayFocus(
+  stored: HoldingsColumnView,
+  highlightTaxFree: boolean,
+): HoldingsColumnView {
+  if (highlightTaxFree && (stored === "wealth" || stored === "daily")) return "verify";
+  return stored;
 }
 
 /** Read-only. Missing/invalid → verify. Does not write. */
