@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 5190 --strictPort",
     "lint": "tsc --noEmit --pretty false",
-    "selftest": "npx --yes tsx src/auth/isLabSession.selftest.ts && npx --yes tsx src/auth/labDesk.selftest.ts && npx --yes tsx src/features/investments/analysis-next/cashflowNet.selftest.ts && npx --yes tsx src/features/investments/dca-next/opportunityTone.selftest.ts && npx --yes tsx src/features/investments/tax-next/groupDisposals.selftest.ts && npx --yes tsx src/features/alerts-next/domainBoard.selftest.ts && npx --yes tsx src/features/spending-next/categoryBars.selftest.ts && npx --yes tsx src/features/spending-next/transactionsDrilldown.selftest.ts && npx --yes tsx src/features/spending-next/honestyChips.selftest.ts && npx --yes tsx src/features/categorize-next/workspaceMode.selftest.ts"
+    "selftest": "npx --yes tsx src/auth/isLabSession.selftest.ts && npx --yes tsx src/auth/labDesk.selftest.ts && npx --yes tsx src/features/investments/analysis-next/cashflowNet.selftest.ts && npx --yes tsx src/features/investments/dca-next/opportunityTone.selftest.ts && npx --yes tsx src/features/investments/tax-next/groupDisposals.selftest.ts && npx --yes tsx src/features/alerts-next/domainBoard.selftest.ts && npx --yes tsx src/features/spending-next/categoryBars.selftest.ts && npx --yes tsx src/features/spending-next/transactionsDrilldown.selftest.ts && npx --yes tsx src/features/spending-next/honestyChips.selftest.ts && npx --yes tsx src/features/categorize-next/workspaceMode.selftest.ts && npx --yes tsx src/lib/chartCostVisibility.selftest.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
