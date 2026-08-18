@@ -161,21 +161,21 @@ def test_history_ticker_mocked():
 
     def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
         our = yahoo_map[yahoo_symbols[0]]
-        if period == "1d":
+        daily = [
+            ("2026-01-01", Decimal("0.10")),
+            ("2026-06-01", Decimal("0.20")),
+        ]
+        if period == "1d" or interval == "5m":
             return {
                 our: [
                     ("2026-08-09T14:00:00+00:00", Decimal("0.15")),
                     ("2026-08-09T15:00:00+00:00", Decimal("0.16")),
                 ]
+                if interval == "5m" and period != "5d"
+                else daily
             }
-        assert period == "1y"
-        assert interval == "1d"
-        return {
-            our: [
-                ("2026-01-01", Decimal("0.10")),
-                ("2026-06-01", Decimal("0.20")),
-            ]
-        }
+        assert period in ("1y", "5d")
+        return {our: daily}
 
     svc = PriceHistoryService(repo, fetcher=fake_fetch)
     result = svc.history(scope="ticker", range_key="1y", ticker="DOGE")
@@ -185,7 +185,7 @@ def test_history_ticker_mocked():
     assert len(result.points) == 2
     assert result.meta["change_pct"] == 100.0
     assert result.meta["avg_cost_usd"] == "0.1000"
-    # Day change uses last two bars of the displayed series (no extra 5m Yahoo hop)
+    # Crypto 1Y day_open uses DayPolicy 5m; fixture daily bars still yield 100%
     assert result.meta["day_change_pct"] == pytest.approx(100.0, abs=0.02)
     assert result.meta["missing_tickers"] == []
 
@@ -915,7 +915,9 @@ def test_history_1d_ticker_path_not_pinned_exposes_book_meta():
 
 
 def test_portfolio_1d_aligned_grid_full_book_and_additive():
-    """Shared 5m grid: full book from first bar; Δ ≈ stock session + crypto 24h."""
+    """Shared 5m grid: full book from first bar; Δ ≈ stock session + crypto local day."""
+    from zoneinfo import ZoneInfo
+
     from backend.services.price_history import (
         COVERAGE_THRESHOLD_INTRADAY,
         build_portfolio_1d_aligned_closes,
@@ -924,6 +926,7 @@ def test_portfolio_1d_aligned_grid_full_book_and_additive():
     )
 
     now = datetime(2026, 8, 10, 21, 30, 0, tzinfo=timezone.utc)
+    zone = ZoneInfo("Europe/Prague")
     cutoff = now - timedelta(hours=24)
 
     stock_full = [
@@ -941,9 +944,10 @@ def test_portfolio_1d_aligned_grid_full_book_and_additive():
     closes_raw = {"STK": stock_full, "CRY": crypto_full}
     ac_map = {"STK": "Stock", "CRY": "Crypto"}
     aligned, status = build_portfolio_1d_aligned_closes(
-        closes_raw, ac_map, now=now
+        closes_raw, ac_map, now=now, zone=zone
     )
-    assert status == "last_24h"
+    assert status == "local_day"
+    assert aligned["STK"][0][0] == "2026-08-09T22:00:00+00:00"
     # Identical timestamps for stock and crypto
     assert [p[0] for p in aligned["STK"]] == [p[0] for p in aligned["CRY"]]
     assert len(aligned["STK"]) >= 200
@@ -1343,3 +1347,399 @@ def test_history_all_uses_as_of_holdings():
     by_d = {p["date"]: Decimal(p["value"]) for p in result.points}
     assert by_d["2021-08-11"] == Decimal("10.00")
     assert by_d["2025-01-15"] == Decimal("1112.00")
+
+
+def _five_min_series(
+    start: datetime,
+    end: datetime,
+    px_at,
+) -> list[tuple[str, Decimal]]:
+    out: list[tuple[str, Decimal]] = []
+    t = start.astimezone(timezone.utc).replace(second=0, microsecond=0)
+    end_u = end.astimezone(timezone.utc)
+    i = 0
+    while t <= end_u:
+        out.append((t.isoformat(), px_at(i, t)))
+        t += timedelta(minutes=5)
+        i += 1
+    return out
+
+
+def test_trim_intraday_local_day_prague():
+    from zoneinfo import ZoneInfo
+
+    from backend.services.price_history import trim_intraday_series
+
+    zone = ZoneInfo("Europe/Prague")
+    now = datetime(2026, 8, 10, 13, 0, tzinfo=timezone.utc)
+    start = now - timedelta(hours=36)
+    series = _five_min_series(
+        start, now, lambda i, _t: Decimal("100") + Decimal(i) * Decimal("0.01")
+    )
+    trimmed, status = trim_intraday_series(
+        series, mode="local_day_or_prior", now=now, zone=zone
+    )
+    assert status == "local_day"
+    assert trimmed[0][0] == "2026-08-09T22:00:00+00:00"
+    midnight = datetime(2026, 8, 9, 22, 0, tzinfo=timezone.utc)
+    for ts, _px in trimmed:
+        assert _parse_ts(ts) >= midnight
+
+
+def test_trim_intraday_prior_local_day_after_midnight():
+    from zoneinfo import ZoneInfo
+
+    from backend.services.price_history import trim_intraday_series
+
+    zone = ZoneInfo("Europe/Prague")
+    now = datetime(2026, 8, 10, 0, 10, tzinfo=zone)
+    start = datetime(2026, 8, 9, 0, 0, tzinfo=zone)
+    end = datetime(2026, 8, 9, 23, 55, tzinfo=zone)
+    series = _five_min_series(start, end, lambda i, _t: Decimal("50") + Decimal(i))
+    trimmed, status = trim_intraday_series(
+        series, mode="local_day_or_prior", now=now, zone=zone
+    )
+    assert status == "prior_local_day"
+    assert trimmed
+    for ts, _px in trimmed:
+        assert _parse_ts(ts).astimezone(zone).date() == date(2026, 8, 9)
+
+
+def test_trim_intraday_dst_midnight():
+    from zoneinfo import ZoneInfo
+
+    from backend.common.timeutil import local_midnight
+    from backend.services.price_history import trim_intraday_series
+
+    zone = ZoneInfo("Europe/Prague")
+
+    def _assert_local_day(now: datetime) -> None:
+        start = now.astimezone(timezone.utc) - timedelta(hours=40)
+        series = _five_min_series(
+            start, now, lambda i, _t: Decimal("10") + Decimal(i) * Decimal("0.01")
+        )
+        trimmed, status = trim_intraday_series(
+            series, mode="local_day_or_prior", now=now, zone=zone
+        )
+        assert status == "local_day"
+        mid = local_midnight(now, zone)
+        mid_utc = mid.astimezone(timezone.utc).replace(microsecond=0)
+        assert _parse_ts(trimmed[0][0]) == mid_utc
+        ago_24h = now.astimezone(timezone.utc) - timedelta(hours=24)
+        assert mid_utc != ago_24h.replace(second=0, microsecond=0)
+        for ts, _px in trimmed:
+            assert _parse_ts(ts) >= mid
+        span = _parse_ts(trimmed[-1][0]) - _parse_ts(trimmed[0][0])
+        assert span < timedelta(hours=24)
+
+    _assert_local_day(datetime(2026, 3, 29, 15, 0, tzinfo=zone))
+    _assert_local_day(datetime(2026, 10, 25, 15, 0, tzinfo=zone))
+
+
+def test_day_open_is_midnight_print():
+    from zoneinfo import ZoneInfo
+
+    from backend.services.price_history import trim_intraday_series
+
+    zone = ZoneInfo("Europe/Prague")
+    now = datetime(2026, 8, 10, 13, 0, tzinfo=timezone.utc)
+    midnight_px = Decimal("80.25")
+    series = [
+        ("2026-08-09T21:55:00+00:00", midnight_px),
+        ("2026-08-09T22:05:00+00:00", Decimal("81.00")),
+        ("2026-08-10T12:55:00+00:00", Decimal("82.00")),
+    ]
+    trimmed, status = trim_intraday_series(
+        series, mode="local_day_or_prior", now=now, zone=zone
+    )
+    assert status == "local_day"
+    assert trimmed[0][0] == "2026-08-09T22:00:00+00:00"
+    assert trimmed[0][1] == midnight_px
+    assert trimmed[1][0] == "2026-08-09T22:05:00+00:00"
+
+
+def test_portfolio_1d_grid_from_local_midnight():
+    from zoneinfo import ZoneInfo
+
+    from backend.services.price_history import (
+        COVERAGE_THRESHOLD_INTRADAY,
+        aggregate_mv_series_time_aware,
+        build_portfolio_1d_aligned_closes,
+    )
+
+    zone = ZoneInfo("Europe/Prague")
+    now = datetime(2026, 8, 10, 21, 30, 0, tzinfo=timezone.utc)
+    stock_full = [
+        ("2026-08-09T19:55:00+00:00", Decimal("100")),
+        ("2026-08-10T13:30:00+00:00", Decimal("100")),
+        ("2026-08-10T21:25:00+00:00", Decimal("110")),
+    ]
+    crypto_full = _five_min_series(
+        now - timedelta(hours=30),
+        now,
+        lambda i, _t: Decimal("1000") - Decimal(i) * Decimal("0.5"),
+    )
+    aligned, status = build_portfolio_1d_aligned_closes(
+        {"STK": stock_full, "CRY": crypto_full},
+        {"STK": "Stock", "CRY": "Crypto"},
+        now=now,
+        zone=zone,
+    )
+    assert status == "local_day"
+    first_ts = aligned["STK"][0][0]
+    assert first_ts == "2026-08-09T22:00:00+00:00"
+    assert first_ts != (now - timedelta(hours=24)).replace(microsecond=0).isoformat()
+    assert [p[0] for p in aligned["STK"]] == [p[0] for p in aligned["CRY"]]
+
+    events = [
+        _event(
+            ticker="STK",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="10",
+            asset_class=AssetClass.STOCK,
+        ),
+        _event(
+            ticker="CRY",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="1",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    tl = build_holdings_timeline(events, [])
+    series, _ = aggregate_mv_series_time_aware(
+        tl,
+        aligned,
+        coverage_threshold=COVERAGE_THRESHOLD_INTRADAY,
+        preseed_first_marks=True,
+    )
+    d_stk = (aligned["STK"][-1][1] - aligned["STK"][0][1]) * Decimal("10")
+    d_cry = (aligned["CRY"][-1][1] - aligned["CRY"][0][1]) * Decimal("1")
+    d_chart = series[-1][1] - series[0][1]
+    assert abs(d_chart - (d_stk + d_cry)) <= Decimal("0.01")
+
+
+def test_portfolio_window_components_local_day():
+    from zoneinfo import ZoneInfo
+
+    from backend.services.price_history import (
+        COVERAGE_THRESHOLD_INTRADAY,
+        build_portfolio_1d_aligned_closes,
+        portfolio_window_from_components,
+    )
+
+    zone = ZoneInfo("Europe/Prague")
+    now = datetime(2026, 8, 10, 21, 30, 0, tzinfo=timezone.utc)
+    stock = [
+        ("2026-08-09T19:55:00+00:00", Decimal("100")),
+        ("2026-08-10T13:30:00+00:00", Decimal("100")),
+        ("2026-08-10T21:25:00+00:00", Decimal("110")),
+    ]
+    crypto = _five_min_series(
+        now - timedelta(hours=30),
+        now,
+        lambda i, _t: Decimal("1000") - Decimal(i) * Decimal("0.5"),
+    )
+    closes = {"STK": stock, "CRY": crypto}
+    ac = {"STK": "Stock", "CRY": "Crypto"}
+    events = [
+        _event(
+            ticker="STK",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="10",
+            asset_class=AssetClass.STOCK,
+        ),
+        _event(
+            ticker="CRY",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="1",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    tl = build_holdings_timeline(events, [])
+    aligned, _st = build_portfolio_1d_aligned_closes(
+        closes, ac, now=now, zone=zone
+    )
+    assert [p[0] for p in aligned["STK"]] == [p[0] for p in aligned["CRY"]]
+    comp = portfolio_window_from_components(
+        tl,
+        closes,
+        ac,
+        ["STK", "CRY"],
+        is_intraday=True,
+        coverage_threshold=COVERAGE_THRESHOLD_INTRADAY,
+        now=now,
+        zone=zone,
+    )
+    assert comp["method"] == "stocks_rth_plus_crypto_local_day_mark"
+    s = Decimal(comp["stocks"]["change_usd"])
+    c = Decimal(comp["crypto"]["change_usd"])
+    assert Decimal(comp["sum_change_usd"]) == s + c
+    smv = Decimal(comp["stocks"]["mv_change_usd"])
+    cmv = Decimal(comp["crypto"]["mv_change_usd"])
+    assert Decimal(comp["sum_mv_change_usd"]) == smv + cmv
+    d_stk = (aligned["STK"][-1][1] - aligned["STK"][0][1]) * Decimal("10")
+    d_cry = (aligned["CRY"][-1][1] - aligned["CRY"][0][1]) * Decimal("1")
+    assert abs(smv + cmv - (d_stk + d_cry)) <= Decimal("0.50")
+
+
+def test_window_performance_1d_matches_history_trim():
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("Europe/Prague")
+    now = datetime(2026, 8, 10, 13, 0, tzinfo=timezone.utc)
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [_lot(ticker="BTC", asset_class=AssetClass.CRYPTO, qty="1", cost_usd="10")],
+    )
+    series = [
+        ("2026-08-09T21:55:00+00:00", Decimal("100.00")),
+        ("2026-08-09T22:05:00+00:00", Decimal("101.00")),
+        ("2026-08-10T12:55:00+00:00", Decimal("110.00")),
+    ]
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        assert interval == "5m"
+        our = yahoo_map[yahoo_symbols[0]]
+        return {our: list(series)}
+
+    svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
+    hist = svc.history(
+        scope="ticker", range_key="1d", ticker="BTC", now=now, zone=zone
+    )
+    wperf = svc.window_performance(range_key="1d", now=now, zone=zone)
+    item = next(i for i in wperf["items"] if i["ticker"] == "BTC")
+    assert hist.points[0]["value"] == hist.meta["day_open"]
+    assert item["first_value"] == hist.points[0]["value"]
+    assert item["day_open"] == hist.meta["day_open"]
+    assert item["last_value"] == hist.points[-1]["value"]
+    assert item["change_pct"] == hist.meta["change_pct"]
+
+
+def test_window_performance_pnl_usd():
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("America/New_York")
+    now = datetime(2026, 8, 10, 14, 0, tzinfo=zone)
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [_lot(ticker="AAA", asset_class=AssetClass.STOCK, qty="2", cost_usd="20")],
+    )
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        our = yahoo_map[yahoo_symbols[0]]
+        return {
+            our: [
+                ("2026-08-10T13:30:00+00:00", Decimal("10")),
+                ("2026-08-10T17:00:00+00:00", Decimal("11")),
+            ]
+        }
+
+    svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
+    result = svc.window_performance(range_key="1d", now=now, zone=zone)
+    item = next(i for i in result["items"] if i["ticker"] == "AAA")
+    assert item["pnl_usd"] == "2.00"
+
+
+def test_resolve_day_change_1d_uses_trimmed_series():
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("Europe/Prague")
+    now = datetime(2026, 8, 10, 13, 0, tzinfo=timezone.utc)
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [_lot(ticker="BTC", asset_class=AssetClass.CRYPTO, qty="1", cost_usd="10")],
+    )
+    print_24h_ago = Decimal("50.00")
+    midnight_print = Decimal("80.00")
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        our = yahoo_map[yahoo_symbols[0]]
+        return {
+            our: [
+                ("2026-08-09T13:00:00+00:00", print_24h_ago),
+                ("2026-08-09T21:55:00+00:00", midnight_print),
+                ("2026-08-09T22:05:00+00:00", Decimal("81.00")),
+                ("2026-08-10T12:55:00+00:00", Decimal("90.00")),
+            ]
+        }
+
+    svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
+    result = svc.history(
+        scope="ticker", range_key="1d", ticker="BTC", now=now, zone=zone
+    )
+    assert result.meta["day_open"] != "50.0000"
+    assert result.meta["day_open"] == "80.0000"
+
+
+def test_resolve_day_change_mixed_mv_not_last_two_daily():
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("Europe/Prague")
+    now = datetime(2026, 8, 10, 15, 0, tzinfo=timezone.utc)
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [
+            _lot(ticker="STK", asset_class=AssetClass.STOCK, qty="10", cost_usd="800"),
+            _lot(ticker="CRY", asset_class=AssetClass.CRYPTO, qty="1", cost_usd="800"),
+        ],
+    )
+    repo.upsert_rows(
+        "InvestmentEvents",
+        [
+            _event(
+                ticker="STK",
+                event_type=InvestmentEventType.BUY,
+                event_date=date(2020, 1, 1),
+                qty="10",
+                asset_class=AssetClass.STOCK,
+            ),
+            _event(
+                ticker="CRY",
+                event_type=InvestmentEventType.BUY,
+                event_date=date(2020, 1, 1),
+                qty="1",
+                asset_class=AssetClass.CRYPTO,
+            ),
+        ],
+    )
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        out: dict[str, list[tuple[str, Decimal]]] = {}
+        for _y, our in yahoo_map.items():
+            if interval == "5m":
+                if our == "CRY":
+                    out[our] = [
+                        ("2026-08-09T21:55:00+00:00", Decimal("980")),
+                        ("2026-08-09T22:05:00+00:00", Decimal("990")),
+                        ("2026-08-10T14:55:00+00:00", Decimal("1000")),
+                    ]
+            elif our == "STK":
+                out[our] = [
+                    ("2026-08-07", Decimal("90")),
+                    ("2026-08-08", Decimal("92")),
+                    ("2026-08-09", Decimal("95")),
+                    ("2026-08-10", Decimal("100")),
+                ]
+            else:
+                out[our] = [
+                    ("2026-08-07", Decimal("900")),
+                    ("2026-08-08", Decimal("920")),
+                    ("2026-08-09", Decimal("950")),
+                    ("2026-08-10", Decimal("1000")),
+                ]
+        return out
+
+    svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
+    result = svc.history(scope="all", range_key="1y", now=now, zone=zone)
+    # last-two-daily MV open would be 10*95 + 1*950 = 1900
+    assert result.meta["day_open"] != "1900.00"
+    # T_open = 2026-08-09T22:00Z: stock last daily ≤ T = 95; crypto 5m ≤ T = 980
+    assert result.meta["day_open"] == "1930.00"

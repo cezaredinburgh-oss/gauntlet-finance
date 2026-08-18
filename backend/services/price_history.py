@@ -20,13 +20,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Callable, Literal
+from zoneinfo import ZoneInfo
 
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:  # pragma: no cover
-    ZoneInfo = None  # type: ignore[misc, assignment]
-
-from backend.common.timeutil import utc_now
+from backend.common.timeutil import local_midnight, resolve_day_timezone, resolve_zone, utc_now
 from backend.schema.models import (
     AssetClass,
     InvestmentEvent,
@@ -47,7 +43,7 @@ ScopeKey = Literal["ticker", "asset_class", "all"]
 _MAX_TRADE_MARKERS = 300
 
 # (yfinance period, interval, point_kind)
-# 1d uses 5d of 5m bars then trims to session/24h — bare period=1d is empty/fragile at open.
+# 1d uses 5d of 5m bars then trims to RTH / local calendar day — bare period=1d is empty/fragile at open.
 _RANGE_SPEC: dict[str, tuple[str, str, str]] = {
     "1d": ("5d", "5m", "intraday"),
     "7d": ("7d", "1d", "daily"),
@@ -146,13 +142,14 @@ COVERAGE_THRESHOLD = Decimal("0.90")
 COVERAGE_THRESHOLD_INTRADAY = Decimal("0.50")
 
 
-def _et_zone():
-    if ZoneInfo is not None:
-        try:
-            return ZoneInfo("America/New_York")
-        except Exception:  # noqa: BLE001
-            pass
-    return timezone(timedelta(hours=-4))  # EDT fallback
+def _et_zone() -> ZoneInfo:
+    return ZoneInfo("America/New_York")
+
+
+def _coerce_zone(zone: str | ZoneInfo | None) -> ZoneInfo:
+    if isinstance(zone, ZoneInfo):
+        return zone
+    return resolve_zone(zone if isinstance(zone, str) else None)
 
 
 def _to_et(dt: datetime) -> datetime:
@@ -161,17 +158,88 @@ def _to_et(dt: datetime) -> datetime:
     return dt.astimezone(_et_zone())
 
 
+def _last_px_at_or_before(
+    series: list[SeriesPoint], cutoff: datetime
+) -> Decimal | None:
+    """Last observed print with timestamp ≤ cutoff (aware-to-aware)."""
+    best_px: Decimal | None = None
+    best_ts: datetime | None = None
+    for ts, px in series:
+        tdt = _parse_ts(ts)
+        if tdt <= cutoff and (best_ts is None or tdt > best_ts):
+            best_ts = tdt
+            best_px = px
+    return best_px
+
+
+def _seed_local_midnight(
+    today: list[SeriesPoint],
+    *,
+    midnight: datetime,
+    open_px: Decimal | None,
+) -> list[SeriesPoint]:
+    """Prepend observed midnight print when the first live bar is later."""
+    if open_px is None:
+        return today
+    if today and _parse_ts(today[0][0]) <= midnight:
+        return today
+    seed_ts = midnight.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+    return [(seed_ts, open_px), *today]
+
+
+def _trim_local_day_or_prior(
+    series: list[SeriesPoint],
+    *,
+    now: datetime,
+    zone: ZoneInfo,
+) -> tuple[list[SeriesPoint], str]:
+    midnight = local_midnight(now, zone)
+    today = [(ts, px) for ts, px in series if _parse_ts(ts) >= midnight]
+    today.sort(key=lambda p: _parse_ts(p[0]))
+    open_px = _last_px_at_or_before(series, midnight)
+
+    if today:
+        return _seed_local_midnight(today, midnight=midnight, open_px=open_px), "local_day"
+
+    by_day: dict[date, list[SeriesPoint]] = {}
+    for ts, px in series:
+        local_d = _parse_ts(ts).astimezone(zone).date()
+        if local_d < midnight.date():
+            by_day.setdefault(local_d, []).append((ts, px))
+    if not by_day:
+        return series[-min(12, len(series)) :], "prior_local_day"
+
+    last_day = max(by_day.keys())
+    midnight = datetime(last_day.year, last_day.month, last_day.day, tzinfo=zone)
+    next_d = last_day + timedelta(days=1)
+    next_midnight = datetime(next_d.year, next_d.month, next_d.day, tzinfo=zone)
+    today = [
+        (ts, px)
+        for ts, px in series
+        if midnight <= _parse_ts(ts) < next_midnight
+    ]
+    today.sort(key=lambda p: _parse_ts(p[0]))
+    open_px = _last_px_at_or_before(series, midnight)
+    if not today:
+        return series[-min(12, len(series)) :], "prior_local_day"
+    return (
+        _seed_local_midnight(today, midnight=midnight, open_px=open_px),
+        "prior_local_day",
+    )
+
+
 def trim_intraday_series(
     series: list[SeriesPoint],
     *,
-    mode: Literal["rth_today_or_prior", "last_24h"],
+    mode: Literal["rth_today_or_prior", "local_day_or_prior"],
     now: datetime | None = None,
+    zone: ZoneInfo | None = None,
 ) -> tuple[list[SeriesPoint], str]:
     """
     Trim 5m bars for 1D display.
 
     rth_today_or_prior — US regular session today; if none yet, prior RTH day.
-    last_24h — rolling 24h (portfolio / crypto).
+    local_day_or_prior — local calendar day from midnight; if none yet, prior day.
     """
     if not series:
         return [], "empty"
@@ -180,10 +248,10 @@ def trim_intraday_series(
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
 
-    if mode == "last_24h":
-        cutoff = now - timedelta(hours=24)
-        out = [(ts, px) for ts, px in series if _parse_ts(ts) >= cutoff]
-        return (out if out else series[-min(12, len(series)) :], "last_24h")
+    if mode == "local_day_or_prior":
+        return _trim_local_day_or_prior(
+            series, now=now, zone=zone or resolve_zone(None)
+        )
 
     # US RTH: 09:30–16:00 America/New_York
     et = _to_et(now)
@@ -225,14 +293,15 @@ def trim_intraday_series(
 def trim_closes_map(
     closes: dict[str, list[SeriesPoint]],
     *,
-    mode: Literal["rth_today_or_prior", "last_24h"],
+    mode: Literal["rth_today_or_prior", "local_day_or_prior"],
     now: datetime | None = None,
+    zone: ZoneInfo | None = None,
 ) -> tuple[dict[str, list[SeriesPoint]], str]:
     """Trim each ticker; session_status is worst/best summary across tickers."""
     out: dict[str, list[SeriesPoint]] = {}
     statuses: list[str] = []
     for t, series in closes.items():
-        trimmed, st = trim_intraday_series(series, mode=mode, now=now)
+        trimmed, st = trim_intraday_series(series, mode=mode, now=now, zone=zone)
         if trimmed:
             out[t] = trimmed
             statuses.append(st)
@@ -241,9 +310,11 @@ def trim_closes_map(
     if all(s == "regular" for s in statuses):
         status = "regular"
     elif any(s == "regular" for s in statuses):
-        status = "regular"  # mixed: some names open
-    elif any(s == "last_24h" for s in statuses):
-        status = "last_24h"
+        status = "regular"  # stocks dominate mixed books
+    elif any(s == "local_day" for s in statuses):
+        status = "local_day"
+    elif any(s == "prior_local_day" for s in statuses):
+        status = "prior_local_day"
     else:
         status = "prior_session"
     return out, status
@@ -315,39 +386,21 @@ def _px_asof(
     return None, i
 
 
-def build_portfolio_1d_aligned_closes(
-    closes_full: dict[str, list[SeriesPoint]],
-    asset_classes: dict[str, str | None],
-    *,
-    now: datetime | None = None,
-) -> tuple[dict[str, list[SeriesPoint]], str]:
-    """
-    Portfolio 1D on a **shared 5m UTC grid** over the last 24h.
-
-    Every ticker gets a mark on every grid timestamp (forward-filled):
-      - Equity: previous RTH close until the first live RTH bar, then live
-      - Crypto: live 5m with forward-fill
-
-    Same timestamps for all names → no stock/crypto seed desync, no partial-book
-    first bar, additive window Δ ≈ stocks session + crypto 24h.
-    """
-    now = now or datetime.now(timezone.utc)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    else:
-        now = now.astimezone(timezone.utc)
-
-    window_open = _snap_down_5m(now - timedelta(hours=24))
-    window_end = _snap_down_5m(now)
-
+def _utc_5m_grid(window_open: datetime, window_end: datetime) -> list[datetime]:
     grid: list[datetime] = []
     t = window_open
     while t <= window_end:
         grid.append(t)
         t += timedelta(minutes=5)
-    if not grid:
-        return {}, "empty"
+    return grid
 
+
+def _align_closes_on_grid(
+    closes_full: dict[str, list[SeriesPoint]],
+    asset_classes: dict[str, str | None],
+    grid: list[datetime],
+    window_open: datetime,
+) -> dict[str, list[SeriesPoint]]:
     out: dict[str, list[SeriesPoint]] = {}
     for ticker, full in closes_full.items():
         if not full:
@@ -358,11 +411,9 @@ def build_portfolio_1d_aligned_closes(
         if not pairs:
             continue
 
-        # Opening mark for the window
         if is_crypto:
             open_px, _ = _px_asof(pairs, window_open)
             if open_px is None:
-                # First print in window
                 for pdt, px in pairs:
                     if pdt >= window_open:
                         open_px = px
@@ -382,17 +433,55 @@ def build_portfolio_1d_aligned_closes(
         for g in grid:
             live, hint = _px_asof(pairs, g, start_i=hint)
             if live is not None:
-                # Equities: only adopt live prints once we're at/after that bar
-                # (prior close already in last_px overnight)
                 last_px = live
-            series_out.append(
-                (g.replace(microsecond=0).isoformat(), last_px)
-            )
+            series_out.append((g.replace(microsecond=0).isoformat(), last_px))
         out[ticker] = series_out
+    return out
 
+
+def build_portfolio_1d_aligned_closes(
+    closes_full: dict[str, list[SeriesPoint]],
+    asset_classes: dict[str, str | None],
+    *,
+    now: datetime | None = None,
+    zone: ZoneInfo | None = None,
+) -> tuple[dict[str, list[SeriesPoint]], str]:
+    """
+    Portfolio 1D on a **shared 5m UTC grid** from local midnight to now.
+
+    Every ticker gets a mark on every grid timestamp (forward-filled):
+      - Equity: previous RTH close until the first live RTH bar, then live
+      - Crypto: last print ≤ window open, then live 5m
+
+    Same timestamps → additive window Δ = stocks session + crypto local day.
+    """
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+
+    zone = zone or resolve_zone(None)
+    midnight = local_midnight(now, zone)
+    window_end = _snap_down_5m(now)
+    window_open = _snap_down_5m(midnight)
+    grid = _utc_5m_grid(window_open, window_end)
+    if not grid:
+        return {}, "empty"
+
+    out = _align_closes_on_grid(closes_full, asset_classes, grid, window_open)
+    status = "local_day"
+    if not out:
+        prior = local_midnight(midnight - timedelta(seconds=1), zone)
+        window_open = _snap_down_5m(prior)
+        grid = _utc_5m_grid(window_open, window_end)
+        if not grid:
+            return {}, "empty"
+        out = _align_closes_on_grid(closes_full, asset_classes, grid, window_open)
+        status = "prior_local_day"
     if not out:
         return {}, "empty"
-    return out, "last_24h"
+    return out, status
 
 
 def _scalar_decimal(val: Any) -> Decimal | None:
@@ -1395,6 +1484,20 @@ def _book_mv_window(
     return first, last, last - first
 
 
+def _split_closes_by_class(
+    closes: dict[str, list[SeriesPoint]],
+    ac_map: dict[str, str | None],
+) -> tuple[dict[str, list[SeriesPoint]], dict[str, list[SeriesPoint]]]:
+    stock_closes: dict[str, list[SeriesPoint]] = {}
+    crypto_closes: dict[str, list[SeriesPoint]] = {}
+    for t, series in closes.items():
+        if (ac_map.get(t) or "").lower() == "crypto":
+            crypto_closes[t] = series
+        else:
+            stock_closes[t] = series
+    return stock_closes, crypto_closes
+
+
 def portfolio_window_from_components(
     timeline: HoldingsTimeline,
     closes_raw: dict[str, list[SeriesPoint]],
@@ -1404,11 +1507,13 @@ def portfolio_window_from_components(
     is_intraday: bool,
     coverage_threshold: Decimal,
     events: list[InvestmentEvent] | None = None,
+    now: datetime | None = None,
+    zone: ZoneInfo | None = None,
 ) -> dict[str, Any]:
     """
-    Portfolio window **performance** = Stocks leg + Crypto leg, same windows
-    as those tabs (RTH vs 24h on 1D).
+    Portfolio window **performance** = Stocks leg + Crypto leg.
 
+    On 1D, both legs are sliced from the shared midnight grid (same timestamps).
     Each leg: performance = ΔMV − buys + sells (external capital removed).
     Additive so portfolio = stocks + crypto performance.
     """
@@ -1423,15 +1528,27 @@ def portfolio_window_from_components(
         if (ac_map.get(t) or "").lower() == "crypto"
     ]
 
+    used_aligned_grid = False
     if is_intraday:
-        stock_closes, _ = trim_closes_map(
-            {t: closes_raw[t] for t in stock_ts if t in closes_raw},
-            mode="rth_today_or_prior",
+        aligned, _status = build_portfolio_1d_aligned_closes(
+            closes_raw, ac_map, now=now, zone=zone
         )
-        crypto_closes, _ = trim_closes_map(
-            {t: closes_raw[t] for t in crypto_ts if t in closes_raw},
-            mode="last_24h",
-        )
+        if aligned:
+            stock_closes, crypto_closes = _split_closes_by_class(aligned, ac_map)
+            used_aligned_grid = True
+        else:
+            stock_closes, _ = trim_closes_map(
+                {t: closes_raw[t] for t in stock_ts if t in closes_raw},
+                mode="rth_today_or_prior",
+                now=now,
+                zone=zone,
+            )
+            crypto_closes, _ = trim_closes_map(
+                {t: closes_raw[t] for t in crypto_ts if t in closes_raw},
+                mode="local_day_or_prior",
+                now=now,
+                zone=zone,
+            )
     else:
         stock_closes = {t: closes_raw[t] for t in stock_ts if t in closes_raw}
         crypto_closes = {t: closes_raw[t] for t in crypto_ts if t in closes_raw}
@@ -1565,9 +1682,13 @@ def portfolio_window_from_components(
         "first_usd": _str_dec(first_total) if first_total is not None else None,
         "last_usd": _str_dec(last_total) if last_total is not None else None,
         "method": (
-            "stocks_rth_plus_crypto_24h_mark"
-            if is_intraday
-            else "stocks_plus_crypto_mark_same_range"
+            "stocks_rth_plus_crypto_local_day_mark"
+            if used_aligned_grid
+            else (
+                "stocks_rth_plus_crypto_local_day_independent"
+                if is_intraday
+                else "stocks_plus_crypto_mark_same_range"
+            )
         ),
         "change_basis": "mark_performance_start_qty",
     }
@@ -1792,6 +1913,73 @@ class PriceHistoryService:
             _HISTORY_CACHE[cache_key] = (time.monotonic(), payload)
         return payload
 
+    def _resolve_zone_arg(self, zone: str | ZoneInfo | None) -> ZoneInfo:
+        if zone is None:
+            return resolve_zone(resolve_day_timezone(self.repo))
+        return _coerce_zone(zone)
+
+    def _mark_at(
+        self,
+        ticker: str,
+        ac: str | None,
+        asof: datetime,
+        *,
+        crypto_5m: dict[str, list[SeriesPoint]],
+        stock_daily: dict[str, list[SeriesPoint]],
+    ) -> Decimal | None:
+        if (ac or "").lower() == "crypto":
+            pairs = _series_to_sorted_pairs(crypto_5m.get(ticker, []))
+            px, _ = _px_asof(pairs, asof)
+            return px
+        series = stock_daily.get(ticker, [])
+        pairs = _series_to_sorted_pairs(series)
+        px, _ = _px_asof(pairs, asof)
+        if px is None:
+            px = _prior_rth_close(series, before=asof)
+        return px
+
+    def _day_change_from_marks(
+        self,
+        qty_map: dict[str, Decimal],
+        ac_map: dict[str, str | None],
+        *,
+        t_open: datetime,
+        t_last: datetime,
+        crypto_5m: dict[str, list[SeriesPoint]],
+        stock_daily: dict[str, list[SeriesPoint]],
+        places: int,
+    ) -> dict[str, Any]:
+        open_mv = Decimal("0")
+        last_mv = Decimal("0")
+        any_open = False
+        any_last = False
+        for t, qty in qty_map.items():
+            if qty <= 0:
+                continue
+            ac = ac_map.get(t)
+            open_px = self._mark_at(
+                t, ac, t_open, crypto_5m=crypto_5m, stock_daily=stock_daily
+            )
+            last_px = self._mark_at(
+                t, ac, t_last, crypto_5m=crypto_5m, stock_daily=stock_daily
+            )
+            if open_px is not None:
+                open_mv += qty * open_px
+                any_open = True
+            if last_px is not None:
+                last_mv += qty * last_px
+                any_last = True
+        if not any_open and not any_last:
+            return _day_change_from_series([], places=places)
+        first = _q2(open_mv) if places == 2 else open_mv
+        last = _q2(last_mv) if places == 2 else last_mv
+        series: list[SeriesPoint] = []
+        if any_open:
+            series.append((t_open.isoformat(), first))
+        if any_last:
+            series.append((t_last.isoformat(), last))
+        return _day_change_from_series(series, places=places)
+
     def _resolve_day_change(
         self,
         qty_map: dict[str, Decimal],
@@ -1801,26 +1989,90 @@ class PriceHistoryService:
         main_range: str,
         main_series: list[SeriesPoint] | None = None,
         places: int = 2,
+        now: datetime | None = None,
+        zone: ZoneInfo | None = None,
     ) -> dict[str, Any]:
-        """Day open→last change; reuse main series when already on 1d."""
+        """Day open→last change. 1D uses the already-trimmed series (seed included)."""
         try:
             if main_range == "1d" and main_series is not None:
                 return _day_change_from_series(main_series, places=places)
-            # Prefer last two points of the daily series already on the chart
-            # (avoids a second full Yahoo 5m download for every 7d/1y request).
-            if main_series is not None and len(main_series) >= 2:
-                # Daily series: approximate "day" as last bar vs prior bar
-                return _day_change_from_series(main_series[-2:], places=places)
+
+            now = now or datetime.now(timezone.utc)
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+            zone = zone or resolve_zone(None)
+
             tickers = sorted(qty_map.keys())
-            if not tickers:
-                return _day_change_from_series([], places=places)
-            # Cheap daily closes only — not 5m for the whole book
-            closes = self._fetch_closes(tickers, ac_map, "5d", "1d")
-            if series_kind == "price":
+            crypto_names = [
+                t for t in tickers if (ac_map.get(t) or "").lower() == "crypto"
+            ]
+            stock_names = [
+                t for t in tickers if (ac_map.get(t) or "").lower() != "crypto"
+            ]
+            has_crypto = bool(crypto_names)
+            all_crypto = bool(tickers) and not stock_names
+
+            if not has_crypto:
+                if main_series is not None and len(main_series) >= 2:
+                    return _day_change_from_series(main_series[-2:], places=places)
+                if not tickers:
+                    return _day_change_from_series([], places=places)
+                closes = self._fetch_closes(tickers, ac_map, "5d", "1d")
+                if series_kind == "price":
+                    return _day_change_from_series(
+                        closes.get(tickers[0], []), places=places
+                    )
+                mv, _agg_meta = aggregate_mv_series(qty_map, closes)
+                return _day_change_from_series(mv, places=places)
+
+            crypto_5m = (
+                self._fetch_closes(crypto_names, ac_map, "5d", "5m")
+                if crypto_names
+                else {}
+            )
+
+            if all_crypto and series_kind == "price":
                 t = tickers[0]
-                return _day_change_from_series(closes.get(t, []), places=places)
-            mv, _agg_meta = aggregate_mv_series(qty_map, closes)
-            return _day_change_from_series(mv, places=places)
+                trimmed, _st = trim_intraday_series(
+                    crypto_5m.get(t, []),
+                    mode="local_day_or_prior",
+                    now=now,
+                    zone=zone,
+                )
+                return _day_change_from_series(trimmed, places=places)
+
+            _, crypto_status = trim_closes_map(
+                crypto_5m, mode="local_day_or_prior", now=now, zone=zone
+            )
+            t_open = local_midnight(now, zone)
+            if crypto_status == "prior_local_day":
+                t_open = local_midnight(t_open - timedelta(seconds=1), zone)
+            stock_daily = (
+                self._fetch_closes(stock_names, ac_map, "5d", "1d")
+                if stock_names
+                else {}
+            )
+            if all_crypto:
+                # Crypto-only MV: same T_open marks (seeded local day) × qty
+                return self._day_change_from_marks(
+                    qty_map,
+                    ac_map,
+                    t_open=t_open,
+                    t_last=now,
+                    crypto_5m=crypto_5m,
+                    stock_daily={},
+                    places=places,
+                )
+            # Mixed MV: not last-two-daily of the aggregated series
+            return self._day_change_from_marks(
+                qty_map,
+                ac_map,
+                t_open=t_open,
+                t_last=now,
+                crypto_5m=crypto_5m,
+                stock_daily=stock_daily,
+                places=places,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("day change resolve failed: %s", exc)
             return _day_change_from_series([], places=places)
@@ -1832,6 +2084,8 @@ class PriceHistoryService:
         range_key: RangeKey | str = "1y",
         ticker: str | None = None,
         asset_class: str | None = None,
+        zone: str | ZoneInfo | None = None,
+        now: datetime | None = None,
     ) -> HistoryResult:
         if not self.enabled:
             raise RuntimeError("yfinance disabled")
@@ -1839,7 +2093,11 @@ class PriceHistoryService:
         period, interval, point_kind = range_to_yfinance_spec(str(range_key))
         range_norm = str(range_key).strip().lower()
         lots = self._open_lots()
-        ts = utc_now()
+        ts = now or utc_now()
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        zone_info = self._resolve_zone_arg(zone)
+        zone_key = zone_info.key
         places = 4 if scope == "ticker" else 2
         is_intraday = point_kind == "intraday"
         cov_threshold = (
@@ -1855,12 +2113,14 @@ class PriceHistoryService:
                 raise LookupError(f"No open position for {t}")
             closes = self._fetch_closes([t], ac_map, period, interval)
             session_status = "regular"
+            ac = (ac_map.get(t) or "").lower()
+            day_mode: Literal["rth_today_or_prior", "local_day_or_prior"] = (
+                "local_day_or_prior" if ac == "crypto" else "rth_today_or_prior"
+            )
             if is_intraday:
-                ac = (ac_map.get(t) or "").lower()
-                mode: Literal["rth_today_or_prior", "last_24h"] = (
-                    "last_24h" if ac == "crypto" else "rth_today_or_prior"
+                closes, session_status = trim_closes_map(
+                    closes, mode=day_mode, now=ts, zone=zone_info
                 )
-                closes, session_status = trim_closes_map(closes, mode=mode)
             elif (ac_map.get(t) or "").lower() == "crypto":
                 closes = densify_crypto_closes_map(closes, ac_map)
             series = closes.get(t, [])
@@ -1892,6 +2152,8 @@ class PriceHistoryService:
                 main_range=range_norm,
                 main_series=series,
                 places=places,
+                now=ts,
+                zone=zone_info,
             )
             ysym = _normalize_yahoo_symbol(t, ac_map.get(t))
             note = (
@@ -1920,6 +2182,11 @@ class PriceHistoryService:
                 "quantity_basis": "current_open_lots",
                 "trades": trades,
                 "session_status": session_status if is_intraday else None,
+                "day_policy": {
+                    "timezone": zone_key,
+                    "mode": day_mode,
+                    "session_status": session_status if is_intraday else None,
+                },
                 "note": note,
                 "point_kind": point_kind,
                 **ch,
@@ -1992,17 +2259,17 @@ class PriceHistoryService:
             if is_intraday:
                 if ac_filter is None:
                     closes, session_status = build_portfolio_1d_aligned_closes(
-                        closes_raw, ac_map
+                        closes_raw, ac_map, now=ts, zone=zone_info
                     )
                     portfolio_1d = True
                 else:
-                    trim_mode: Literal["rth_today_or_prior", "last_24h"] = (
-                        "last_24h"
+                    trim_mode: Literal["rth_today_or_prior", "local_day_or_prior"] = (
+                        "local_day_or_prior"
                         if ac_filter == AssetClass.CRYPTO
                         else "rth_today_or_prior"
                     )
                     closes, session_status = trim_closes_map(
-                        closes_raw, mode=trim_mode
+                        closes_raw, mode=trim_mode, now=ts, zone=zone_info
                     )
             else:
                 closes = densify_crypto_closes_map(closes_raw, ac_map)
@@ -2033,17 +2300,17 @@ class PriceHistoryService:
                 if ac_filter is None:
                     # Shared 5m grid — stocks + crypto always marked together
                     closes, session_status = build_portfolio_1d_aligned_closes(
-                        closes_raw, ac_map
+                        closes_raw, ac_map, now=ts, zone=zone_info
                     )
                     portfolio_1d = True
                 else:
                     trim_mode = (
-                        "last_24h"
+                        "local_day_or_prior"
                         if ac_filter == AssetClass.CRYPTO
                         else "rth_today_or_prior"
                     )
                     closes, session_status = trim_closes_map(
-                        closes_raw, mode=trim_mode
+                        closes_raw, mode=trim_mode, now=ts, zone=zone_info
                     )
             else:
                 closes = densify_crypto_closes_map(closes_raw, ac_map)
@@ -2141,6 +2408,8 @@ class PriceHistoryService:
                     is_intraday=is_intraday,
                     coverage_threshold=cov_threshold,
                     events=events,
+                    now=ts,
+                    zone=zone_info,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("portfolio window components failed: %s", exc)
@@ -2154,6 +2423,8 @@ class PriceHistoryService:
                 main_range=range_norm,
                 main_series=mv_series,
                 places=2,
+                now=ts,
+                zone=zone_info,
             )
         else:
             day = self._resolve_day_change(
@@ -2163,6 +2434,8 @@ class PriceHistoryService:
                 main_range=range_norm,
                 main_series=mv_series,
                 places=2,
+                now=ts,
+                zone=zone_info,
             )
         short = agg_meta.get("short_history_tickers") or []
         if short:
@@ -2172,7 +2445,9 @@ class PriceHistoryService:
                 note += "…"
         if is_intraday and session_status == "prior_session":
             note = "Prior regular session (today’s open not in Yahoo yet). " + note
-        elif is_intraday and session_status == "last_24h":
+        elif is_intraday and session_status == "prior_local_day":
+            note = "Prior local day (today’s midnight not in Yahoo yet). " + note
+        elif is_intraday and session_status == "local_day":
             note = (
                 "Book change = chart endpoints · Mark P&L on qty at open · "
                 "Net capital closes the gap. "
@@ -2187,6 +2462,10 @@ class PriceHistoryService:
             asset_class=ac_filter,
             asset_class_by_ticker=ac_map,
         )
+        if ac_filter == AssetClass.STOCK:
+            book_day_mode = "rth_today_or_prior"
+        else:
+            book_day_mode = "local_day_or_prior"
         meta_out: dict[str, Any] = {
             "tickers": tickers,
             "missing_tickers": missing,
@@ -2199,6 +2478,11 @@ class PriceHistoryService:
             "quantity_basis": quantity_basis,
             "trades": trades,
             "session_status": session_status if is_intraday else None,
+            "day_policy": {
+                "timezone": zone_key,
+                "mode": book_day_mode,
+                "session_status": session_status if is_intraday else None,
+            },
             "note": note,
             "point_kind": point_kind,
             **ch,
@@ -2226,6 +2510,8 @@ class PriceHistoryService:
         self,
         *,
         range_key: RangeKey | str = "1y",
+        zone: str | ZoneInfo | None = None,
+        now: datetime | None = None,
     ) -> dict[str, Any]:
         """
         Per open-ticker price performance over the same window as the live chart.
@@ -2236,14 +2522,21 @@ class PriceHistoryService:
         period, interval, point_kind = range_to_yfinance_spec(str(range_key))
         range_norm = str(range_key).strip().lower()
         is_intraday = point_kind == "intraday"
+        ts = now or utc_now()
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        zone_info = self._resolve_zone_arg(zone)
         lots = self._open_lots()
         if not lots:
             return {
                 "range": range_norm,
-                "as_of": utc_now().isoformat(),
+                "as_of": ts.isoformat(),
                 "items": [],
             }
 
+        qty_map, _cost, ac_from_lots = self._qty_and_cost_by_ticker(
+            lots, all_open=True
+        )
         tickers: list[str] = []
         ac_map: dict[str, str | None] = {}
         for lot in lots:
@@ -2252,6 +2545,9 @@ class PriceHistoryService:
                 ac_map[t] = lot.asset_class.value if lot.asset_class else None
                 tickers.append(t)
         tickers = sorted(set(tickers))
+        for t, ac in ac_from_lots.items():
+            if ac_map.get(t) is None:
+                ac_map[t] = ac
 
         closes = self._fetch_closes(tickers, ac_map, period, interval)
         items: list[dict[str, Any]] = []
@@ -2260,10 +2556,14 @@ class PriceHistoryService:
             series = closes.get(t) or []
             session_status = None
             if is_intraday and series:
-                mode: Literal["rth_today_or_prior", "last_24h"] = (
-                    "last_24h" if (ac or "").lower() == "crypto" else "rth_today_or_prior"
+                mode: Literal["rth_today_or_prior", "local_day_or_prior"] = (
+                    "local_day_or_prior"
+                    if (ac or "").lower() == "crypto"
+                    else "rth_today_or_prior"
                 )
-                series, session_status = trim_intraday_series(series, mode=mode)
+                series, session_status = trim_intraday_series(
+                    series, mode=mode, now=ts, zone=zone_info
+                )
             places = 4 if (ac or "").lower() == "crypto" else 2
             if not series:
                 items.append(
@@ -2274,6 +2574,8 @@ class PriceHistoryService:
                         "last_value": None,
                         "change_pct": None,
                         "change_abs": None,
+                        "pnl_usd": None,
+                        "day_open": None,
                         "currency": "USD",
                         "session_status": session_status,
                     }
@@ -2281,6 +2583,8 @@ class PriceHistoryService:
                 continue
             first, last = series[0][1], series[-1][1]
             ch = _change_meta(first, last, places=places)
+            qty = qty_map.get(t, Decimal("0"))
+            pnl = qty * (last - first)
             items.append(
                 {
                     "ticker": t,
@@ -2289,6 +2593,8 @@ class PriceHistoryService:
                     "last_value": ch["last_value"],
                     "change_pct": ch["change_pct"],
                     "change_abs": ch["change_abs"],
+                    "pnl_usd": _str_dec(pnl, 2),
+                    "day_open": ch["first_value"],
                     "currency": "USD",
                     "session_status": session_status,
                 }
@@ -2304,6 +2610,6 @@ class PriceHistoryService:
         )
         return {
             "range": range_norm,
-            "as_of": utc_now().isoformat(),
+            "as_of": ts.isoformat(),
             "items": items,
         }

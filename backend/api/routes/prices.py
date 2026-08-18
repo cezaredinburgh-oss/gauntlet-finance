@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from backend.api.deps import RepoDep, SettingsDep, UserDep
 from backend.api.schemas import PriceHistoryResponse, PriceRefreshResponse
+from backend.common.timeutil import resolve_day_timezone
 from backend.services.price_history import PriceHistoryService
 from backend.services.prices import PriceService
 from backend.services.response_cache import cache_invalidate, cached
@@ -36,12 +37,13 @@ async def price_history(
         raise HTTPException(status_code=503, detail="yfinance disabled")
 
     range_norm = (range_key or "1y").strip().lower()
+    tz = resolve_day_timezone(repo)
     # Short TTL for 1D (live); multi-day can sit longer — soft mark ticks no longer
     # bust this unless quotes_updated.
     ttl = 45.0 if range_norm == "1d" else 180.0
     cache_key = (
         f"phist:{scope}:{range_norm}:{(ticker or '').upper()}:"
-        f"{(asset_class or '').lower()}:{settings.holding_period_exemption_days}"
+        f"{(asset_class or '').lower()}:{settings.holding_period_exemption_days}:{tz}"
     )
 
     def _build() -> PriceHistoryResponse:
@@ -57,6 +59,7 @@ async def price_history(
                 range_key=range_key,
                 ticker=ticker,
                 asset_class=asset_class,
+                zone=tz,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -101,18 +104,28 @@ async def window_performance(
     """Per open-ticker price change over the selected chart range."""
     if not settings.yfinance_enabled:
         raise HTTPException(status_code=503, detail="yfinance disabled")
-    svc = PriceHistoryService(
-        repo,
-        cache_ttl_seconds=settings.price_history_cache_ttl_seconds,
-        intraday_cache_ttl_seconds=settings.price_history_intraday_cache_ttl_seconds,
-        enabled=True,
-    )
+    range_norm = (range_key or "1y").strip().lower()
+    tz = resolve_day_timezone(repo)
+    ttl = 45.0 if range_norm == "1d" else 180.0
+    cache_key = f"wperf:{range_norm}:{tz}"
+
+    def _build() -> dict:
+        svc = PriceHistoryService(
+            repo,
+            cache_ttl_seconds=settings.price_history_cache_ttl_seconds,
+            intraday_cache_ttl_seconds=settings.price_history_intraday_cache_ttl_seconds,
+            enabled=True,
+        )
+        return svc.window_performance(range_key=range_key, zone=tz)
+
     try:
-        return svc.window_performance(range_key=range_key)
+        return cached(cache_key, ttl, _build)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status_code=502, detail=f"Window performance fetch failed: {exc}"
@@ -149,6 +162,7 @@ async def refresh_prices(
         # Digests include mark-to-market ROI; must not serve pre-refresh unpriced payloads
         cache_invalidate("ticker-digests:")
         cache_invalidate("phist:")
+        cache_invalidate("wperf:")
 
     return PriceRefreshResponse(
         as_of=result.as_of.isoformat(),

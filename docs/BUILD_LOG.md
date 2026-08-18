@@ -4,6 +4,17 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-18 — Crypto 1D is local calendar day; portfolio 1D midnight grid
+
+- Crypto (and portfolio) 1D no longer uses a rolling 24h tape. `last_24h` is removed.
+- `trim_intraday_series` mode is `rth_today_or_prior` | `local_day_or_prior`. Local day ends at `Settings.timezone` midnight (fallback `statement_timezone` / Europe/Prague). Midnight seed is an observed print prepended inside trim when the first live bar is later.
+- Portfolio 1D shared 5m grid starts at local midnight (not `now-24h`). Stocks still carry prior RTH close; crypto uses last print ≤ midnight. `portfolio_window_from_components` slices that grid; method `stocks_rth_plus_crypto_local_day_mark`.
+- `day_open` on 1D is the first trimmed point. Multi-day stock-only stays last-two-daily. Crypto-only / mixed MV uses DayPolicy marks at `T_open` (not `main_series[-2:]`).
+- `window_performance` uses the same trim+seed; items add `pnl_usd` (qty × Δ) and `day_open == first_value`.
+- Response cache keys include the resolved Sheets TZ (`phist:…:{tz}`, `wperf:{range}:{tz}`). No process-global TZ memo.
+
+---
+
 ## 2026-08-16 — Lab reset wipes numbered snapshots
 
 - `reset_lab_ledger` now deletes every `ledger*.json` in the lab data dir (canonical + iCloud numbered copies) and reseeds without recover, so a wipe cannot be undone by the next boot.
