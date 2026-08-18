@@ -294,7 +294,6 @@ export function HoldingsTableNext({
         setPerfError(null);
       } catch (e) {
         if (cancelled) return;
-        setPerfByTicker({});
         setPerfError(e instanceof ApiError ? e.detail : e instanceof Error ? e.message : "Failed");
       }
     })();
@@ -704,7 +703,7 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    title="Mark P/L on current open qty × DayPolicy price move."
+                    title="DayPolicy last vs day-open %"
                   />
                   <SortTh
                     label="MV"

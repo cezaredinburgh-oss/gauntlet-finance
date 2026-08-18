@@ -91,7 +91,7 @@ function sortBy(
   col: NextSortColumn,
   dir: "asc" | "desc",
   mode: "total" | "annualized" = "total",
-  perfByTicker: Readonly<Record<string, WindowPerformanceItem>> = {},
+  perfByTicker?: Readonly<Record<string, WindowPerformanceItem>>,
 ): TickerDigest[] {
   return [...rows].sort((a, b) =>
     compareNextHoldingsColumn(a, b, col, dir, mode, perfByTicker),
@@ -509,6 +509,13 @@ function memoryStorage(initial: Record<string, string> = {}): SortStorage & {
 
   const bareLast = sortBy(rows, "last", "desc");
   assertEq(bareLast[0]?.ticker, "MISS", "bare last uses digest price_usd");
+
+  const emptyJoinLast = sortBy(rows, "last", "desc", "total", {});
+  assertEq(
+    tickers(emptyJoinLast).join(","),
+    "AAA,BBB,MISS,NULL",
+    "explicit empty join Last is Yahoo-or-null, not digest price_usd",
+  );
 
   const lastDesc = sortBy(rows, "last", "desc", "total", join);
   assertEq(

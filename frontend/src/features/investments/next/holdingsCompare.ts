@@ -215,12 +215,13 @@ export function compareNextHoldingsColumn(
   column: NextSortColumn,
   dir: NextSortDir,
   performanceMode: HoldingsSortMode = "total",
-  perfByTicker: Readonly<Record<string, WindowPerformanceItem>> = {},
+  perfByTicker?: Readonly<Record<string, WindowPerformanceItem>>,
 ): number {
   const mul = dir === "asc" ? 1 : -1;
   let cmp = 0;
   let nullsHandled = false;
-  const useWindowLast = Object.keys(perfByTicker).length > 0;
+  const useWindowLast = perfByTicker != null;
+  const join = perfByTicker ?? {};
 
   switch (column) {
     case "ticker":
@@ -240,8 +241,8 @@ export function compareNextHoldingsColumn(
       break;
     }
     case "last": {
-      const am = lastSortMetric(a, perfByTicker, useWindowLast);
-      const bm = lastSortMetric(b, perfByTicker, useWindowLast);
+      const am = lastSortMetric(a, join, useWindowLast);
+      const bm = lastSortMetric(b, join, useWindowLast);
       const n = compareNullableNumber(am, bm, mul);
       if (am == null || bm == null) {
         if (!(am == null && bm == null)) {
@@ -255,8 +256,8 @@ export function compareNextHoldingsColumn(
       break;
     }
     case "dayPnl": {
-      const am = dayPnlMetric(a, perfByTicker);
-      const bm = dayPnlMetric(b, perfByTicker);
+      const am = dayPnlMetric(a, join);
+      const bm = dayPnlMetric(b, join);
       const n = compareNullableNumber(am, bm, mul);
       if (am == null || bm == null) {
         if (!(am == null && bm == null)) {
@@ -270,8 +271,8 @@ export function compareNextHoldingsColumn(
       break;
     }
     case "dayPct": {
-      const am = dayPctMetric(a, perfByTicker);
-      const bm = dayPctMetric(b, perfByTicker);
+      const am = dayPctMetric(a, join);
+      const bm = dayPctMetric(b, join);
       const n = compareNullableNumber(am, bm, mul);
       if (am == null || bm == null) {
         if (!(am == null && bm == null)) {
