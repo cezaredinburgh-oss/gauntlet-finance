@@ -269,6 +269,91 @@ def test_plus_caps_at_twelve_searchable_vendors():
     assert r.merchants_considered == 15
 
 
+def test_plus_pages_past_excluded_top_window():
+    """AC1: plus must consider leftovers past the old 300-prefix wall."""
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    n = 301
+    repo.upsert_rows(
+        "Transactions",
+        [tx(merchant=f"Shop {i}") for i in range(n)],
+    )
+    cats = list(DEFAULT_CATEGORIES)
+    txs = [t for t in repo.list_rows("Transactions")]
+    ranked = ai_categorize.cluster_blank_merchants(txs, cats, limit=None)
+    assert len(ranked) == n
+    exclude = [c.merchant_key for c in ranked[:300]]
+    remaining = ranked[300].merchant_key
+
+    def fake_chat(**kwargs) -> ChatResult:
+        return ChatResult(
+            content=json.dumps({"suggestions": []}),
+            prompt_tokens=4,
+            completion_tokens=2,
+            total_tokens=6,
+            model="grok-test",
+        )
+
+    r = ai_categorize.suggest_categories(
+        repo,
+        principal="e:plus-page@x",
+        settings=_settings(),
+        plus=True,
+        exclude_merchant_keys=exclude,
+        chat_fn=fake_chat,
+    )
+    sent = {v.get("merchant_key") for v in r.vendors_sent} | {
+        s.merchant_key for s in r.suggestions
+    }
+    assert r.vendors_sent or r.suggestions
+    assert remaining in sent
+    assert remaining not in set(exclude)
+
+
+def test_plus_empty_only_when_all_leftovers_excluded():
+    """AC2: empty vendors_sent means no leftover keys remain (internals dropped)."""
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    shops = [tx(merchant=f"Shop {i}") for i in range(8)]
+    internal = tx(
+        merchant="Own Pocket Move",
+        description="To pocket CZK Purchase vault from CZK",
+        is_internal_transfer=True,
+    )
+    repo.upsert_rows("Transactions", shops + [internal])
+    cats = list(DEFAULT_CATEGORIES)
+    txs = [t for t in repo.list_rows("Transactions") if not t.is_internal_transfer]
+    leftover_keys = [
+        c.merchant_key
+        for c in ai_categorize.cluster_blank_merchants(txs, cats, limit=None)
+    ]
+    assert leftover_keys
+    called = {"n": 0}
+
+    def fake_chat(**kwargs) -> ChatResult:
+        called["n"] += 1
+        return ChatResult(
+            content=json.dumps({"suggestions": []}),
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+            model="grok-test",
+        )
+
+    r = ai_categorize.suggest_categories(
+        repo,
+        principal="e:plus-empty@x",
+        settings=_settings(),
+        plus=True,
+        exclude_merchant_keys=leftover_keys,
+        chat_fn=fake_chat,
+    )
+    assert called["n"] == 0
+    assert r.vendors_sent == []
+    assert r.suggestions == []
+    assert r.message == "No uncategorized merchants to suggest."
+
+
 def test_plus_local_rules_skip_grok_for_known_and_pots():
     repo = InMemorySheetsRepository()
     repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))

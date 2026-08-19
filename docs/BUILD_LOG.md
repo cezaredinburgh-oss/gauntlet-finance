@@ -4,6 +4,14 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-19 — Grok+ leftover paging is exclude-then-slice
+
+- Plus `/vendor-suggest-plus` no longer clusters a 300-prefix then drops `exclude_merchant_keys` (empty window after ~300 sent keys).
+- `cluster_blank_merchants(..., limit=None)` returns all ranked leftover buckets; `limit=0` is empty. Optional `exclude_keys` drop before sort/slice.
+- Plus path: exclude then remaining window **200**. Empty `vendors_sent` means no leftover keys left (not prefix exhausted). Grok batch still leftover_searchable[:12]. Non-plus cluster-then-exclude unchanged.
+
+---
+
 ## 2026-08-19 — Equity 1D extended tape (vs close = 5m RTH last)
 
 - Equity/ETF 5m fetch uses `prepost=True` (crypto 5m and any `1d` stay `prepost=False`). Combined process cache token `extended_v1`; route keys `:ext1`.

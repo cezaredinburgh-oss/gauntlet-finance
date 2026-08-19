@@ -199,9 +199,11 @@ def cluster_blank_merchants(
     transactions: list[Transaction],
     categories: list[Category],
     *,
-    limit: int,
+    limit: int | None,
+    exclude_keys: list[str] | set[str] | frozenset[str] | None = None,
 ) -> list[MerchantCluster]:
     cat_by_id = {c.id: c for c in categories if not c.archived}
+    skip = {k for k in (exclude_keys or []) if k}
     buckets: dict[str, MerchantCluster] = {}
     for tx in transactions:
         if not is_blank_category(tx, cat_by_id):
@@ -209,6 +211,8 @@ def cluster_blank_merchants(
         key = merchant_key(tx)
         label = merchant_label(tx)
         if not key or not label:
+            continue
+        if key in skip:
             continue
         sign = amount_sign(tx.amount)
         cur = (tx.currency or "USD").upper()
@@ -245,6 +249,8 @@ def cluster_blank_merchants(
         buckets.values(),
         key=lambda c: (-c.sample_count, c.label.lower()),
     )
+    if limit is None:
+        return ordered
     return ordered[: max(0, limit)]
 
 
@@ -669,17 +675,24 @@ def suggest_categories(
     extra_ex = len([k for k in (exclude_merchant_keys or []) if k])
     if plus:
         txs = [t for t in txs if not t.is_internal_transfer]
-        fetch_n = min(300, max(200, extra_ex + 80))
+        # Plus pager: remaining leftovers after exclude, window 200 (not extra_ex+80).
+        clusters = cluster_blank_merchants(
+            txs,
+            categories,
+            limit=200,
+            exclude_keys=exclude_merchant_keys,
+        )
     elif web_search:
         txs = [t for t in txs if not t.is_internal_transfer]
         fetch_n = min(200, max(max_n * 8, max_n + extra_ex + 16))
+        clusters = cluster_blank_merchants(txs, categories, limit=fetch_n)
     else:
         fetch_n = max_n
         if extra_ex:
             fetch_n = min(80, max_n + extra_ex + 8)
-    clusters = cluster_blank_merchants(txs, categories, limit=fetch_n)
+        clusters = cluster_blank_merchants(txs, categories, limit=fetch_n)
     exclude = {k for k in (exclude_merchant_keys or []) if k}
-    if exclude:
+    if exclude and not plus:
         clusters = [c for c in clusters if c.merchant_key not in exclude]
     if merchant_key:
         mk = merchant_key.strip()
