@@ -258,7 +258,7 @@ Payload minimization: merchant label, amount **sign**, currency, optional instit
 - Assignable Grok catalog: **leaves only** (no parent nodes, no Other/Uncategorized).
 - Archive: `DELETE /categories/{id}` with optional `reassign_to` / `cascade_children`; deactivates rules pointing at archived ids.
 
-Coverage `tx_*` counts **exclude internals**. Other / Uncategorized / `life_domain=Other` = residual, not “real coverage.”
+Coverage `tx_*` counts **exclude internals**. Residual = blank / missing / catch-all `CAT_OTHER` + `CAT_UNCATEGORIZED` (stable UUID **and** name `other`|`uncategorized`). Named categories with `life_domain=Other` (Travel, Gifts, Pets) are **real coverage**, not leftover.
 
 ---
 
@@ -390,10 +390,7 @@ Coaching (same doc): categories → vendors → one leftover Grok+ batch. Wipe =
 
 6. **Merchant-queue apply vs Review vendor apply:** queue creates a `contains` rule and reclassifies **all matching non-override rows** (`mark_override=False`). Review vendor apply only updates **ids in the bucket** (plus optional separate rule at priority 100).
 
-7. **Residual definitions drift slightly:**
-   - Coverage `tx_*` and Review residual: null / Other / Uncategorized / `life_domain=Other` / unknown id; **internals excluded** from counts.
-   - Coverage USD / dashboard uncategorized **expense**: no cat or `life_domain=Other` (name “Other income” is Income domain — not residual).
-   - AI `is_blank_category`: override **or** null / CAT_OTHER / CAT_UNCATEGORIZED / name other|uncategorized — **does not** treat arbitrary `life_domain=Other` user cats as blank unless those names/ids.
+7. **Leftover residual is one predicate** (`_is_blank_or_other_category`): blank / missing / `CAT_OTHER` / `CAT_UNCATEGORIZED` / name `other`|`uncategorized`. **Not** `life_domain=Other`. Leftover counts, Review, coverage USD, dashboard uncategorized $, and alerts `uncategorized_high` share that helper. Grok+ stays `is_blank_category` (same leftover IDs, **plus** it skips `category_override`). Named Travel-as-Other is real; “Other income” is Income-domain and was never leftover by name.
 
 8. **Internal without category** is a first-class import outcome. Hide-transfers (default on Categorize unless `hide_transfers=0`) removes them from Review. They are **done for spend**, not leftover Grok work (plus path drops internals).
 
