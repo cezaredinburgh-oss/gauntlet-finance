@@ -1368,10 +1368,12 @@ export function NewEtCategorizePageNext() {
   const grokPlusSupporting =
     grokPlus.phase === "running"
       ? "Working — matching leftovers"
-      : (grokPlus.phase === "paused" || grokPlus.phase === "caught_up") &&
-          grokPlus.buckets.length
-        ? "Ready for review"
-        : "Suggest only";
+      : grokPlus.phase === "caught_up" && grokPlus.buckets.length === 0
+        ? "Caught up"
+        : (grokPlus.phase === "paused" || grokPlus.phase === "caught_up") &&
+            grokPlus.buckets.length
+          ? "Ready for review"
+          : "Suggest only";
   const ledgerTxTotal = coverage?.tx_total ?? ledgerCoverage.total;
 
   return (

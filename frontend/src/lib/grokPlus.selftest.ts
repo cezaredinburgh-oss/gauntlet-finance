@@ -2,7 +2,13 @@
  * Self-test for Grok+ batch merge (append, no wipe, no resurrect).
  * Run: npx --yes tsx src/lib/grokPlus.selftest.ts  (from frontend/)
  */
-import { mergePlusBatch, pickLatestMatch } from "./grokPlus";
+import {
+  grokPlusSessionStarted,
+  grokPlusStatusLabel,
+  mergePlusBatch,
+  pickLatestMatch,
+  restorePhase,
+} from "./grokPlus";
 import type { AiCategorySuggestion, Category } from "../api/types";
 import type { VendorBucket } from "./ruleSuggest";
 
@@ -91,6 +97,48 @@ if (resurrect.buckets.filter((b) => b.key === "m:lidl").length !== 1) {
 const latest = pickLatestMatch(first.added);
 if (!latest || latest.label !== "MOL" || latest.categoryName !== "Fuel (car)") {
   throw new Error(`latest match ${JSON.stringify(latest)}`);
+}
+
+if (grokPlusStatusLabel("caught_up", 0) === "Ready for review") {
+  throw new Error('AC4: grokPlusStatusLabel("caught_up", 0) must not be Ready for review');
+}
+if (grokPlusStatusLabel("caught_up", 0) !== "Caught up") {
+  throw new Error(`caught_up+0 label: ${grokPlusStatusLabel("caught_up", 0)}`);
+}
+if (grokPlusStatusLabel("caught_up", 3) !== "Ready for review") {
+  throw new Error("caught_up with guesses is Ready for review");
+}
+if (grokPlusStatusLabel("paused", 0) !== "Paused") {
+  throw new Error("paused+0 is Paused");
+}
+
+if (!grokPlusSessionStarted("caught_up", 0)) {
+  throw new Error("AC7: restore started true for caught_up + 0 buckets");
+}
+if (restorePhase("running", 0) !== "paused") {
+  throw new Error("restorePhase maps running → paused");
+}
+if (!grokPlusSessionStarted(restorePhase("caught_up", 0), 0)) {
+  throw new Error("restored caught_up+0 still started");
+}
+
+const emptyPlus = mergePlusBatch({
+  prev: [],
+  exclude: ["m:lidl", "m:mol"],
+  consumed: [],
+  suggestions: [],
+  vendorsSent: [],
+  cats,
+});
+if (emptyPlus.added.length !== 0) {
+  throw new Error("empty plus must add nothing");
+}
+if (
+  emptyPlus.exclude.length !== 2 ||
+  !emptyPlus.exclude.includes("m:lidl") ||
+  !emptyPlus.exclude.includes("m:mol")
+) {
+  throw new Error("empty plus must leave exclude unchanged");
 }
 
 console.log("grokPlus.selftest: ok");

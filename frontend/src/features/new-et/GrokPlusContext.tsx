@@ -14,12 +14,15 @@ import { estimateUsd } from "../../lib/aiCost";
 import {
   GROK_PLUS_BATCH,
   GROK_PLUS_SESSION_CAP,
+  grokPlusSessionStarted,
   mergePlusBatch,
   pickLatestMatch,
+  restorePhase,
+  type GrokPlusPhase,
 } from "../../lib/grokPlus";
 import type { VendorBucket } from "../../lib/ruleSuggest";
 
-export type GrokPlusPhase = "idle" | "running" | "paused" | "caught_up" | "error";
+export type { GrokPlusPhase };
 
 export type GrokPlusLastMatch = {
   label: string;
@@ -73,14 +76,6 @@ type Persisted = {
   message: string | null;
   phase?: GrokPlusPhase;
 };
-
-function restorePhase(raw: unknown, bucketCount: number): GrokPlusPhase {
-  if (raw === "error") return "error";
-  if (raw === "caught_up") return "caught_up";
-  if (raw === "paused" || raw === "running") return "paused";
-  if (bucketCount > 0) return "paused";
-  return "idle";
-}
 
 const GrokPlusContext = createContext<GrokPlusApi | null>(null);
 
@@ -140,11 +135,12 @@ export function GrokPlusProvider({
   children: ReactNode;
 }) {
   const seed = useRef<Persisted | null>(enabled ? readPersisted() : null).current;
+  const initialPhase = restorePhase(seed?.phase, seed?.buckets.length ?? 0);
 
-  const [phase, setPhase] = useState<GrokPlusPhase>(() =>
-    restorePhase(seed?.phase, seed?.buckets.length ?? 0),
+  const [phase, setPhase] = useState<GrokPlusPhase>(initialPhase);
+  const [started, setStarted] = useState(() =>
+    grokPlusSessionStarted(initialPhase, seed?.buckets.length ?? 0),
   );
-  const [started, setStarted] = useState(() => Boolean(seed?.buckets.length));
   const [buckets, setBuckets] = useState<VendorBucket[]>(() => seed?.buckets ?? []);
   const [message, setMessage] = useState<string | null>(() => seed?.message ?? null);
   const [lastMatch, setLastMatch] = useState<GrokPlusLastMatch | null>(
@@ -356,7 +352,7 @@ export function GrokPlusProvider({
           setMessage(
             total
               ? `Caught up — ${total} guess${total === 1 ? "" : "es"} waiting.`
-              : "Grok returned no vendor guesses.",
+              : "No leftover vendors left to match.",
           );
           break;
         }
@@ -390,6 +386,11 @@ export function GrokPlusProvider({
       }
     } finally {
       inFlightRef.current = false;
+      if (wantRunRef.current) {
+        queueMicrotask(() => {
+          void runLoop();
+        });
+      }
     }
   }, [enabled]);
 
@@ -405,7 +406,6 @@ export function GrokPlusProvider({
       setDismissed(false);
       setMinimized(false);
       setStarted(true);
-      setPhase("running");
       setMessage((m) => m || "Working — starting leftover matching…");
       setRunCount((n) => {
         const next = n + 1;
@@ -455,11 +455,13 @@ export function GrokPlusProvider({
     const drop = new Set(keys);
     runRef.current.consumed = [...new Set([...runRef.current.consumed, ...keys])];
     runRef.current.exclude = [...new Set([...runRef.current.exclude, ...keys])];
-    setBuckets((prev) => {
-      const next = prev.filter((b) => !drop.has(b.key));
-      bucketsRef.current = next;
-      return next;
-    });
+    const next = bucketsRef.current.filter((b) => !drop.has(b.key));
+    bucketsRef.current = next;
+    setBuckets(next);
+    if (next.length === 0) {
+      setPhase("caught_up");
+      setMessage("Caught up — no guesses waiting.");
+    }
   }, []);
 
   useEffect(() => {

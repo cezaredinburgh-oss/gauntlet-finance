@@ -3,26 +3,14 @@ import { useNavigate } from "react-router-dom";
 import { Minus, Pause, Play, Sparkles, X } from "lucide-react";
 import { formatUsdEstimate } from "../../lib/aiCost";
 import { cn } from "../../lib/cn";
+import {
+  grokPlusMinimizedLabel,
+  grokPlusStatusLabel,
+} from "../../lib/grokPlus";
 import { Spinner } from "../../components/Spinner";
 import { useGrokPlus } from "./GrokPlusContext";
 
-export function grokPlusStatusLabel(phase: string, bucketCount: number): string {
-  if (phase === "running") return "Working — matching leftovers";
-  if (phase === "paused") return bucketCount ? "Paused — ready for review" : "Paused";
-  if (phase === "caught_up") return "Ready for review";
-  if (phase === "error") return "Stopped — see message";
-  if (bucketCount) return "Ready for review";
-  return "Grok+ idle";
-}
-
-export function grokPlusMinimizedLabel(phase: string, bucketCount: number): string {
-  if (phase === "running") return "Working";
-  if (phase === "paused") return bucketCount ? "Paused — ready for review" : "Paused";
-  if (phase === "caught_up") return "Ready for review";
-  if (phase === "error") return "Stopped";
-  if (bucketCount) return "Ready for review";
-  return "Grok+";
-}
+export { grokPlusMinimizedLabel, grokPlusStatusLabel };
 
 export function GrokPlusStatus({
   variant,
