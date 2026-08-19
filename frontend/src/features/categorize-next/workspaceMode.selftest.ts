@@ -14,6 +14,7 @@ import {
   FOCUS_MAX_CHARS,
   hasListScope,
   parseFocusIds,
+  qParamPatch,
   ruleDrillParamPatch,
   screenFromSearchParams,
   shouldRestoreNextStepsFromSimilar,
@@ -525,5 +526,35 @@ const hubUsdUndrill = applyParamPatch(hubUsd, undrillParamPatch(hubUsd));
 assertEq(hubUsdUndrill.get("category_id"), null, "undrill src=hub_usd drops category_id");
 assertEq(hubUsdUndrill.get("expenses_only"), null, "undrill src=hub_usd drops expenses_only");
 assertEq(hubUsdUndrill.get("src"), null, "undrill src=hub_usd drops src");
+
+const hubLeftover = drillParamPatch({ src: "hub", category_id: "uncategorized" });
+assertEq(hubLeftover.mode, "txs", "hub leftover chip writes mode=txs");
+assertEq(hubLeftover.src, "hub", "hub leftover chip writes src=hub");
+assertEq(hubLeftover.category_id, "uncategorized", "hub leftover chip writes uncategorized");
+assertEq(
+  hubLeftover.expenses_only,
+  undefined,
+  "hub leftover chip does not write expenses_only",
+);
+assertEq(
+  categorizeHref(hubLeftover),
+  "/expenses/categorize?mode=txs&src=hub&category_id=uncategorized",
+  "hub leftover href",
+);
+const hubUsdWrite = drillParamPatch({
+  src: "hub_usd",
+  category_id: "uncategorized",
+  expenses_only: "1",
+});
+assertEq(hubUsdWrite.src, "hub_usd", "hub USD chip writes src=hub_usd");
+assertEq(hubUsdWrite.expenses_only, "1", "hub USD chip writes expenses_only=1");
+assertEq(
+  categorizeHref(hubUsdWrite),
+  "/expenses/categorize?mode=txs&src=hub_usd&category_id=uncategorized&expenses_only=1",
+  "hub USD href",
+);
+
+assertEq(qParamPatch("  coffee ").q, "coffee", "q patch trims");
+assertEq(qParamPatch(" \t ").q, null, "blank q deletes param");
 
 console.log("workspaceMode.selftest: ok");

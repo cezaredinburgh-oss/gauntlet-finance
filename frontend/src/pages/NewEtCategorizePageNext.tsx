@@ -49,6 +49,7 @@ import {
   chooseAllowlistWrite,
   drillParamPatch,
   parseFocusIds,
+  qParamPatch,
   ruleDrillParamPatch,
   screenFromSearchParams,
   shouldRestoreNextStepsFromSimilar,
@@ -122,6 +123,7 @@ const IDLE_SIM: SimFlow = {
 };
 
 const TX_ID_FETCH_CAP = 5000;
+const Q_URL_DEBOUNCE_MS = 300;
 
 function mergeTxItems(prev: Transaction[], extra: Transaction[]): Transaction[] {
   const seen = new Set(prev.map((t) => normTxId(t.id)));
@@ -229,6 +231,16 @@ export function NewEtCategorizePageNext() {
     },
     [setSearchParams],
   );
+
+  // Shareable search: write q after idle (replace), not on every keystroke.
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      const patch = qParamPatch(q);
+      if ((patch.q ?? "") === qFromUrl) return;
+      patchParams(patch);
+    }, Q_URL_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [q, qFromUrl, patchParams]);
 
   const pushParams = useCallback(
     (updates: Record<string, string | null>) => {
@@ -1558,7 +1570,8 @@ export function NewEtCategorizePageNext() {
                   ) : null}
                   {ruleParam ? (
                     <p className="min-w-0 max-w-full break-words text-sm text-ink-muted">
-                      Preview on this list — does not recategorize.
+                      Preview on this list — saving or matching a rule here does not
+                      recategorize the ledger. Internals included for preview.
                     </p>
                   ) : null}
                   <ReviewFilterChips

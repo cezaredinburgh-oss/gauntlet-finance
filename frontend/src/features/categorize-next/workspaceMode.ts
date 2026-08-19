@@ -122,6 +122,12 @@ export function categorizeHref(patch: Record<string, string | null>): string {
   return qs ? `${CATEGORIZE_PATH}?${qs}` : CATEGORIZE_PATH;
 }
 
+/** Debounced search writes this (replace). Empty / whitespace deletes `q`. */
+export function qParamPatch(q: string): Record<string, string | null> {
+  const trimmed = q.trim();
+  return { q: trimmed || null };
+}
+
 export type DrillSrc = "review" | "grokplus" | "rules" | "categories" | "hub" | "hub_usd";
 
 /** Filter keys each src click is allowed to revert on undrill (plus mode/panel/src). */

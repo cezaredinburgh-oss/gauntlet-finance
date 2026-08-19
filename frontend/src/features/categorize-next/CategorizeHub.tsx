@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { categorizeHref, windowParamPatch } from "./workspaceMode";
+import { categorizeHref, drillParamPatch, windowParamPatch } from "./workspaceMode";
 
 function coverageStatusLabel(status: string | null | undefined): string | null {
   if (status === "below_target") return "Below target";
@@ -92,6 +92,16 @@ export function CategorizeHub({
   const categoriesHref = categorizeHref(windowParamPatch("categories"));
   const grokHref = categorizeHref(windowParamPatch("grokplus"));
   const browseHref = categorizeHref(windowParamPatch("txs"));
+  const leftoverHref = categorizeHref(
+    drillParamPatch({ src: "hub", category_id: "uncategorized" }),
+  );
+  const leftoverUsdHref = categorizeHref(
+    drillParamPatch({
+      src: "hub_usd",
+      category_id: "uncategorized",
+      expenses_only: "1",
+    }),
+  );
 
   const supporting = (win: (typeof WINDOW_CARDS)[number]["win"]): string => {
     if (win === "review") {
@@ -126,27 +136,41 @@ export function CategorizeHub({
 
       <section className="card min-w-0 max-w-full space-y-2 p-4">
         <p className="min-w-0 max-w-full break-words text-sm text-ink">
-          {leftoverCount.toLocaleString()} leftover in the ledger
+          <Link to={leftoverHref} className="font-medium hover:underline">
+            {leftoverCount.toLocaleString()} leftover in the ledger
+          </Link>
           {" · "}
           {categorizedCount.toLocaleString()} categorized
           {" · "}
           {ledgerTxTotal.toLocaleString()} in the ledger
         </p>
         <p className="min-w-0 max-w-full break-words text-sm text-ink-muted">
-          {leftoverVendorCount.toLocaleString()} leftover vendors on this list
+          <Link to={reviewHref} className="hover:text-ink hover:underline">
+            {leftoverVendorCount.toLocaleString()} leftover vendors on this list
+          </Link>
           {" · "}
           {honesty}
         </p>
         <p className="min-w-0 max-w-full break-words text-sm text-ink-muted">
-          {rulesCount.toLocaleString()} rules
+          <Link to={rulesHref} className="hover:text-ink hover:underline">
+            {rulesCount.toLocaleString()} rules
+          </Link>
           {" · "}
-          {categoriesCount.toLocaleString()} categories
+          <Link to={categoriesHref} className="hover:text-ink hover:underline">
+            {categoriesCount.toLocaleString()} categories
+          </Link>
         </p>
         {coveragePct != null ? (
           <p className="min-w-0 max-w-full break-words text-sm text-ink-muted">
-            180d expense coverage · {coveragePct}%
-            {statusLabel ? ` · ${statusLabel}` : ""}
-            {progressNote ? ` · ${progressNote}` : ""}
+            <Link
+              to={leftoverUsdHref}
+              title="Uncategorized expenses on this list"
+              className="hover:text-ink hover:underline"
+            >
+              180d expense coverage · {coveragePct}%
+              {statusLabel ? ` · ${statusLabel}` : ""}
+              {progressNote ? ` · ${progressNote}` : ""}
+            </Link>
           </p>
         ) : null}
         {leftoverVendorCount > 0 && ladderText ? (
