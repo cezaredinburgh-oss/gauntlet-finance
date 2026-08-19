@@ -9,6 +9,26 @@ const NECESSITIES = [
   { value: "Fixed", label: "Fixed" },
 ] as const;
 
+const LIFE_DOMAINS = [
+  "Housing",
+  "Debt",
+  "Transport",
+  "Food",
+  "Subscriptions",
+  "Health",
+  "Income",
+  "Transfers",
+  "Investments",
+  "Hobbies",
+  "Business",
+  "Cash",
+  "Shopping",
+  "Entertainment",
+  "Education",
+  "Fees",
+  "Other",
+] as const;
+
 export function CreateCategoryInline({
   catsSorted,
   disabled,
@@ -22,6 +42,7 @@ export function CreateCategoryInline({
   const [name, setName] = useState("");
   const [parentId, setParentId] = useState("");
   const [necessity, setNecessity] = useState("Discretionary");
+  const [lifeDomain, setLifeDomain] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -40,14 +61,16 @@ export function CreateCategoryInline({
 
   async function save() {
     if (!name.trim()) return;
+    const parent = catsSorted.find((c) => c.id === parentId);
+    const domain = parent?.life_domain || lifeDomain;
+    if (!domain) return;
     setBusy(true);
     setErr(null);
     try {
-      const parent = catsSorted.find((c) => c.id === parentId);
       const r = await api.createCategory({
         name: name.trim(),
         necessity,
-        life_domain: parent?.life_domain || "Other",
+        life_domain: domain,
         parent_id: parentId || null,
         is_income: parent?.is_income ?? false,
         is_transfer: parent?.is_transfer ?? false,
@@ -55,6 +78,8 @@ export function CreateCategoryInline({
       });
       onCreated(r.item);
       setName("");
+      setLifeDomain("");
+      setParentId("");
       setOpen(false);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Create failed");
@@ -69,7 +94,13 @@ export function CreateCategoryInline({
         className="input py-1 text-xs"
         placeholder="Category name"
         value={name}
-        onChange={(e) => setName(e.target.value)}
+        onChange={(e) => {
+          const next = e.target.value;
+          setName(next);
+          if (!parentId && !lifeDomain && /^travel$/i.test(next.trim())) {
+            setLifeDomain("Entertainment");
+          }
+        }}
       />
       <div className="flex flex-wrap gap-1.5">
         <select
@@ -84,6 +115,20 @@ export function CreateCategoryInline({
             </option>
           ))}
         </select>
+        {!parentId ? (
+          <select
+            className="input max-w-[9rem] py-1 text-xs"
+            value={lifeDomain}
+            onChange={(e) => setLifeDomain(e.target.value)}
+          >
+            <option value="">Select domain</option>
+            {LIFE_DOMAINS.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <select
           className="input max-w-[8rem] py-1 text-xs"
           value={necessity}
@@ -95,7 +140,12 @@ export function CreateCategoryInline({
             </option>
           ))}
         </select>
-        <button type="button" className="btn-primary text-xs" disabled={busy || !name.trim()} onClick={() => void save()}>
+        <button
+          type="button"
+          className="btn-primary text-xs"
+          disabled={busy || !name.trim() || (!parentId && !lifeDomain)}
+          onClick={() => void save()}
+        >
           {busy ? <Spinner className="h-3 w-3 border-t-slate-900" /> : null}
           Add
         </button>

@@ -4,6 +4,16 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-19 — Leftover residual / Travel domain
+
+- Leftover residual is no longer `life_domain == Other`. Residual is blank / missing category / catch-all `CAT_OTHER` + `CAT_UNCATEGORIZED` (stable UUID **and** name `other`|`uncategorized`).
+- Named categories whose domain happens to be Other (lab Travel) **leave leftover** without a tx write: Review, 180d coverage USD, dashboard uncategorized $, alerts `uncategorized_high`. Grok+ `is_blank_category` was already catch-all-only — unchanged.
+- Coverage `progress_note`: `Target 90% expense coverage (blank / Other / Uncategorized catch-alls count as leftover).` `by_domain["Other"]` may still show Travel spend until an operator remaps Travel → Entertainment.
+- Side effects: recategorizing Travel-as-Other now sets `category_override`; `apply_rules_fill_blanks` skips those rows (`skipped_already`) so a later Fuel rule cannot steal them.
+- Create-UX: Categories next + inline create require an explicit domain (no silent Other). `/^travel$/i` name hint → Entertainment. No server rewrite of `life_domain`. Classic Categorize unpatched.
+
+---
+
 ## 2026-08-16 — Lab reset wipes numbered snapshots
 
 - `reset_lab_ledger` now deletes every `ledger*.json` in the lab data dir (canonical + iCloud numbered copies) and reseeds without recover, so a wipe cannot be undone by the next boot.

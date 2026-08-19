@@ -1,4 +1,5 @@
 import type { Category, Transaction } from "../../api/types";
+import { isResidualCategory } from "../../lib/ruleSuggest";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -41,13 +42,7 @@ export function txHasRealCategory(
   t: Transaction,
   catMap: Map<string, Category>,
 ): boolean {
-  if (!t.category_id) return false;
-  const cat = catMap.get(t.category_id);
-  if (!cat) return false;
-  if (cat.life_domain === "Other") return false;
-  const name = (cat.name || "").trim().toLowerCase();
-  if (name === "other" || name === "uncategorized") return false;
-  return true;
+  return !isResidualCategory(t, catMap);
 }
 
 export function txSortDescription(t: Transaction): string {

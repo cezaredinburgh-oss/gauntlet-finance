@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from backend.schema.models import Category, Transaction
+from backend.services.categorization import _is_blank_or_other_category
 from backend.services.fx_amounts import (
     build_fx_service,
     enrich_and_backfill_transactions,
@@ -114,7 +115,7 @@ def _cashflow_window(
             by_necessity[nec] += exp
             top_exp_domain[domain] += exp
             total_exp_for_cat += exp
-            if not cat or domain == "Other":
+            if _is_blank_or_other_category(t, cat_map):
                 uncategorized_exp += exp
 
             cat_key = str(cat.id) if cat else "uncategorized"

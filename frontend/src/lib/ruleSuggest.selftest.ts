@@ -4,9 +4,11 @@
  */
 import {
   applyVendorCategoryOverrides,
+  CATCHALL_CATEGORY_IDS,
   formatVendorPreview,
   groupTransactionsByVendor,
   groupVendorsByCategory,
+  isResidualCategory,
   ledgerCategoryCounts,
 } from "./ruleSuggest";
 import type { Category, Transaction } from "../api/types";
@@ -91,6 +93,50 @@ const afterAssign = ledgerCategoryCounts(
 );
 if (afterAssign.uncategorized !== 0 || afterAssign.categorized !== 3) {
   throw new Error("assigning a group should zero the uncategorized count");
+}
+
+const travel = {
+  id: "travel-cfec61",
+  name: "Travel",
+  necessity: "discretionary",
+  life_domain: "Other",
+  is_income: false,
+  is_transfer: false,
+  sort_order: 2,
+} as Category;
+const catchAllOther = {
+  ...groceries,
+  id: "c2000001-0000-4000-8000-000000000140",
+  name: "Other",
+  life_domain: "Other",
+} as Category;
+if (!CATCHALL_CATEGORY_IDS.has(catchAllOther.id)) {
+  throw new Error("CAT_OTHER UUID must be in CATCHALL_CATEGORY_IDS");
+}
+const residualMap = new Map<string, Category>([
+  [travel.id, travel],
+  [catchAllOther.id, catchAllOther],
+]);
+const travelTx = tx({ id: "hotel-1", merchant: "Hotel", category_id: travel.id });
+const otherTx = tx({ id: "misc-1", merchant: "Misc", category_id: catchAllOther.id });
+if (isResidualCategory(travelTx, residualMap)) {
+  throw new Error("Travel with life_domain Other must not be residual");
+}
+if (!isResidualCategory(otherTx, residualMap)) {
+  throw new Error("CAT_OTHER UUID spend must stay residual");
+}
+const travelCounts = ledgerCategoryCounts(
+  [travelTx, otherTx, tx({ id: "blank-1", merchant: "Blank" })],
+  residualMap,
+);
+if (
+  travelCounts.categorized !== 1 ||
+  travelCounts.uncategorized !== 2 ||
+  travelCounts.total !== 3
+) {
+  throw new Error(
+    `expected Travel categorized 1/2 of 3, got ${travelCounts.categorized}/${travelCounts.uncategorized} of ${travelCounts.total}`,
+  );
 }
 
 const byCat = groupVendorsByCategory([

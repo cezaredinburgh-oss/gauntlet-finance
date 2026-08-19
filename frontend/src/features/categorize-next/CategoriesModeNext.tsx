@@ -42,12 +42,16 @@ type Draft = {
 const EMPTY_DRAFT: Draft = {
   name: "",
   necessity: "Discretionary",
-  life_domain: "Other",
+  life_domain: "",
   parent_id: "",
   is_income: false,
   is_transfer: false,
   sort_order: 500,
 };
+
+function suggestDomainFromName(name: string): string | null {
+  return /^travel$/i.test(name.trim()) ? "Entertainment" : null;
+}
 
 function draftFrom(c: Category): Draft {
   return {
@@ -94,7 +98,7 @@ export function CategoriesModeNext({
   }, [cats]);
 
   async function onCreate() {
-    if (!createDraft.name.trim()) return;
+    if (!createDraft.name.trim() || !createDraft.life_domain) return;
     setBusyId("create");
     setMsg(null);
     try {
@@ -119,7 +123,7 @@ export function CategoriesModeNext({
   }
 
   async function onSaveEdit() {
-    if (!editingId || !editDraft) return;
+    if (!editingId || !editDraft || !editDraft.name.trim() || !editDraft.life_domain) return;
     setBusyId(editingId);
     setMsg(null);
     try {
@@ -193,7 +197,12 @@ export function CategoriesModeNext({
           <button
             type="button"
             className="btn-primary text-sm"
-            disabled={busyId === "create" || isReadOnly || !createDraft.name.trim()}
+            disabled={
+              busyId === "create" ||
+              isReadOnly ||
+              !createDraft.name.trim() ||
+              !createDraft.life_domain
+            }
             onClick={() => void onCreate()}
           >
             {busyId === "create" ? <Spinner className="h-4 w-4 border-t-slate-900" /> : null}
@@ -232,7 +241,12 @@ export function CategoriesModeNext({
                         <button
                           type="button"
                           className="btn-primary text-xs"
-                          disabled={busyId === c.id || isReadOnly}
+                          disabled={
+                            busyId === c.id ||
+                            isReadOnly ||
+                            !editDraft.name.trim() ||
+                            !editDraft.life_domain
+                          }
                           onClick={() => void onSaveEdit()}
                         >
                           Save
@@ -400,7 +414,14 @@ function CategoryForm({
             className="input mt-1 py-1.5 text-sm"
             value={draft.name}
             disabled={disabled}
-            onChange={(e) => patch({ name: e.target.value })}
+            onChange={(e) => {
+              const name = e.target.value;
+              const hinted =
+                !draft.life_domain && suggestDomainFromName(name)
+                  ? "Entertainment"
+                  : undefined;
+              patch({ name, ...(hinted ? { life_domain: hinted } : {}) });
+            }}
           />
         </label>
         <label className="text-xs text-ink-faint">
@@ -426,6 +447,7 @@ function CategoryForm({
             disabled={disabled}
             onChange={(e) => patch({ life_domain: e.target.value })}
           >
+            <option value="">Select domain</option>
             {LIFE_DOMAINS.map((d) => (
               <option key={d} value={d}>
                 {d}
@@ -439,7 +461,14 @@ function CategoryForm({
             className="input mt-1 py-1.5 text-sm"
             value={draft.parent_id}
             disabled={disabled}
-            onChange={(e) => patch({ parent_id: e.target.value })}
+            onChange={(e) => {
+              const parentId = e.target.value;
+              const parent = cats.find((c) => c.id === parentId);
+              patch({
+                parent_id: parentId,
+                ...(parent ? { life_domain: parent.life_domain } : {}),
+              });
+            }}
           >
             <option value="">None (top level)</option>
             {cats

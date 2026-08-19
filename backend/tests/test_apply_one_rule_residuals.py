@@ -267,3 +267,184 @@ def test_archived_category_does_not_write_txs():
 
     assert _tx_by_id(repo, blank.id).category_id is None
     assert "Transactions" not in repo.upserted
+
+# --- PR3 residual tests ---
+
+import asyncio
+from datetime import date
+from decimal import Decimal
+
+from backend.api.auth import SessionUser
+from backend.api.routes.categories import bulk_override_category
+from backend.api.schemas import BulkCategoryOverrideRequest
+from backend.schema.default_categories import (
+    CAT_FUEL_CAR,
+    CAT_OTHER,
+    CAT_UNCATEGORIZED,
+    DEFAULT_CATEGORIES,
+)
+from backend.schema.models import LifeDomain, MatchField, MatchType
+from backend.services.ai_categorize import is_blank_category
+from backend.services.alerts import build_alerts
+from backend.services.categorization import (
+    _is_blank_or_other_category,
+    apply_rules_fill_blanks,
+    coverage_stats,
+    ledger_tx_counts,
+)
+from backend.services.dashboard import dashboard_summary
+from backend.sheets.repository import InMemorySheetsRepository
+from backend.tests.helpers import category, rule, tx as make_tx
+
+_USER = SessionUser(
+    email="dev@localhost",
+    name="Dev",
+    picture=None,
+    access_token="",
+    refresh_token=None,
+    token_expiry=None,
+)
+
+
+def _usd_tx(**kwargs):
+    t = make_tx(currency="USD", booking_date=date.today(), **kwargs)
+    amt = t.amount
+    return t.model_copy(update={"amount_usd": amt, "amount_czk": None})
+
+
+def _repo(cats, txs, rules=None) -> InMemorySheetsRepository:
+    repo = InMemorySheetsRepository()
+    repo.replace_all_rows("Categories", cats)
+    repo.replace_all_rows("Transactions", txs)
+    repo.replace_all_rows("CategoryRules", rules or [])
+    repo.replace_all_rows("FXRates", [])
+    repo.replace_all_rows("InvestmentLots", [])
+    repo.replace_all_rows("InvestmentEvents", [])
+    repo.replace_all_rows("Prices", [])
+    repo.replace_all_rows("Accounts", [])
+    repo.replace_all_rows("VendorMemory", [])
+    return repo
+
+
+def test_travel_as_other_is_not_residual():
+    travel = category(name="Travel", life_domain=LifeDomain.OTHER)
+    cats = {c.id: c for c in [*DEFAULT_CATEGORIES, travel]}
+    row = _usd_tx(amount=Decimal("-42.50"), merchant="Hotel", category_id=travel.id)
+    assert _is_blank_or_other_category(row, cats) is False
+    counts = ledger_tx_counts([row], cats)
+    assert counts["tx_uncategorized"] == 0
+    assert counts["tx_categorized"] == 1
+    # Grok+ was already catch-all-only; leftover now matches.
+    assert is_blank_category(row, cats) is False
+
+
+def test_catchall_uuid_and_blank_still_residual():
+    cats = {c.id: c for c in DEFAULT_CATEGORIES}
+    other_row = _usd_tx(amount=Decimal("-10.00"), merchant="Misc", category_id=CAT_OTHER)
+    uncat_row = _usd_tx(
+        amount=Decimal("-11.00"), merchant="Misc2", category_id=CAT_UNCATEGORIZED
+    )
+    blank = _usd_tx(amount=Decimal("-12.00"), merchant="Blank", category_id=None)
+    assert _is_blank_or_other_category(other_row, cats) is True
+    assert _is_blank_or_other_category(uncat_row, cats) is True
+    assert _is_blank_or_other_category(blank, cats) is True
+    counts = ledger_tx_counts([other_row, uncat_row, blank], cats)
+    assert counts["tx_uncategorized"] == 3
+    assert counts["tx_categorized"] == 0
+
+
+def test_travel_spend_is_categorized_other_uuid_stays_uncategorized_decimal():
+    travel = category(name="Travel", life_domain=LifeDomain.OTHER)
+    cats = [*DEFAULT_CATEGORIES, travel]
+    travel_amt = Decimal("-69.40")
+    other_amt = Decimal("-20.10")
+    txs = [
+        _usd_tx(amount=travel_amt, merchant="Hotel", category_id=travel.id),
+        _usd_tx(amount=other_amt, merchant="Misc", category_id=CAT_OTHER),
+    ]
+    repo = _repo(cats, txs)
+
+    cov = coverage_stats(repo, days=180)
+    assert Decimal(cov["expense_usd_categorized"]) == abs(travel_amt).quantize(
+        Decimal("0.01")
+    )
+    assert Decimal(cov["uncategorized_expense_usd"]) == abs(other_amt).quantize(
+        Decimal("0.01")
+    )
+    assert "catch-alls count as leftover" in cov["progress_note"]
+    assert "non-Other" not in cov["progress_note"]
+    by_domain = {row["name"]: Decimal(row["amount_usd"]) for row in cov["by_domain"]}
+    assert by_domain.get("Other") == abs(travel_amt).quantize(Decimal("0.01"))
+
+    summary = dashboard_summary(repo, date_from=date.today(), date_to=date.today())
+    uncat = Decimal(summary["spending"]["uncategorized_expense_usd"])
+    assert uncat == abs(other_amt).quantize(Decimal("0.01"))
+    dash_domains = {
+        row["name"]: Decimal(row["amount_usd"]) for row in summary["spending"]["by_domain"]
+    }
+    assert dash_domains.get("Other") == (abs(travel_amt) + abs(other_amt)).quantize(
+        Decimal("0.01")
+    )
+
+    alerts = build_alerts(repo)
+    ids = {a["id"] for a in alerts["items"]}
+    assert "uncategorized_high" not in ids
+
+
+def test_fuel_rule_does_not_overwrite_travel_as_other():
+    travel = category(name="Travel", life_domain=LifeDomain.OTHER)
+    fuel = next(c for c in DEFAULT_CATEGORIES if c.id == CAT_FUEL_CAR)
+    row = _usd_tx(amount=Decimal("-30.00"), merchant="EuroOil", category_id=travel.id)
+    fuel_rule = rule(
+        priority=10,
+        category_id=fuel.id,
+        match_field=MatchField.MERCHANT,
+        match_type=MatchType.CONTAINS,
+        match_value="EuroOil",
+    )
+    repo = _repo([*DEFAULT_CATEGORIES, travel], [row], [fuel_rule])
+    stats = apply_rules_fill_blanks(repo)
+    assert stats["filled"] == 0
+    assert stats["skipped_already"] == 1
+    kept = repo.get_by_id("Transactions", row.id)
+    assert kept is not None
+    assert kept.category_id == travel.id
+    assert kept.category_override is False
+
+
+def test_bulk_override_travel_as_other_sets_override():
+    travel = category(name="Travel", life_domain=LifeDomain.OTHER)
+    fuel = next(c for c in DEFAULT_CATEGORIES if c.id == CAT_FUEL_CAR)
+    row = _usd_tx(amount=Decimal("-30.00"), merchant="EuroOil", category_id=travel.id)
+    other_row = _usd_tx(amount=Decimal("-8.00"), merchant="Lidl", category_id=CAT_OTHER)
+    repo = _repo([*DEFAULT_CATEGORIES, travel], [row, other_row])
+
+    travel_result = asyncio.run(
+        bulk_override_category(
+            body=BulkCategoryOverrideRequest(
+                category_id=fuel.id, transaction_ids=[row.id]
+            ),
+            repo=repo,
+            _user=_USER,
+        )
+    )
+    assert travel_result.updated == 1
+    moved = repo.get_by_id("Transactions", row.id)
+    assert moved is not None
+    assert moved.category_id == fuel.id
+    assert moved.category_override is True
+
+    other_result = asyncio.run(
+        bulk_override_category(
+            body=BulkCategoryOverrideRequest(
+                category_id=fuel.id, transaction_ids=[other_row.id]
+            ),
+            repo=repo,
+            _user=_USER,
+        )
+    )
+    assert other_result.updated == 1
+    first_assign = repo.get_by_id("Transactions", other_row.id)
+    assert first_assign is not None
+    assert first_assign.category_id == fuel.id
+    assert first_assign.category_override is False

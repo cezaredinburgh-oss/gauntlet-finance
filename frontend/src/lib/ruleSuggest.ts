@@ -62,21 +62,27 @@ export function sameVendorTransactionIds(
   return out;
 }
 
+/** Stable catch-alls from backend/schema/default_categories.py (CAT_OTHER, CAT_UNCATEGORIZED). */
+export const CATCHALL_CATEGORY_IDS = new Set([
+  "c2000001-0000-4000-8000-000000000140",
+  "c2000001-0000-4000-8000-000000000141",
+]);
+
 /**
- * Residual / still-to-categorize: null, missing cat, Other, Uncategorized,
- * or life_domain Other. Real assigned categories are not residual.
+ * Residual / still-to-categorize: null, missing cat, catch-all Other /
+ * Uncategorized (stable UUID or name). Named categories with life_domain Other
+ * (e.g. Travel) are real assignments, not leftover.
  */
 export function isResidualCategory(
   t: Transaction,
   catMap: Map<string, Category>,
 ): boolean {
   if (!t.category_id) return true;
+  if (CATCHALL_CATEGORY_IDS.has(t.category_id.toLowerCase())) return true;
   const c = catMap.get(t.category_id);
   if (!c) return true;
-  const name = (c.name || "").toLowerCase();
-  if (name === "other" || name === "uncategorized") return true;
-  if ((c.life_domain || "").toLowerCase() === "other") return true;
-  return false;
+  const name = (c.name || "").trim().toLowerCase();
+  return name === "other" || name === "uncategorized";
 }
 
 /**

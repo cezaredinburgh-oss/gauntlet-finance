@@ -48,6 +48,8 @@ from backend.schema.default_categories import (
     CAT_SPOTIFY,
     CAT_STREAMING,
     CAT_TAXI,
+    CAT_OTHER,
+    CAT_UNCATEGORIZED,
     CAT_UTILITIES,
     DEFAULT_CATEGORIES,
 )
@@ -311,22 +313,28 @@ def _category_implies_internal_transfer(cat: Category) -> bool:
     return False
 
 
+_CATCHALL_CATEGORY_IDS = frozenset({CAT_OTHER, CAT_UNCATEGORIZED})
+
+
 def _is_blank_or_other_category(
     tx: Transaction,
     cats: dict[UUID, Category],
 ) -> bool:
-    """True when rules may still improve this row (null / Other / Uncategorized)."""
+    """True when leftover residual: blank / missing / catch-all Other & Uncategorized.
+
+    Catch-alls are residual by stable UUID and by name so a renamed default Other
+    or a user-created extra Uncategorized still counts as work left. A named
+    category whose life_domain happens to be Other (lab Travel) is a real assignment.
+    """
     if tx.category_id is None:
+        return True
+    if tx.category_id in _CATCHALL_CATEGORY_IDS:
         return True
     cat = cats.get(tx.category_id)
     if cat is None:
         return True
     name = (cat.name or "").strip().lower()
-    if name in {"other", "uncategorized"}:
-        return True
-    if cat.life_domain is not None and cat.life_domain.value == "Other":
-        return True
-    return False
+    return name in {"other", "uncategorized"}
 
 
 def apply_one_rule_fill_residuals(
@@ -1280,14 +1288,15 @@ def _window_coverage(
             continue
         exp = abs(usd)
         total += exp
-        cat = cats.get(tx.category_id) if tx.category_id else None
-        if cat is None or cat.life_domain.value == "Other":
+        if _is_blank_or_other_category(tx, cats):
             field, value = _uncat_match_key(tx)
             uncat_merchants[(field, value)] += exp
             uncat_counts[(field, value)] += 1
         else:
             categorized += exp
-            by_domain[cat.life_domain.value] += exp
+            cat = cats.get(tx.category_id) if tx.category_id else None
+            if cat is not None and cat.life_domain is not None:
+                by_domain[cat.life_domain.value] += exp
 
     pct = float((categorized / total) * 100) if total > 0 else 0.0
     if pct >= _TARGET_PCT:
@@ -1353,8 +1362,8 @@ def coverage_stats(repo: SheetsRepository, *, days: int = 180) -> dict[str, Any]
         "amber_pct": _AMBER_PCT,
         "status": primary["status"],
         "progress_note": (
-            f"Target {_TARGET_PCT:.0f}% non-Other expense coverage "
-            f"(amber floor {_AMBER_PCT:.0f}%)."
+            f"Target {_TARGET_PCT:.0f}% expense coverage "
+            f"(blank / Other / Uncategorized catch-alls count as leftover)."
         ),
         "by_domain": primary["by_domain"],
         "top_uncategorized_merchants": top,

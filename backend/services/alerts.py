@@ -16,6 +16,7 @@ from backend.schema.models import (
     Price,
     Transaction,
 )
+from backend.services.categorization import _is_blank_or_other_category
 from backend.services.dashboard import _expense_usd_in_window
 from backend.services.dca_opportunities import build_dca_alerts
 from backend.services.fx_amounts import (
@@ -274,8 +275,7 @@ def build_alerts(
             continue
         mag = abs(signed)
         exp_30 += mag
-        cat = cats.get(t.category_id) if t.category_id else None
-        if cat is None or cat.life_domain.value == "Other":
+        if _is_blank_or_other_category(t, cats):
             uncat_30 += mag
     if exp_30 > 0:
         uncat_pct = float(uncat_30 / exp_30 * 100)
