@@ -127,7 +127,7 @@ export function ReviewSimilarCardNext({
   onCancel: () => void;
 }) {
   return (
-    <div className="sticky top-[7.5rem] z-10 scroll-mt-20 card min-w-0 max-w-full space-y-3 border-brand/40 bg-slate-950/95 p-4 shadow-lg backdrop-blur-md lg:top-12 lg:scroll-mt-4">
+    <div className="card min-w-0 max-w-full space-y-3 border-brand/40 p-4">
       <div className="min-w-0">
         <p className="font-semibold text-brand">Reviewing similar transactions</p>
         <p className="break-words text-sm text-ink-muted">

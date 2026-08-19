@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { ChevronDown, Sparkles, X } from "lucide-react";
+import { useMemo, type Dispatch, type SetStateAction } from "react";
+import { ChevronDown, Sparkles } from "lucide-react";
 import type { Category } from "../../api/types";
 import {
   applyVendorCategoryOverrides,
@@ -27,10 +27,15 @@ export function GrokPlusPanelNext({
   onApplyAll,
   onOpen,
   onExpandCategory,
-  onClose,
   onCategoryCreated,
   coachNote,
   applyProgress,
+  remaps,
+  setRemaps,
+  ticked,
+  setTicked,
+  openId,
+  setOpenId,
 }: {
   buckets: VendorBucket[];
   catsSorted: Category[];
@@ -43,14 +48,16 @@ export function GrokPlusPanelNext({
   onApplyAll: (rows: VendorApplyRow[], makeRule: boolean) => void;
   onOpen: (bucket: VendorBucket) => void;
   onExpandCategory?: () => void;
-  onClose: () => void;
   onCategoryCreated?: (cat: Category) => void;
   coachNote?: string | null;
   applyProgress?: { current: number; total: number } | null;
+  remaps: Record<string, string>;
+  setRemaps: Dispatch<SetStateAction<Record<string, string>>>;
+  ticked: Record<string, boolean>;
+  setTicked: Dispatch<SetStateAction<Record<string, boolean>>>;
+  openId: string | null;
+  setOpenId: Dispatch<SetStateAction<string | null>>;
 }) {
-  const [openId, setOpenId] = useState<string | null>(null);
-  const [remaps, setRemaps] = useState<Record<string, string>>({});
-  const [ticked, setTicked] = useState<Record<string, boolean>>({});
   const displayBuckets = useMemo(
     () => applyVendorCategoryOverrides(buckets, remaps, catsSorted),
     [buckets, remaps, catsSorted],
@@ -105,22 +112,17 @@ export function GrokPlusPanelNext({
 
   return (
     <div className="card min-w-0 max-w-full space-y-3 p-4">
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <div className="flex min-w-0 items-start gap-2">
-          <span className="rounded-lg bg-brand/15 p-2 text-brand">
-            <Sparkles className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <p className="font-semibold">Ask Grok+</p>
-            <p className="break-words text-sm text-ink-muted">
-              Expand a category and click a vendor to check the txs. Retarget
-              misses or add a category if the catalog is wrong, then approve.
-            </p>
-          </div>
+      <div className="flex min-w-0 items-start gap-2">
+        <span className="rounded-lg bg-brand/15 p-2 text-brand">
+          <Sparkles className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="font-semibold">Ask Grok+</p>
+          <p className="break-words text-sm text-ink-muted">
+            Expand a category and click a vendor to check the txs. Retarget
+            misses or add a category if the catalog is wrong, then approve.
+          </p>
         </div>
-        <button type="button" className="btn-ghost p-2" aria-label="Close" onClick={onClose}>
-          <X className="h-4 w-4" />
-        </button>
       </div>
       <GrokPlusStatus variant="embedded" />
       {coachNote ? (

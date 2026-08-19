@@ -101,7 +101,7 @@ function VendorRow({
   );
 }
 
-/** Leftover vendor inbox — always on Review first paint. Page scroll owns overflow. */
+/** Leftover vendor inbox. Page scroll owns overflow. */
 export function VendorInbox({
   buckets,
   catsSorted,

@@ -6,7 +6,7 @@ import {
   useState,
 } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Sparkles, Undo2, X } from "lucide-react";
+import { Undo2, X } from "lucide-react";
 import { api } from "../api/client";
 import type {
   Category,
@@ -16,9 +16,9 @@ import type {
 } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { CATEGORIZE_DESK } from "../auth/labDesk";
-import { EmptyState, PageLoader, Spinner } from "../components/Spinner";
+import { EmptyState, PageLoader } from "../components/Spinner";
 import { CategoriesModeNext } from "../features/categorize-next/CategoriesModeNext";
-import { CoverageLine } from "../features/categorize-next/CoverageLine";
+import { CategorizeWindowBar } from "../features/categorize-next/CategorizeWindowBar";
 import { GrokPlusPanelNext } from "../features/categorize-next/GrokPlusPanelNext";
 import {
   NextStepsCardNext,
@@ -43,19 +43,21 @@ import {
 import { CategorizeHub } from "../features/categorize-next/CategorizeHub";
 import { VendorInbox, type VendorApplyRow } from "../features/categorize-next/VendorInbox";
 import {
-  isGrokPlusOverlay,
-  MODES,
-  modeFromSearchParams,
+  applyParamPatch,
+  chooseAllowlistWrite,
+  drillParamPatch,
+  parseFocusIds,
   screenFromSearchParams,
-  workspaceModeParamPatch,
-  type WorkspaceMode,
+  shouldRestoreNextStepsFromSimilar,
+  srcWindowLabel,
+  undrillParamPatch,
+  windowTitle,
 } from "../features/categorize-next/workspaceMode";
 import {
   markWizardDone,
   wizardDone,
 } from "../features/new-et/CategorizeWizard";
 import { useGrokPlus } from "../features/new-et/GrokPlusContext";
-import { GrokPlusStatus } from "../features/new-et/GrokPlusStatus";
 import { LabNextChrome } from "../lab-chrome/LabNextChrome";
 import { estimateGrokPlusLadder, formatUsdEstimate } from "../lib/aiCost";
 import {
@@ -64,7 +66,6 @@ import {
   snapshotFromTx,
   type UndoEntry,
 } from "../lib/categorizeUndo";
-import { cn } from "../lib/cn";
 import {
   analyseRuleAgainstEvidence,
   refineMatchValueFromEvidence,
@@ -77,6 +78,7 @@ import {
   ledgerCategoryCounts,
   suggestRuleFromTransactions,
   vendorDisplayName,
+  vendorKey,
 } from "../lib/ruleSuggest";
 
 type SimPhase = "idle" | "next_steps" | "reviewing_similar";
@@ -113,7 +115,7 @@ const IDLE_SIM: SimFlow = {
   excludedIds: [],
 };
 
-/** Lab next Categorize: leftover vendor inbox first. Same ledger mutations as classic. */
+/** Lab next Categorize: one surface per URL. Same ledger mutations as classic. */
 export function NewEtCategorizePageNext() {
   const { isReadOnly } = useAuth();
   const grokPlus = useGrokPlus();
@@ -133,7 +135,12 @@ export function NewEtCategorizePageNext() {
   const [sortKey, setSortKey] = useState<TxSortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [q, setQ] = useState(searchParams.get("q") || "");
-  const [focusIds, setFocusIds] = useState<string[] | null>(null);
+  const [focusAllowlists, setFocusAllowlists] = useState<Record<string, string[]>>(
+    {},
+  );
+  const [grokRemaps, setGrokRemaps] = useState<Record<string, string>>({});
+  const [grokTicked, setGrokTicked] = useState<Record<string, boolean>>({});
+  const [grokOpenId, setGrokOpenId] = useState<string | null>(null);
   const [simFlow, setSimFlow] = useState<SimFlow>(IDLE_SIM);
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
   const [ruleBusy, setRuleBusy] = useState(false);
@@ -143,6 +150,7 @@ export function NewEtCategorizePageNext() {
   const [vendorApplyKey, setVendorApplyKey] = useState<string | null>(null);
   const loadGen = useRef(0);
   const txTableRef = useRef<HTMLDivElement | null>(null);
+  const simFlowRef = useRef(IDLE_SIM);
   const [setupBanner, setSetupBanner] = useState(() => !wizardDone());
   const [applyProgress, setApplyProgress] = useState<{
     current: number;
@@ -162,9 +170,15 @@ export function NewEtCategorizePageNext() {
   const lifeDomainParam = searchParams.get("life_domain") || "";
   const filterFlag = searchParams.get("filter") || "";
   const unconvertedOnly = searchParams.get("unconverted") === "1";
-  const grokPlusOpen = isGrokPlusOverlay(searchParams);
   const screen = screenFromSearchParams(searchParams);
-  const mode: WorkspaceMode = modeFromSearchParams(searchParams);
+  const focusParam = searchParams.get("focus") || "";
+  const vendorParam = searchParams.get("vendor") || "";
+  const focusKeyParam = searchParams.get("focus_key") || "";
+  const srcParam = searchParams.get("src") || "";
+  const hasAllowlist = Boolean(focusParam || vendorParam || focusKeyParam);
+  const focusKeyMissing = Boolean(
+    focusKeyParam && !focusParam && !(focusKeyParam in focusAllowlists),
+  );
 
   useEffect(() => {
     setQ(qFromUrl);
@@ -180,25 +194,18 @@ export function NewEtCategorizePageNext() {
   );
 
   const patchParams = useCallback(
-    (updates: Record<string, string | null>) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          for (const [key, value] of Object.entries(updates)) {
-            if (value == null || value === "") next.delete(key);
-            else next.set(key, value);
-          }
-          return next;
-        },
-        { replace: true },
-      );
+    (updates: Record<string, string | null>, replace = true) => {
+      setSearchParams((prev) => applyParamPatch(prev, updates), { replace });
     },
     [setSearchParams],
   );
 
-  function setWorkspaceMode(next: WorkspaceMode) {
-    patchParams(workspaceModeParamPatch(next));
-  }
+  const pushParams = useCallback(
+    (updates: Record<string, string | null>) => {
+      patchParams(updates, false);
+    },
+    [patchParams],
+  );
 
   const load = useCallback(
     async (opts?: { quiet?: boolean }): Promise<void> => {
@@ -246,6 +253,23 @@ export function NewEtCategorizePageNext() {
   }, [load]);
 
   useEffect(() => {
+    simFlowRef.current = simFlow;
+  }, [simFlow]);
+
+  useEffect(() => {
+    if (screen === "hub") idleWorkspace();
+  }, [screen]);
+
+  useEffect(() => {
+    if (
+      !shouldRestoreNextStepsFromSimilar(simFlow.phase, screen, searchParams)
+    ) {
+      return;
+    }
+    restoreNextStepsFromSimilar();
+  }, [screen, searchParams, simFlow.phase]);
+
+  useEffect(() => {
     if (simFlow.phase === "reviewing_similar") return;
     setSelected(new Set());
   }, [dateFrom, dateTo, currency, hideTransfers, expensesOnly, incomeOnly, categoryIdParam, categoryIdsParam, q, simFlow.phase]);
@@ -284,6 +308,15 @@ export function NewEtCategorizePageNext() {
     return groupTransactionsByVendor(pool);
   }, [items, catMap, expensesOnly, incomeOnly]);
 
+  const focusIds = useMemo(() => {
+    if (focusParam) return parseFocusIds(focusParam);
+    if (focusKeyParam) return focusAllowlists[focusKeyParam] ?? [];
+    if (vendorParam) {
+      return items.filter((t) => vendorKey(t) === vendorParam).map((t) => t.id);
+    }
+    return null;
+  }, [focusParam, focusKeyParam, vendorParam, focusAllowlists, items]);
+
   const liveCoverage = useMemo(
     () => ledgerCategoryCounts(items, catMap),
     [items, catMap],
@@ -310,8 +343,8 @@ export function NewEtCategorizePageNext() {
   const filtered = useMemo(() => {
     let rows = items;
 
-    if (focusIds && focusIds.length > 0) {
-      const allow = new Set(focusIds.map(normTxId));
+    if (hasAllowlist) {
+      const allow = new Set((focusIds ?? []).map(normTxId));
       return rows.filter((t) => allow.has(normTxId(t.id)));
     }
 
@@ -382,6 +415,7 @@ export function NewEtCategorizePageNext() {
     unconvertedOnly,
     catMap,
     focusIds,
+    hasAllowlist,
   ]);
 
   const sortedRows = useMemo(() => {
@@ -457,12 +491,17 @@ export function NewEtCategorizePageNext() {
       searchParams.get("hide_transfers") === "1",
   );
 
-  function clearScope() {
-    setSearchParams({}, { replace: true });
+  function idleWorkspace() {
     setQ("");
-    setFocusIds(null);
+    setSelected(new Set());
     setSimFlow(IDLE_SIM);
     setRuleDraft(null);
+    setFocusAllowlists({});
+  }
+
+  function clearScope() {
+    setSearchParams({}, { replace: true });
+    idleWorkspace();
   }
 
   const allFilteredSelected =
@@ -547,7 +586,6 @@ export function NewEtCategorizePageNext() {
       setUndoEntry(null);
       setSimFlow(IDLE_SIM);
       setRuleDraft(null);
-      setFocusIds(null);
       void refreshCoverage();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Undo failed");
@@ -610,7 +648,6 @@ export function NewEtCategorizePageNext() {
     excluded: Transaction[] = [],
   ) {
     setRuleDraft(buildRuleDraft([...seeds, ...accepted], excluded, categoryId));
-    setFocusIds(null);
     setSelected(new Set());
     setSimFlow({
       phase: "next_steps",
@@ -621,6 +658,17 @@ export function NewEtCategorizePageNext() {
       acceptedSimilarIds: accepted.map((t) => t.id),
       excludedIds: excluded.map((t) => t.id),
     });
+  }
+
+  function restoreNextStepsFromSimilar() {
+    const flow = simFlowRef.current;
+    if (flow.phase !== "reviewing_similar") return;
+    enterNextSteps(flow.seedSnapshots, flow.categoryId);
+  }
+
+  function onUndrill() {
+    restoreNextStepsFromSimilar();
+    patchParams(undrillParamPatch(searchParams));
   }
 
   function similarForSeeds(seeds: Transaction[]): Transaction[] {
@@ -644,12 +692,13 @@ export function NewEtCategorizePageNext() {
     }
     const seedIds = seeds.map((t) => t.id);
     const similarIds = similar.map((t) => t.id);
-    setFocusIds([...seedIds, ...similarIds]);
     setSelected(new Set(similarIds));
     setSimFlow((prev) => ({ ...prev, phase: "reviewing_similar", similarIds }));
-    window.setTimeout(() => {
-      txTableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 60);
+    writeAllowlistDrill({
+      ids: [...seedIds, ...similarIds],
+      src: "review",
+      fetchedMissing: false,
+    });
   }
 
   async function applySimilarIds(
@@ -683,12 +732,14 @@ export function NewEtCategorizePageNext() {
     const excludedTxs = items.filter((t) => excluded.includes(t.id));
     if (toAssign.length === 0) {
       enterNextSteps(simFlow.seedSnapshots, simFlow.categoryId, [], excludedTxs);
+      patchParams(undrillParamPatch(searchParams));
       return;
     }
     setBulkBusy(true);
     try {
       const accepted = await applySimilarIds(toAssign);
       enterNextSteps(simFlow.seedSnapshots, simFlow.categoryId, accepted, excludedTxs);
+      patchParams(undrillParamPatch(searchParams));
     } catch (e) {
       alert(e instanceof Error ? e.message : "Group assign failed");
     } finally {
@@ -745,7 +796,6 @@ export function NewEtCategorizePageNext() {
     });
     setRuleDraft(null);
     setSimFlow(IDLE_SIM);
-    setFocusIds(null);
     await load({ quiet: true });
   }
 
@@ -956,16 +1006,48 @@ export function NewEtCategorizePageNext() {
     }
   }
 
-  async function openVendorBucket(bucket: { ids: string[] }) {
-    const ids = bucket.ids.map(normTxId).filter(Boolean);
+  const TX_ID_FETCH_CAP = 5000;
+
+  function newFocusKey(): string {
+    return `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  function writeAllowlistDrill(input: {
+    ids: string[];
+    src: "review" | "grokplus";
+    leftoverVendorKey?: string | null;
+    fetchedMissing: boolean;
+  }) {
+    const choice = chooseAllowlistWrite(input);
+    if (choice.type === "focus") {
+      pushParams(drillParamPatch({ src: input.src, focus: choice.ids }));
+      return;
+    }
+    if (choice.type === "vendor") {
+      pushParams(drillParamPatch({ src: input.src, vendor: choice.vendor }));
+      return;
+    }
+    const key = newFocusKey();
+    setFocusAllowlists((prev) => ({ ...prev, [key]: input.ids }));
+    pushParams(drillParamPatch({ src: input.src, focus_key: key }));
+  }
+
+  async function openAllowlist(opts: {
+    ids: string[];
+    src: "review" | "grokplus";
+    leftoverVendorKey?: string | null;
+  }) {
+    const ids = opts.ids.map(normTxId).filter(Boolean);
     const have = new Set(items.map((t) => normTxId(t.id)));
     const missing = ids.filter((id) => !have.has(id));
+    let fetchedMissing = false;
     if (missing.length) {
+      fetchedMissing = true;
       try {
         const extra = await api.transactions({
           tx_ids: missing.join(","),
           ids: missing.join(","),
-          limit: Math.max(missing.length, 1),
+          limit: Math.min(Math.max(missing.length, 1), TX_ID_FETCH_CAP),
         });
         if (extra.items.length) {
           setItems((prev) => {
@@ -985,11 +1067,13 @@ export function NewEtCategorizePageNext() {
         /* still focus rows we already have */
       }
     }
-    setFocusIds(ids);
     setSelected(new Set(ids));
-    window.setTimeout(() => {
-      txTableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 60);
+    writeAllowlistDrill({
+      ids,
+      src: opts.src,
+      leftoverVendorKey: opts.leftoverVendorKey,
+      fetchedMissing,
+    });
   }
 
   async function commitVendorAssign(
@@ -1035,7 +1119,7 @@ export function NewEtCategorizePageNext() {
       const { working, seeds } = await commitVendorAssign(items, bucket, categoryId);
       setItems(working);
       void refreshCoverage();
-      if (grokPlusOpen) grokPlus.consumeKeys([bucket.key]);
+      if (screen === "grokplus") grokPlus.consumeKeys([bucket.key]);
       if (opts?.makeRule && seeds.length) {
         await createVendorRule(seeds, categoryId);
         void load({ quiet: true });
@@ -1069,7 +1153,7 @@ export function NewEtCategorizePageNext() {
       setItems(working);
       setApplyProgress(null);
       const keys = rows.map((r) => r.bucket.key);
-      if (grokPlusOpen) grokPlus.consumeKeys(keys);
+      if (screen === "grokplus") grokPlus.consumeKeys(keys);
       void refreshCoverage();
       if (makeRule) void load({ quiet: true });
     } catch (e) {
@@ -1079,11 +1163,6 @@ export function NewEtCategorizePageNext() {
       setBulkBusy(false);
       setApplyProgress(null);
     }
-  }
-
-  function startGrokPlus() {
-    patchParams({ panel: "grokplus", mode: null });
-    if (grokPlus.phase !== "running") grokPlus.start(catsSorted);
   }
 
   function onWipe() {
@@ -1099,6 +1178,7 @@ export function NewEtCategorizePageNext() {
       .wipeAssignments()
       .then(() => {
         grokPlus.dismiss();
+        idleWorkspace();
         patchParams({ panel: null });
         return load();
       })
@@ -1108,15 +1188,6 @@ export function NewEtCategorizePageNext() {
 
   const categorySelectValue =
     multiCategoryIds.length > 0 ? "__multi__" : categoryIdParam || "";
-
-  const grokChipLabel =
-    grokPlus.phase === "running"
-      ? "Working — matching leftovers"
-      : grokPlus.phase === "paused" && grokPlus.buckets.length
-        ? "Ask Grok+ — ready for review"
-        : grokPlus.phase === "caught_up"
-          ? "Ask Grok+ — ready for review"
-          : "Ask Grok+";
 
   const usdPer = grokPlus.lastBatchCostUsd || 0.01;
   const ladder = estimateGrokPlusLadder({
@@ -1185,82 +1256,93 @@ export function NewEtCategorizePageNext() {
             />
           ) : (
             <>
-          <div
-            className="inline-flex flex-wrap rounded-xl border border-white/10 bg-white/[0.03] p-1"
-            role="tablist"
-            aria-label="Categorize mode"
-          >
-            {MODES.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                role="tab"
-                aria-selected={mode === m.id}
-                className={cn(
-                  "rounded-lg px-3.5 py-1.5 text-sm font-medium transition",
-                  mode === m.id
-                    ? "bg-brand/20 text-brand shadow-sm"
-                    : "text-ink-muted hover:text-ink",
-                )}
-                onClick={() => setWorkspaceMode(m.id)}
-              >
-                {m.label}
-                {m.id === "rules" ? ` (${rules.length})` : ""}
-                {m.id === "categories" ? ` (${cats.length})` : ""}
-              </button>
-            ))}
-          </div>
-
-          {mode === "review" ? (
-            <>
-              <VendorInbox
-                buckets={vendorBuckets}
-                catsSorted={catsSorted}
-                busy={bulkBusy || ruleBusy}
-                isReadOnly={isReadOnly}
-                applyingKey={vendorApplyKey}
-                onApply={(b, categoryId) => void applyVendorBucket(b, categoryId)}
-                onApplyRule={(b, categoryId) =>
-                  void applyVendorBucket(b, categoryId, { makeRule: true })
+              <CategorizeWindowBar
+                title={windowTitle(screen)}
+                honesty={
+                  screen === "txs"
+                    ? `${filtered.length.toLocaleString()} shown · ${
+                        total > items.length
+                          ? `newest ${items.length.toLocaleString()} of ${total.toLocaleString()}`
+                          : `newest ${items.length.toLocaleString()}`
+                      }`
+                    : undefined
                 }
-                onApplyAll={(rows, makeRule) => void applyVendorBatch(rows, makeRule)}
-                onOpen={(b) => void openVendorBucket(b)}
-                onCategoryCreated={(cat) => setCats((prev) => [...prev, cat])}
-                applyProgress={applyProgress}
+                backToWindowLabel={
+                  screen === "txs" ? srcWindowLabel(srcParam) : null
+                }
+                onBackToWindow={
+                  screen === "txs" && srcWindowLabel(srcParam)
+                    ? onUndrill
+                    : undefined
+                }
+                onHub={idleWorkspace}
               />
 
-              <CoverageLine
-                pct={ledgerCoverage.pct}
-                categorized={ledgerCoverage.categorized}
-                uncategorized={ledgerCoverage.uncategorized}
-                itemsLength={items.length}
-                total={total}
-                ladderText={ladderText}
-              >
-                <button
-                  type="button"
-                  className={cn(
-                    "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
-                    grokPlusOpen || grokPlus.phase === "running"
-                      ? "border-brand/40 bg-brand/10 text-brand"
-                      : "border-white/10 text-ink-muted hover:border-brand/40 hover:text-ink",
-                  )}
-                  onClick={() => startGrokPlus()}
-                >
-                  {grokPlus.phase === "running" ? (
-                    <Spinner className="h-3.5 w-3.5 border-t-brand" />
-                  ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
-                  )}
-                  {grokChipLabel}
-                </button>
-              </CoverageLine>
-
-              {grokPlus.started && !grokPlusOpen ? (
-                <GrokPlusStatus variant="float" />
+              {screen === "review" ? (
+                <>
+                  <VendorInbox
+                    buckets={vendorBuckets}
+                    catsSorted={catsSorted}
+                    busy={bulkBusy || ruleBusy}
+                    isReadOnly={isReadOnly}
+                    applyingKey={vendorApplyKey}
+                    onApply={(b, categoryId) => void applyVendorBucket(b, categoryId)}
+                    onApplyRule={(b, categoryId) =>
+                      void applyVendorBucket(b, categoryId, { makeRule: true })
+                    }
+                    onApplyAll={(rows, makeRule) => void applyVendorBatch(rows, makeRule)}
+                    onOpen={(b) =>
+                      void openAllowlist({
+                        ids: b.ids,
+                        src: "review",
+                        leftoverVendorKey: b.key,
+                      })
+                    }
+                    onCategoryCreated={(cat) => setCats((prev) => [...prev, cat])}
+                    applyProgress={applyProgress}
+                  />
+                  {simFlow.phase === "next_steps" ? (
+                    <NextStepsCardNext
+                      categoryName={catMap.get(simFlow.categoryId)?.name || "category"}
+                      vendorLabel={
+                        simFlow.seedSnapshots[0]
+                          ? vendorDisplayName(simFlow.seedSnapshots[0])
+                          : ""
+                      }
+                      similarCount={similarForSeeds(simFlow.seedSnapshots).length}
+                      rulePreview={ruleDraft?.plainEnglish || ""}
+                      ruleWarning={ruleDraft?.warning ?? null}
+                      ruleMatchCount={
+                        ruleDraft
+                          ? countRuleMatches(items, {
+                              match_field: ruleDraft.match_field,
+                              match_type: ruleDraft.match_type,
+                              match_value: ruleDraft.match_value,
+                              institution_scope: ruleDraft.institution_scope || null,
+                              onlyWithoutOverride: true,
+                            })
+                          : 0
+                      }
+                      busy={bulkBusy || ruleBusy}
+                      isReadOnly={isReadOnly}
+                      canSaveRule={Boolean(ruleDraft?.match_value.trim())}
+                      onReview={onReviewSimilar}
+                      onApplySimilar={() => void onApplyAllSimilar()}
+                      onSaveRule={() =>
+                        void (similarForSeeds(simFlow.seedSnapshots).length > 0
+                          ? onApplyAndSaveRule()
+                          : saveOfferedRule())
+                      }
+                      onDismiss={() => {
+                        setRuleDraft(null);
+                        setSimFlow(IDLE_SIM);
+                      }}
+                    />
+                  ) : null}
+                </>
               ) : null}
 
-              {grokPlusOpen ? (
+              {screen === "grokplus" ? (
                 <GrokPlusPanelNext
                   buckets={grokPlus.buckets}
                   catsSorted={catsSorted}
@@ -1277,8 +1359,7 @@ export function NewEtCategorizePageNext() {
                     void applyVendorBucket(b, categoryId, { makeRule: true })
                   }
                   onApplyAll={(rows, makeRule) => void applyVendorBatch(rows, makeRule)}
-                  onOpen={(b) => void openVendorBucket(b)}
-                  onClose={() => patchParams({ panel: null })}
+                  onOpen={(b) => void openAllowlist({ ids: b.ids, src: "grokplus" })}
                   onCategoryCreated={(cat) => setCats((prev) => [...prev, cat])}
                   coachNote={
                     grokPlus.coachNote ||
@@ -1287,200 +1368,175 @@ export function NewEtCategorizePageNext() {
                       : null)
                   }
                   applyProgress={applyProgress}
+                  remaps={grokRemaps}
+                  setRemaps={setGrokRemaps}
+                  ticked={grokTicked}
+                  setTicked={setGrokTicked}
+                  openId={grokOpenId}
+                  setOpenId={setGrokOpenId}
                 />
               ) : null}
 
-              {simFlow.phase === "next_steps" ? (
-                <NextStepsCardNext
-                  categoryName={catMap.get(simFlow.categoryId)?.name || "category"}
-                  vendorLabel={
-                    simFlow.seedSnapshots[0]
-                      ? vendorDisplayName(simFlow.seedSnapshots[0])
-                      : ""
-                  }
-                  similarCount={similarForSeeds(simFlow.seedSnapshots).length}
-                  rulePreview={ruleDraft?.plainEnglish || ""}
-                  ruleWarning={ruleDraft?.warning ?? null}
-                  ruleMatchCount={
-                    ruleDraft
-                      ? countRuleMatches(items, {
-                          match_field: ruleDraft.match_field,
-                          match_type: ruleDraft.match_type,
-                          match_value: ruleDraft.match_value,
-                          institution_scope: ruleDraft.institution_scope || null,
-                          onlyWithoutOverride: true,
-                        })
-                      : 0
-                  }
-                  busy={bulkBusy || ruleBusy}
+              {screen === "rules" ? (
+                <RulesModeNext
+                  rules={rules}
+                  catsSorted={catsSorted}
+                  catMap={catMap}
                   isReadOnly={isReadOnly}
-                  canSaveRule={Boolean(ruleDraft?.match_value.trim())}
-                  onReview={onReviewSimilar}
-                  onApplySimilar={() => void onApplyAllSimilar()}
-                  onSaveRule={() =>
-                    void (similarForSeeds(simFlow.seedSnapshots).length > 0
-                      ? onApplyAndSaveRule()
-                      : saveOfferedRule())
-                  }
-                  onDismiss={() => {
-                    setRuleDraft(null);
-                    setSimFlow(IDLE_SIM);
-                    setFocusIds(null);
-                  }}
+                  onChanged={() => load({ quiet: true })}
                 />
               ) : null}
-              {simFlow.phase === "reviewing_similar" ? (
-                <ReviewSimilarCardNext
-                  categoryName={catMap.get(simFlow.categoryId)?.name || "category"}
-                  selectedCount={[...selected].filter((id) => !simFlow.seedIds.includes(id)).length}
-                  busy={bulkBusy}
+
+              {screen === "categories" ? (
+                <CategoriesModeNext
+                  cats={cats}
                   isReadOnly={isReadOnly}
-                  onAssign={() => void onAssignSimilarSelected()}
-                  onCancel={() => {
-                    enterNextSteps(simFlow.seedSnapshots, simFlow.categoryId, [], []);
-                  }}
+                  onChanged={() => load({ quiet: true })}
                 />
               ) : null}
 
-              <ReviewFilterChips
-                q={q}
-                onQChange={setQ}
-                dateFrom={dateFrom}
-                dateTo={dateTo}
-                onDateFrom={(v) => patchParams({ date_from: v || null })}
-                onDateTo={(v) => patchParams({ date_to: v || null })}
-                currency={currency}
-                onCurrency={(v) => patchParams({ currency: v || null })}
-                categorySelectValue={categorySelectValue}
-                catsSorted={catsSorted}
-                multiCategoryCount={multiCategoryIds.length}
-                onCategory={(v) => {
-                  if (v === "" || v === "__multi__") {
-                    patchParams({ category_id: null, category_ids: null });
-                  } else if (v === "uncategorized") {
-                    patchParams({ category_id: "uncategorized", category_ids: null });
-                  } else {
-                    patchParams({ category_id: v, category_ids: null });
-                  }
-                }}
-                hideTransfers={hideTransfers}
-                onHideTransfers={(next) =>
-                  patchParams({ hide_transfers: next ? "1" : "0" })
-                }
-                expensesOnly={expensesOnly}
-                onExpensesOnly={(next) =>
-                  patchParams({
-                    expenses_only: next ? "1" : null,
-                    income_only: next ? null : searchParams.get("income_only"),
-                  })
-                }
-                incomeOnly={incomeOnly}
-                onIncomeOnly={(next) =>
-                  patchParams({
-                    income_only: next ? "1" : null,
-                    expenses_only: next ? null : searchParams.get("expenses_only"),
-                  })
-                }
-                lifeDomain={lifeDomainParam}
-                filterFlag={filterFlag}
-                unconvertedOnly={unconvertedOnly}
-                onClearParam={(key) => patchParams({ [key]: null })}
-                onShortcutUncat30={() => {
-                  const { from, to } = isoDaysAgo(29);
-                  patchParams({
-                    date_from: from,
-                    date_to: to,
-                    category_id: "uncategorized",
-                    category_ids: null,
-                    expenses_only: null,
-                    income_only: null,
-                  });
-                }}
-                onShortcutExp30={() => {
-                  const { from, to } = isoDaysAgo(29);
-                  patchParams({
-                    date_from: from,
-                    date_to: to,
-                    category_id: null,
-                    category_ids: null,
-                    expenses_only: "1",
-                    income_only: null,
-                  });
-                }}
-                onShortcutUncatAll={() => {
-                  patchParams({
-                    date_from: null,
-                    date_to: null,
-                    category_id: "uncategorized",
-                    category_ids: null,
-                    expenses_only: null,
-                    income_only: null,
-                    q: null,
-                  });
-                  setQ("");
-                }}
-                onWipe={onWipe}
-                wipeBusy={wipeBusy}
-                isReadOnly={isReadOnly}
-                hasActiveScope={hasActiveScope}
-                onClearScope={clearScope}
-                focusCount={
-                  focusIds && simFlow.phase !== "reviewing_similar" ? focusIds.length : 0
-                }
-                onClearFocus={() => {
-                  setFocusIds(null);
-                  setSelected(new Set());
-                }}
-                onSelectUncategorized={selectUncategorizedInView}
-              />
-
-              <ReviewWorkbench
-                tableRef={txTableRef}
-                filteredCount={filtered.length}
-                total={total}
-                hasActiveScope={hasActiveScope}
-                sortedRows={sortedRows}
-                selected={selected}
-                allFilteredSelected={allFilteredSelected}
-                someSelected={someSelected}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onToggleSort={toggleSort}
-                catMap={catMap}
-                catsSorted={catsSorted}
-                savingId={savingId}
-                isReadOnly={isReadOnly}
-                onToggleOne={toggleOne}
-                onToggleAll={toggleAllFiltered}
-                onOverride={(id, categoryId) => void onOverride(id, categoryId)}
-                onClearCategory={(id) => void onClearCategory(id)}
-                bulkCategoryId={bulkCategoryId}
-                onBulkCategoryId={setBulkCategoryId}
-                bulkBusy={bulkBusy}
-                onApplyBulk={() => void applyBulkCategory()}
-                onClearSelected={() => void onClearSelectedCategories()}
-                onClearSelection={() => setSelected(new Set())}
-              />
-            </>
-          ) : null}
-
-          {mode === "rules" ? (
-            <RulesModeNext
-              rules={rules}
-              catsSorted={catsSorted}
-              catMap={catMap}
-              isReadOnly={isReadOnly}
-              onChanged={() => load({ quiet: true })}
-            />
-          ) : null}
-
-          {mode === "categories" ? (
-            <CategoriesModeNext
-              cats={cats}
-              isReadOnly={isReadOnly}
-              onChanged={() => load({ quiet: true })}
-            />
-          ) : null}
+              {screen === "txs" ? (
+                <>
+                  {simFlow.phase === "reviewing_similar" ? (
+                    <ReviewSimilarCardNext
+                      categoryName={catMap.get(simFlow.categoryId)?.name || "category"}
+                      selectedCount={
+                        [...selected].filter((id) => !simFlow.seedIds.includes(id))
+                          .length
+                      }
+                      busy={bulkBusy}
+                      isReadOnly={isReadOnly}
+                      onAssign={() => void onAssignSimilarSelected()}
+                      onCancel={onUndrill}
+                    />
+                  ) : null}
+                  {focusKeyMissing ? (
+                    <p className="min-w-0 max-w-full break-words text-sm text-ink-muted">
+                      This filter is too large to bookmark; go back and click again.
+                    </p>
+                  ) : null}
+                  <ReviewFilterChips
+                    q={q}
+                    onQChange={setQ}
+                    dateFrom={dateFrom}
+                    dateTo={dateTo}
+                    onDateFrom={(v) => patchParams({ date_from: v || null })}
+                    onDateTo={(v) => patchParams({ date_to: v || null })}
+                    currency={currency}
+                    onCurrency={(v) => patchParams({ currency: v || null })}
+                    categorySelectValue={categorySelectValue}
+                    catsSorted={catsSorted}
+                    multiCategoryCount={multiCategoryIds.length}
+                    onCategory={(v) => {
+                      if (v === "" || v === "__multi__") {
+                        patchParams({ category_id: null, category_ids: null });
+                      } else if (v === "uncategorized") {
+                        patchParams({
+                          category_id: "uncategorized",
+                          category_ids: null,
+                        });
+                      } else {
+                        patchParams({ category_id: v, category_ids: null });
+                      }
+                    }}
+                    hideTransfers={hideTransfers}
+                    onHideTransfers={(next) =>
+                      patchParams({ hide_transfers: next ? "1" : "0" })
+                    }
+                    expensesOnly={expensesOnly}
+                    onExpensesOnly={(next) =>
+                      patchParams({
+                        expenses_only: next ? "1" : null,
+                        income_only: next ? null : searchParams.get("income_only"),
+                      })
+                    }
+                    incomeOnly={incomeOnly}
+                    onIncomeOnly={(next) =>
+                      patchParams({
+                        income_only: next ? "1" : null,
+                        expenses_only: next
+                          ? null
+                          : searchParams.get("expenses_only"),
+                      })
+                    }
+                    lifeDomain={lifeDomainParam}
+                    filterFlag={filterFlag}
+                    unconvertedOnly={unconvertedOnly}
+                    onClearParam={(key) => patchParams({ [key]: null })}
+                    onShortcutUncat30={() => {
+                      const { from, to } = isoDaysAgo(29);
+                      patchParams({
+                        date_from: from,
+                        date_to: to,
+                        category_id: "uncategorized",
+                        category_ids: null,
+                        expenses_only: null,
+                        income_only: null,
+                      });
+                    }}
+                    onShortcutExp30={() => {
+                      const { from, to } = isoDaysAgo(29);
+                      patchParams({
+                        date_from: from,
+                        date_to: to,
+                        category_id: null,
+                        category_ids: null,
+                        expenses_only: "1",
+                        income_only: null,
+                      });
+                    }}
+                    onShortcutUncatAll={() => {
+                      patchParams({
+                        date_from: null,
+                        date_to: null,
+                        category_id: "uncategorized",
+                        category_ids: null,
+                        expenses_only: null,
+                        income_only: null,
+                        q: null,
+                      });
+                      setQ("");
+                    }}
+                    onWipe={onWipe}
+                    wipeBusy={wipeBusy}
+                    isReadOnly={isReadOnly}
+                    hasActiveScope={hasActiveScope}
+                    onClearScope={clearScope}
+                    focusCount={
+                      hasAllowlist ? focusIds?.length || 1 : 0
+                    }
+                    onClearFocus={onUndrill}
+                    onSelectUncategorized={selectUncategorizedInView}
+                  />
+                  <ReviewWorkbench
+                    tableRef={txTableRef}
+                    filteredCount={filtered.length}
+                    total={total}
+                    hasActiveScope={hasActiveScope}
+                    sortedRows={sortedRows}
+                    selected={selected}
+                    allFilteredSelected={allFilteredSelected}
+                    someSelected={someSelected}
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onToggleSort={toggleSort}
+                    catMap={catMap}
+                    catsSorted={catsSorted}
+                    savingId={savingId}
+                    isReadOnly={isReadOnly}
+                    onToggleOne={toggleOne}
+                    onToggleAll={toggleAllFiltered}
+                    onOverride={(id, categoryId) => void onOverride(id, categoryId)}
+                    onClearCategory={(id) => void onClearCategory(id)}
+                    bulkCategoryId={bulkCategoryId}
+                    onBulkCategoryId={setBulkCategoryId}
+                    bulkBusy={bulkBusy}
+                    onApplyBulk={() => void applyBulkCategory()}
+                    onClearSelected={() => void onClearSelectedCategories()}
+                    onClearSelection={() => setSelected(new Set())}
+                  />
+                </>
+              ) : null}
             </>
           )}
 

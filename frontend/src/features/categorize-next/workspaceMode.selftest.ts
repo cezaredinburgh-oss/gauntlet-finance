@@ -3,12 +3,19 @@
  * Run: npx --yes tsx src/features/categorize-next/workspaceMode.selftest.ts  (from frontend/)
  */
 import {
+  applyParamPatch,
   applyWorkspaceMode,
   categorizeHref,
+  chooseAllowlistWrite,
+  drillParamPatch,
+  FOCUS_MAX_CHARS,
   hasListScope,
   isGrokPlusOverlay,
   modeFromSearchParams,
+  parseFocusIds,
   screenFromSearchParams,
+  shouldRestoreNextStepsFromSimilar,
+  undrillParamPatch,
   windowParamPatch,
   workspaceModeParamPatch,
 } from "./workspaceMode";
@@ -220,5 +227,208 @@ assertEq(
   "/expenses/categorize?mode=txs",
   "browse txs href",
 );
+
+// --- PR2: focus overlay + undrill ---
+
+assertEq(
+  screenFromSearchParams(new URLSearchParams("focus=id-a,id-b")),
+  "txs",
+  "focus= ⇒ screen txs",
+);
+assertEq(
+  screenFromSearchParams(
+    new URLSearchParams("mode=review&src=review&focus=seed,sim1"),
+  ),
+  "txs",
+  "reviewing_similar + focus= ⇒ txs not leftovers",
+);
+assertEq(
+  screenFromSearchParams(new URLSearchParams("panel=grokplus&focus=id1")),
+  "txs",
+  "focus= overlays grokplus → txs",
+);
+assertEq(
+  screenFromSearchParams(new URLSearchParams("focus_key=k1")),
+  "txs",
+  "focus_key= → txs",
+);
+
+const similarDrill = drillParamPatch({
+  src: "review",
+  focus: ["seed-1", "sim-1", "sim-2"],
+});
+assertEq(similarDrill.mode, "txs", "similar drill writes mode=txs");
+assertEq(similarDrill.src, "review", "similar drill writes src=review");
+assertEq(similarDrill.focus, "seed-1,sim-1,sim-2", "similar drill writes seed+similar");
+assertEq(similarDrill.panel, null, "similar drill clears panel");
+
+const similarParams = applyParamPatch(
+  new URLSearchParams("mode=review"),
+  similarDrill,
+);
+assertEq(
+  screenFromSearchParams(similarParams),
+  "txs",
+  "after similar drill URL is txs",
+);
+
+const similarUndrill = applyParamPatch(similarParams, undrillParamPatch(similarParams));
+assertEq(
+  screenFromSearchParams(similarUndrill),
+  "review",
+  "undrill after similar → leftovers",
+);
+assertEq(similarUndrill.get("focus"), null, "undrill drops focus");
+assertEq(similarUndrill.get("src"), null, "undrill drops src");
+assertEq(similarUndrill.get("mode"), "review", "undrill restores mode=review");
+
+// history.back from similar: push is undone by the browser (no undrillParamPatch).
+// Page popstate/effect must restore next_steps when this is true.
+const afterBack = new URLSearchParams("mode=review");
+assertEq(screenFromSearchParams(afterBack), "review", "history.back lands leftovers");
+assertTrue(
+  shouldRestoreNextStepsFromSimilar(
+    "reviewing_similar",
+    screenFromSearchParams(afterBack),
+    afterBack,
+  ),
+  "history.back from similar → restore next_steps",
+);
+assertTrue(
+  !shouldRestoreNextStepsFromSimilar(
+    "reviewing_similar",
+    screenFromSearchParams(similarParams),
+    similarParams,
+  ),
+  "still on similar txs → do not restore yet",
+);
+assertTrue(
+  !shouldRestoreNextStepsFromSimilar("next_steps", "review", afterBack),
+  "already next_steps → do not restore again",
+);
+assertTrue(
+  !shouldRestoreNextStepsFromSimilar("idle", "review", afterBack),
+  "idle leftovers → do not enter next_steps",
+);
+
+function assertUndrillKeeps(
+  start: string,
+  keep: Record<string, string>,
+  expectMode: string | null,
+  expectPanel: string | null,
+  gone: string[],
+  msg: string,
+): void {
+  const params = new URLSearchParams(start);
+  for (const [k, v] of Object.entries(keep)) params.set(k, v);
+  const next = applyParamPatch(params, undrillParamPatch(params));
+  assertEq(next.get("mode"), expectMode, `${msg} mode`);
+  assertEq(next.get("panel"), expectPanel, `${msg} panel`);
+  for (const key of gone) {
+    assertEq(next.get(key), null, `${msg} drops ${key}`);
+  }
+  for (const [k, v] of Object.entries(keep)) {
+    assertEq(next.get(k), v, `${msg} keeps ${k}`);
+  }
+}
+
+assertUndrillKeeps(
+  "mode=txs&src=review&focus=id1&vendor=m:shop&focus_key=k&tx=t1",
+  { q: "coffee", date_from: "2026-01-01" },
+  "review",
+  null,
+  ["focus", "vendor", "focus_key", "tx", "src"],
+  "undrill src=review",
+);
+assertUndrillKeeps(
+  "mode=txs&src=grokplus&focus=id1",
+  { q: "x" },
+  null,
+  "grokplus",
+  ["focus", "src"],
+  "undrill src=grokplus",
+);
+assertUndrillKeeps(
+  "mode=txs&src=rules&rule=r1&hide_transfers=0",
+  { q: "keep" },
+  "rules",
+  null,
+  ["rule", "hide_transfers", "src"],
+  "undrill src=rules drops hide_transfers (DRILL_WRITES)",
+);
+assertUndrillKeeps(
+  "mode=txs&src=categories&category_id=c1&category_ids=c1,c2",
+  { q: "keep" },
+  "categories",
+  null,
+  ["category_id", "category_ids", "src"],
+  "undrill src=categories",
+);
+assertUndrillKeeps(
+  "mode=txs&src=hub&category_id=uncategorized",
+  { q: "keep" },
+  null,
+  null,
+  ["category_id", "src"],
+  "undrill src=hub",
+);
+assertUndrillKeeps(
+  "mode=txs&src=hub_usd&category_id=uncategorized&expenses_only=1",
+  { q: "keep" },
+  null,
+  null,
+  ["category_id", "expenses_only", "src"],
+  "undrill src=hub_usd",
+);
+
+const grokWrite = chooseAllowlistWrite({
+  ids: ["a", "b"],
+  src: "grokplus",
+  fetchedMissing: true,
+});
+assertEq(grokWrite.type, "focus", "short grokplus allowlist uses focus=");
+
+const longIds = Array.from({ length: 80 }, (_, i) => `00000000-0000-0000-0000-00000000${String(i).padStart(4, "0")}`);
+assertTrue(
+  longIds.join(",").length > FOCUS_MAX_CHARS,
+  "fixture exceeds focus max",
+);
+const leftoverOverflow = chooseAllowlistWrite({
+  ids: longIds,
+  src: "review",
+  leftoverVendorKey: "m:shop",
+  fetchedMissing: false,
+});
+assertEq(leftoverOverflow.type, "vendor", "leftover overflow without fetch → vendor=");
+if (leftoverOverflow.type === "vendor") {
+  assertEq(leftoverOverflow.vendor, "m:shop", "vendor key passthrough");
+}
+
+const unlabeledOverflow = chooseAllowlistWrite({
+  ids: longIds,
+  src: "review",
+  leftoverVendorKey: "none",
+  fetchedMissing: false,
+});
+assertEq(unlabeledOverflow.type, "focus_key", "leftover key none cannot reconstruct via vendor=");
+
+const leftoverFetched = chooseAllowlistWrite({
+  ids: longIds,
+  src: "review",
+  leftoverVendorKey: "m:shop",
+  fetchedMissing: true,
+});
+assertEq(leftoverFetched.type, "focus_key", "leftover overflow after extra fetch → focus_key");
+
+const grokOverflow = chooseAllowlistWrite({
+  ids: longIds,
+  src: "grokplus",
+  leftoverVendorKey: "m:shop",
+  fetchedMissing: false,
+});
+assertEq(grokOverflow.type, "focus_key", "Grok+ overflow never uses vendor=");
+
+assertEq(parseFocusIds("a, b, ,c").join("|"), "a|b|c", "parseFocusIds trims");
+assertEq(parseFocusIds("").length, 0, "parseFocusIds empty");
 
 console.log("workspaceMode.selftest: ok");
