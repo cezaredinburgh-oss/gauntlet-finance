@@ -1,8 +1,8 @@
 /**
- * Self-test for next Verify/Wealth/Tax sort (honest MV / last, numeric qty, persist).
+ * Self-test for next Verify/Wealth/Tax/Daily sort (honest MV / last, numeric qty, persist).
  * Run: npx --yes tsx src/features/investments/next/holdingsCompare.selftest.ts  (from frontend/)
  */
-import type { TickerDigest } from "../../../api/types";
+import type { TickerDigest, WindowPerformanceItem } from "../../../api/types";
 import { compareHoldingsColumn } from "../holdingsSort";
 import {
   compareNextHoldingsColumn,
@@ -17,21 +17,27 @@ import {
   savePersistedNextSort,
 } from "./holdingsCompare";
 import {
+  DAILY_DEFAULT_COLUMN,
+  DAILY_DEFAULT_DIR,
+  DAILY_SORT_COLUMNS,
   HOLDINGS_COLUMN_VIEW_KEY,
   TAX_DEFAULT_COLUMN,
   TAX_DEFAULT_DIR,
   TAX_SORT_COLUMNS,
   VIEW_DEFAULT_SORT,
   VIEW_SORT_COLUMNS,
+  VIEW_TABS,
   WEALTH_DEFAULT_COLUMN,
   WEALTH_DEFAULT_DIR,
   WEALTH_SORT_COLUMNS,
   filterTickersByQuery,
+  isHoldingsColumnView,
   loadPersistedColumnView,
   resolvePersistedSortForView,
   resolveSortForView,
   savePersistedColumnView,
   uniqueGradeKeyPairs,
+  viewForTaxRunwayFocus,
   type ViewStorage,
 } from "./holdingsViews";
 
@@ -85,8 +91,11 @@ function sortBy(
   col: NextSortColumn,
   dir: "asc" | "desc",
   mode: "total" | "annualized" = "total",
+  perfByTicker?: Readonly<Record<string, WindowPerformanceItem>>,
 ): TickerDigest[] {
-  return [...rows].sort((a, b) => compareNextHoldingsColumn(a, b, col, dir, mode));
+  return [...rows].sort((a, b) =>
+    compareNextHoldingsColumn(a, b, col, dir, mode, perfByTicker),
+  );
 }
 
 function memoryStorage(initial: Record<string, string> = {}): SortStorage & {
@@ -304,6 +313,8 @@ function memoryStorage(initial: Record<string, string> = {}): SortStorage & {
   assertEq(VIEW_DEFAULT_SORT.verify.column, "qty", "VIEW_DEFAULT_SORT verify");
   assertEq(VIEW_DEFAULT_SORT.wealth.column, "unrealized", "VIEW_DEFAULT_SORT wealth");
   assertEq(VIEW_DEFAULT_SORT.tax.column, "unlock", "VIEW_DEFAULT_SORT tax");
+  assertEq(VIEW_DEFAULT_SORT.daily.column, "dayPct", "VIEW_DEFAULT_SORT daily");
+  assertEq(VIEW_DEFAULT_SORT.daily.dir, "desc", "VIEW_DEFAULT_SORT daily dir");
 }
 
 {
@@ -352,6 +363,8 @@ function memoryStorage(initial: Record<string, string> = {}): SortStorage & {
   assertEq(loadPersistedColumnView(unset), "tax", "saved tax view");
   savePersistedColumnView("wealth", unset);
   assertEq(loadPersistedColumnView(unset), "wealth", "saved wealth view");
+  savePersistedColumnView("daily", unset);
+  assertEq(loadPersistedColumnView(unset), "daily", "saved daily view");
 }
 
 // --- ticker substring filter (client-only) ---
@@ -397,6 +410,154 @@ function memoryStorage(initial: Record<string, string> = {}): SortStorage & {
   assertEq(pairs[0]?.label, "Exceptional", "same grade ordered by label");
   assertEq(pairs[1]?.label, "Strong", "second A label");
   assertEq(pairs[2]?.grade, "C", "C after A");
+}
+
+// --- Daily view: persist, default sort, join map, tax-runway ---
+{
+  assert(isHoldingsColumnView("daily"), "daily is a valid view");
+  assert(VIEW_TABS.some((t) => t.id === "daily" && t.label === "Daily"), "Daily tab");
+  assert(VIEW_SORT_COLUMNS.daily === DAILY_SORT_COLUMNS, "Daily column set");
+  assertEq(DAILY_DEFAULT_COLUMN, "dayPct", "Daily default column");
+  assertEq(DAILY_DEFAULT_DIR, "desc", "Daily default dir");
+
+  const dailyUnset = resolveSortForView("daily", null, null);
+  assertEq(dailyUnset.column, "dayPct", "Daily unset column is dayPct");
+  assertEq(dailyUnset.dir, "desc", "Daily unset dir is desc");
+
+  const dailyKeeps = resolveSortForView("daily", "dayPnl", "asc");
+  assertEq(dailyKeeps.column, "dayPnl", "Daily keeps dayPnl");
+  assertEq(dailyKeeps.dir, "asc", "Daily keeps dir when column valid");
+
+  const dailyRejectsUnrealized = resolveSortForView("daily", "unrealized", "desc");
+  assertEq(dailyRejectsUnrealized.column, "dayPct", "Daily rejects Wealth unrealized");
+  assertEq(dailyRejectsUnrealized.dir, "desc", "Daily invalid resets to dayPct desc");
+
+  const verifyRejectsDayPct = resolveSortForView("verify", "dayPct", "desc");
+  assertEq(verifyRejectsDayPct.column, "qty", "Verify rejects Daily dayPct");
+
+  const wealthRejectsDayPct = resolveSortForView("wealth", "dayPct", "asc");
+  assertEq(wealthRejectsDayPct.column, "unrealized", "Wealth rejects Daily dayPct");
+
+  const taxRejectsDayPnl = resolveSortForView("tax", "dayPnl", "desc");
+  assertEq(taxRejectsDayPnl.column, "unlock", "Tax rejects Daily dayPnl");
+
+  const store = memoryStorage();
+  const dailyFromEmpty = resolvePersistedSortForView("daily", store);
+  assertEq(dailyFromEmpty.column, "dayPct", "empty storage Daily → dayPct");
+  assertEq(dailyFromEmpty.dir, "desc", "empty storage Daily → desc");
+
+  savePersistedNextSort("dayPct", "asc", store);
+  const dailyOk = resolvePersistedSortForView("daily", store);
+  assertEq(dailyOk.column, "dayPct", "stored dayPct valid on Daily");
+  assertEq(dailyOk.dir, "asc", "stored dir kept on Daily");
+
+  const verifyRejectsStored = resolvePersistedSortForView("verify", store);
+  assertEq(verifyRejectsStored.column, "qty", "stored dayPct rejected on Verify");
+}
+
+{
+  const dearDigestCheapYahoo = digest({
+    ticker: "AAA",
+    price_usd: "100",
+    market_value_usd: "100",
+    missing_price: false,
+    quantity_total: "2",
+  });
+  const cheapDigestDearYahoo = digest({
+    ticker: "BBB",
+    price_usd: "1",
+    market_value_usd: "1",
+    missing_price: false,
+    quantity_total: "2",
+  });
+  const noJoin = digest({
+    ticker: "MISS",
+    price_usd: "999",
+    market_value_usd: "999",
+    missing_price: false,
+  });
+  const nullPerf = digest({
+    ticker: "NULL",
+    price_usd: "500",
+    market_value_usd: "500",
+    missing_price: false,
+  });
+  const rows = [dearDigestCheapYahoo, cheapDigestDearYahoo, noJoin, nullPerf];
+  const join: Record<string, WindowPerformanceItem> = {
+    AAA: {
+      ticker: "AAA",
+      last_value: "2",
+      change_pct: 1,
+      change_abs: "0.5",
+      pnl_usd: "1.00",
+    },
+    BBB: {
+      ticker: "BBB",
+      last_value: "50",
+      change_pct: 5,
+      change_abs: "5",
+      pnl_usd: "10.00",
+    },
+    NULL: {
+      ticker: "NULL",
+      last_value: null,
+      change_pct: null,
+      change_abs: null,
+      pnl_usd: null,
+    },
+  };
+
+  const bareLast = sortBy(rows, "last", "desc");
+  assertEq(bareLast[0]?.ticker, "MISS", "bare last uses digest price_usd");
+
+  const emptyJoinLast = sortBy(rows, "last", "desc", "total", {});
+  assertEq(
+    tickers(emptyJoinLast).join(","),
+    "AAA,BBB,MISS,NULL",
+    "explicit empty join Last is Yahoo-or-null, not digest price_usd",
+  );
+
+  const lastDesc = sortBy(rows, "last", "desc", "total", join);
+  assertEq(
+    tickers(lastDesc).join(","),
+    "BBB,AAA,MISS,NULL",
+    "Daily last uses Yahoo last_value, not digest price_usd; nulls last",
+  );
+  const lastAsc = sortBy(rows, "last", "asc", "total", join);
+  assertEq(lastAsc[0]?.ticker, "AAA", "Daily last asc: lowest Yahoo last first");
+  assertEq(lastAsc[1]?.ticker, "BBB", "Daily last asc: higher Yahoo last second");
+  const lastAscTail = tickers(lastAsc).slice(2).sort().join(",");
+  assertEq(lastAscTail, "MISS,NULL", "Daily last nulls last (asc)");
+
+  const pnlDesc = sortBy(rows, "dayPnl", "desc", "total", join);
+  assertEq(
+    tickers(pnlDesc).join(","),
+    "BBB,AAA,MISS,NULL",
+    "dayPnl uses perf.pnl_usd; missing/null last",
+  );
+  const pnlAsc = sortBy(rows, "dayPnl", "asc", "total", join);
+  assertEq(pnlAsc[0]?.ticker, "AAA", "dayPnl asc: smaller pnl first");
+  const pnlAscTail = tickers(pnlAsc).slice(2).sort().join(",");
+  assertEq(pnlAscTail, "MISS,NULL", "dayPnl nulls last (asc)");
+
+  const pctDesc = sortBy(rows, "dayPct", "desc", "total", join);
+  assertEq(
+    tickers(pctDesc).join(","),
+    "BBB,AAA,MISS,NULL",
+    "dayPct uses perf.change_pct; missing/null last",
+  );
+  const pctAsc = sortBy(rows, "dayPct", "asc", "total", join);
+  assertEq(pctAsc[0]?.ticker, "AAA", "dayPct asc: smaller pct first");
+  const pctAscTail = tickers(pctAsc).slice(2).sort().join(",");
+  assertEq(pctAscTail, "MISS,NULL", "dayPct nulls last (asc)");
+}
+
+{
+  assertEq(viewForTaxRunwayFocus("daily", true), "verify", "tax-runway snaps Daily to verify");
+  assertEq(viewForTaxRunwayFocus("wealth", true), "verify", "tax-runway snaps Wealth to verify");
+  assertEq(viewForTaxRunwayFocus("tax", true), "tax", "tax-runway keeps Tax");
+  assertEq(viewForTaxRunwayFocus("verify", true), "verify", "tax-runway keeps Verify");
+  assertEq(viewForTaxRunwayFocus("daily", false), "daily", "no focus keeps Daily");
 }
 
 console.log("holdingsCompare.selftest: ok");

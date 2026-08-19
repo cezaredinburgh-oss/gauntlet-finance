@@ -3,7 +3,6 @@ import {
   Area,
   CartesianGrid,
   ComposedChart,
-  Line,
   ResponsiveContainer,
   Scatter,
   Tooltip,
@@ -20,7 +19,7 @@ import type {
   TickerDigest,
   WindowPerformanceItem,
 } from "../../api/types";
-import { d, formatUsd } from "../../lib/money";
+import { d, formatUsd, hasMoneyValue } from "../../lib/money";
 import { cn } from "../../lib/cn";
 import { indexTradesByPoint, tradesForPoint } from "../../lib/chartTrades";
 import {
@@ -31,7 +30,12 @@ import {
   TradeBuyShape,
   TradeSellShape,
 } from "../../lib/chartTradeMarkers";
-import { selectChartHeadline } from "../../lib/chartChangeHeadline";
+import { RECON_THRESHOLD_USD, selectChartHeadline } from "../../lib/chartChangeHeadline";
+import {
+  COST_DOMAIN_PAD,
+  chartYDomain,
+  shouldShowCostBasis,
+} from "../../lib/chartCostVisibility";
 import {
   loadChartChangeMode,
   saveChartChangeMode,
@@ -108,6 +112,47 @@ function formatPrice(v: number): string {
     minimumFractionDigits: 4,
     maximumFractionDigits: 6,
   }).format(v);
+}
+
+function isLocalDayStatus(status: string | null | undefined): boolean {
+  return status === "local_day" || status === "last_24h";
+}
+
+function chartPathCaption(
+  scope: ChartScope,
+  sessionStatus: string | null | undefined,
+  intraday: boolean,
+): string {
+  if (scope.kind === "ticker") {
+    if (intraday) {
+      if (sessionStatus === "prior_session") {
+        return "Prior session · waiting for today’s open · Yahoo 5m path";
+      }
+      if (sessionStatus === "prior_local_day") {
+        return "Prior day · waiting for today’s open · Yahoo 5m path";
+      }
+      if (isLocalDayStatus(sessionStatus)) {
+        return "Today · Yahoo 5m path (not desk book)";
+      }
+      return "US regular session · Yahoo 5m path (not desk book)";
+    }
+    return "Daily close (USD) · avg cost from open lots";
+  }
+  if (sessionStatus === "prior_session") {
+    return "Prior session · waiting for today’s open · Yahoo path";
+  }
+  if (sessionStatus === "prior_local_day") {
+    return "Prior day · waiting for today’s open · Yahoo path";
+  }
+  if (isLocalDayStatus(sessionStatus)) {
+    return scope.kind === "all"
+      ? "Today · Yahoo 5m path · desk book is the executive total"
+      : "Today · Yahoo path · desk book shown separately";
+  }
+  if (sessionStatus === "regular") {
+    return "US regular session · Yahoo path · desk book shown separately";
+  }
+  return "Holdings as of each day × market prices · free Yahoo data";
 }
 
 export function scopeToQuery(scope: ChartScope): {
@@ -396,6 +441,18 @@ export function PositionHistoryChart({
       : !isPrice && data?.meta.cost_basis_usd != null
         ? d(data.meta.cost_basis_usd)
         : null;
+  const priceValues = rows.map((r) => r.value);
+  const showCost =
+    costRef != null && Number.isFinite(costRef)
+      ? shouldShowCostBasis(costRef, priceValues)
+      : false;
+  const yDomain = chartYDomain(priceValues, {
+    cost: costRef ?? undefined,
+    showCost,
+    pad: COST_DOMAIN_PAD,
+  });
+  const dayOpenY =
+    data != null && hasMoneyValue(data.meta.day_open) ? d(data.meta.day_open) : null;
 
   const wc = data?.meta.window_components;
   /** Legs follow active mode: Book → MV Δ; Performance → mark performance. */
@@ -435,6 +492,12 @@ export function PositionHistoryChart({
         100
       : null
     : (wc?.crypto?.change_pct ?? null);
+  const legsResidual =
+    primaryAbs != null && (stockWin != null || cryptoWin != null)
+      ? primaryAbs - (stockWin ?? 0) - (cryptoWin ?? 0)
+      : null;
+  const showLegsResidual =
+    legsResidual != null && Math.abs(legsResidual) > RECON_THRESHOLD_USD;
 
   const missing = data?.meta.missing_tickers ?? [];
   // Series is always market value — paint stroke from book endpoints so green/red matches the line
@@ -494,23 +557,7 @@ export function PositionHistoryChart({
               {title}
             </h2>
             <p className={cn("text-ink-faint", isPopout ? "text-[10px] sm:text-xs" : "text-xs")}>
-              {scope.kind === "ticker"
-                ? intraday
-                  ? data?.meta?.session_status === "prior_session"
-                    ? "Prior session · waiting for today’s open · Yahoo 5m path"
-                    : data?.meta?.session_status === "last_24h"
-                      ? "Last 24h · Yahoo 5m path (not desk book)"
-                      : "US regular session · Yahoo 5m path (not desk book)"
-                  : "Daily close (USD) · avg cost from open lots"
-                : data?.meta?.session_status === "prior_session"
-                  ? "Prior session · waiting for today’s open · Yahoo path"
-                  : data?.meta?.session_status === "last_24h"
-                    ? scope.kind === "all"
-                      ? "Last 24h · Yahoo 5m path · desk book is the executive total"
-                      : "Last 24h · Yahoo path · desk book shown separately"
-                    : data?.meta?.session_status === "regular"
-                      ? "US regular session · Yahoo path · desk book shown separately"
-                      : "Holdings as of each day × market prices · free Yahoo data"}
+              {chartPathCaption(scope, data?.meta?.session_status, !!intraday)}
               {showTrades ? " · buy/sell markers" : ""}
               {range === "1d" && " · auto-refresh 60s"}
             </p>
@@ -700,18 +747,18 @@ export function PositionHistoryChart({
                         title={
                           bookMode
                             ? range === "1d"
-                              ? "Crypto market value Δ last 24h (leg; may not match headline on 1D)"
+                              ? "Crypto market value Δ today (leg; may not match headline on 1D)"
                               : "Crypto market value Δ over this range"
                             : range === "1d"
-                              ? "Crypto last-24h performance (leg; not the chart headline on 1D)"
+                              ? "Crypto today performance (leg; not the chart headline on 1D)"
                               : "Crypto performance over this range"
                         }
                       >
                         Crypto
                         {range === "1d"
                           ? bookMode
-                            ? " (24h MV)"
-                            : " (24h)"
+                            ? " (today MV)"
+                            : " (today)"
                           : bookMode
                             ? " MV Δ"
                             : " performance"}{" "}
@@ -727,10 +774,10 @@ export function PositionHistoryChart({
                       </span>
                     )}
                   </div>
-                  {range === "1d" && (
+                  {showLegsResidual && legsResidual != null && (
                     <p className="max-w-[16rem] text-[10px] leading-snug text-ink-faint/90">
-                      Session legs use stock RTH + crypto 24h; may not sum to the chart
-                      above.
+                      Residual {legsResidual >= 0 ? "+" : ""}
+                      {formatUsd(legsResidual)}
                     </p>
                   )}
                 </div>
@@ -967,7 +1014,7 @@ export function PositionHistoryChart({
                 }
               />
               <YAxis
-                domain={["auto", "auto"]}
+                domain={yDomain}
                 tick={{ fill: "#64748b", fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
@@ -1070,25 +1117,20 @@ export function PositionHistoryChart({
                 isAnimationActive={false}
                 name="value"
               />
-              {costRef != null && range !== "1d" && (
+              {dayOpenY != null && (
+                <ReferenceLine
+                  y={dayOpenY}
+                  stroke="rgba(148,163,184,0.55)"
+                  strokeDasharray="2 3"
+                  strokeWidth={1}
+                />
+              )}
+              {showCost && costRef != null && (
                 <ReferenceLine
                   y={costRef}
                   stroke="rgba(251, 191, 36, 0.7)"
                   strokeDasharray="4 4"
                   strokeWidth={1.5}
-                />
-              )}
-              {costRef != null && range !== "1d" && (
-                <Line
-                  type="monotone"
-                  dataKey="cost"
-                  stroke="rgba(251, 191, 36, 0.55)"
-                  strokeWidth={1}
-                  strokeDasharray="4 4"
-                  dot={false}
-                  isAnimationActive={false}
-                  name="cost"
-                  legendType="none"
                 />
               )}
               {showTrades && (

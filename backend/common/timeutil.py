@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime, timezone
 from functools import lru_cache
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from dateutil import parser as date_parser
@@ -30,6 +31,40 @@ def resolve_zone(name: str | None = None) -> ZoneInfo:
         return ZoneInfo(raw)
     except Exception:  # noqa: BLE001
         return ZoneInfo(DEFAULT_STATEMENT_TIMEZONE)
+
+
+def local_midnight(now: datetime, zone: ZoneInfo | str | None = None) -> datetime:
+    """Timezone-aware local midnight of ``now`` in ``zone`` (default Prague)."""
+    tz = zone if isinstance(zone, ZoneInfo) else resolve_zone(
+        zone if isinstance(zone, str) else None
+    )
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    local = now.astimezone(tz)
+    return local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def resolve_day_timezone(repo: Any) -> str:
+    """Sheets ``Settings.timezone``, else env ``statement_timezone``."""
+    try:
+        rows = repo.list_rows("Settings")
+    except Exception:  # noqa: BLE001
+        rows = []
+    for row in rows:
+        key = getattr(row, "key", None)
+        if key is None and isinstance(row, dict):
+            key = row.get("key")
+        if str(key or "").strip() != "timezone":
+            continue
+        value = getattr(row, "value", None)
+        if value is None and isinstance(row, dict):
+            value = row.get("value")
+        raw = str(value or "").strip()
+        if raw:
+            return resolve_zone(raw).key
+    from backend.config import get_settings
+
+    return resolve_zone(get_settings().statement_timezone).key
 
 
 def parse_czech_date(raw: str) -> date:

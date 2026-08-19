@@ -582,6 +582,8 @@ export type WindowPerformanceItem = {
   last_value?: string | null;
   change_pct?: number | null;
   change_abs?: string | null;
+  pnl_usd?: string | null;
+  day_open?: string | null;
   currency?: string;
   session_status?: string | null;
 };
@@ -640,6 +642,11 @@ export type PriceHistory = {
     short_history_tickers?: Array<{ ticker: string; first_bar: string }>;
     trades?: PriceHistoryTrade[];
     session_status?: string | null;
+    day_policy?: {
+      timezone?: string;
+      mode?: string;
+      session_status?: string | null;
+    } | null;
     /**
      * Desk book mark (Prices tab × open lots) — same idea as executive snapshot.
      * Not forced onto the 1D path tip; UI shows it next to Chart MV / path last.
