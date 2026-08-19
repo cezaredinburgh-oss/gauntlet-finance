@@ -575,6 +575,8 @@ export type PriceHistoryTrade = {
   series_value?: string | null;
 };
 
+export type ChartSessionTag = "pre" | "rth" | "ah" | "prior_close" | "local";
+
 export type WindowPerformanceItem = {
   ticker: string;
   asset_class?: string | null;
@@ -586,6 +588,13 @@ export type WindowPerformanceItem = {
   day_open?: string | null;
   currency?: string;
   session_status?: string | null;
+  prior_close?: string | null;
+  change_since_close_abs?: string | null;
+  change_since_close_pct?: number | null;
+  change_rth_abs?: string | null;
+  change_rth_pct?: number | null;
+  pnl_rth_usd?: string | null;
+  rth_last?: string | null;
 };
 
 export type WindowPerformanceResponse = {
@@ -602,7 +611,7 @@ export type PriceHistory = {
   series_kind: "price" | "market_value" | string;
   interval?: string;
   as_of: string;
-  points: Array<{ date: string; value: string }>;
+  points: Array<{ date: string; value: string; session?: ChartSessionTag }>;
   meta: {
     tickers?: string[];
     missing_tickers?: string[];
@@ -642,6 +651,12 @@ export type PriceHistory = {
     short_history_tickers?: Array<{ ticker: string; first_bar: string }>;
     trades?: PriceHistoryTrade[];
     session_status?: string | null;
+    prior_close?: string | null;
+    change_since_close_abs?: string | null;
+    change_since_close_pct?: number | null;
+    change_rth_abs?: string | null;
+    change_rth_pct?: number | null;
+    rth_last?: string | null;
     day_policy?: {
       timezone?: string;
       mode?: string;

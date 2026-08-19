@@ -4,6 +4,15 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-19 — Equity 1D extended tape (vs close = 5m RTH last)
+
+- Equity/ETF 5m fetch uses `prepost=True` (crypto 5m and any `1d` stay `prepost=False`). Combined process cache token `extended_v1`; route keys `:ext1`.
+- Stock 1D trim: any `now` ET before 09:30 (including 00:00–03:59 and weekends) is **prior-close seed + today's pre only** — never yesterday's RTH Area. RTH is `09:30 ≤ t < 16:00`; **16:00 is the first AH bar**. `day_open` is the first `session=="rth"` print (null before the bell).
+- Primary Daily / ticker 1D Δ is **vs prior RTH last (5m)**, not Prices-tab daily Close. Fallback when the 5d tape has no prior RTH: last − first plotted (**vs 09:30** during RTH). Stock 1D abs fields are **4 dp** on history and `window_performance`; `pnl_*` stay 2 dp.
+- Mixed `scope=all` 1D still seeds equity at prior RTH inside the grid builder (`rth_only`) until the grid PR. Crypto 1D is still local midnight.
+
+---
+
 ## 2026-08-19 — Rule-create fills leftovers; Apply this rule
 
 - `POST /category-rules` validates needle + category, persists, then `apply_one_rule_fill_residuals` (`also_apply` default true). Every apply failure after insert is **200 + `apply_error`** (never 400/500). `WritableUserDep` (tour 403).

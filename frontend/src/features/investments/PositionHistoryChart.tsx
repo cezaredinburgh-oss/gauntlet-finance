@@ -3,6 +3,7 @@ import {
   Area,
   CartesianGrid,
   ComposedChart,
+  Line,
   ResponsiveContainer,
   Scatter,
   Tooltip,
@@ -36,6 +37,7 @@ import {
   chartYDomain,
   shouldShowCostBasis,
 } from "../../lib/chartCostVisibility";
+import { rthValuesOf, splitSessionSeries } from "../../lib/chartSessionSeries";
 import {
   loadChartChangeMode,
   saveChartChangeMode,
@@ -118,28 +120,51 @@ function isLocalDayStatus(status: string | null | undefined): boolean {
   return status === "local_day" || status === "last_24h";
 }
 
+function tickerIntradayCaption(sessionStatus: string | null | undefined): string {
+  if (sessionStatus === "overnight") {
+    return "Overnight · prior RTH last · waiting for 4:00 ET pre-market";
+  }
+  if (sessionStatus === "pre_market") {
+    return "Pre-market · 4:00–9:30 ET · Yahoo 5m path (not desk book)";
+  }
+  if (sessionStatus === "after_hours") {
+    return "After-hours · 16:00–20:00 ET · Yahoo 5m path (not desk book)";
+  }
+  if (sessionStatus === "prior_session") {
+    return "Prior session · market closed · Yahoo 5m path";
+  }
+  if (sessionStatus === "prior_local_day") {
+    return "Prior day · waiting for today’s open · Yahoo 5m path";
+  }
+  if (isLocalDayStatus(sessionStatus)) {
+    return "Today · Yahoo 5m path (not desk book)";
+  }
+  if (sessionStatus === "regular") {
+    return "US regular session · pre/AH dashed · Yahoo 5m path (not desk book)";
+  }
+  return "Yahoo 5m path";
+}
+
 function chartPathCaption(
   scope: ChartScope,
   sessionStatus: string | null | undefined,
   intraday: boolean,
 ): string {
   if (scope.kind === "ticker") {
-    if (intraday) {
-      if (sessionStatus === "prior_session") {
-        return "Prior session · waiting for today’s open · Yahoo 5m path";
-      }
-      if (sessionStatus === "prior_local_day") {
-        return "Prior day · waiting for today’s open · Yahoo 5m path";
-      }
-      if (isLocalDayStatus(sessionStatus)) {
-        return "Today · Yahoo 5m path (not desk book)";
-      }
-      return "US regular session · Yahoo 5m path (not desk book)";
-    }
+    if (intraday) return tickerIntradayCaption(sessionStatus);
     return "Daily close (USD) · avg cost from open lots";
   }
+  if (sessionStatus === "overnight") {
+    return "Overnight · prior RTH last · Yahoo path";
+  }
+  if (sessionStatus === "pre_market") {
+    return "Pre-market · Yahoo path · desk book shown separately";
+  }
+  if (sessionStatus === "after_hours") {
+    return "After-hours · Yahoo path · desk book shown separately";
+  }
   if (sessionStatus === "prior_session") {
-    return "Prior session · waiting for today’s open · Yahoo path";
+    return "Prior session · market closed · Yahoo path";
   }
   if (sessionStatus === "prior_local_day") {
     return "Prior day · waiting for today’s open · Yahoo path";
@@ -150,7 +175,7 @@ function chartPathCaption(
       : "Today · Yahoo path · desk book shown separately";
   }
   if (sessionStatus === "regular") {
-    return "US regular session · Yahoo path · desk book shown separately";
+    return "US regular session · pre/AH dashed · Yahoo path · desk book shown separately";
   }
   return "Holdings as of each day × market prices · free Yahoo data";
 }
@@ -358,15 +383,21 @@ export function PositionHistoryChart({
       isIntra,
       data.points.map((p) => p.date),
     );
+    const split = splitSessionSeries(data.points);
+    const splitByDate = new Map(split.map((r) => [r.date, r]));
     return data.points.map((p) => {
       const pointTrades = tradesForPoint(byKey, p.date, isIntra);
       const y = d(p.value);
       const buyCount = pointTrades.filter((t) => t.side === "buy").length;
       const sellCount = pointTrades.filter((t) => t.side === "sell").length;
+      const sess = splitByDate.get(p.date);
       return {
         date: p.date,
         label: shortLabel(p.date, isIntra),
         value: y,
+        rthValue: sess?.rthValue ?? null,
+        extValue: sess?.extValue ?? null,
+        session: p.session,
         cost,
         buyMark: buyCount > 0 ? y : (null as number | null),
         sellMark: sellCount > 0 ? y : (null as number | null),
@@ -442,9 +473,18 @@ export function PositionHistoryChart({
         ? d(data.meta.cost_basis_usd)
         : null;
   const priceValues = rows.map((r) => r.value);
+  const rthValues = rthValuesOf(
+    rows.map((r) => ({
+      date: r.date,
+      value: r.value,
+      rthValue: r.rthValue,
+      extValue: r.extValue,
+      session: r.session,
+    })),
+  );
   const showCost =
     costRef != null && Number.isFinite(costRef)
-      ? shouldShowCostBasis(costRef, priceValues)
+      ? shouldShowCostBasis(costRef, rthValues)
       : false;
   const yDomain = chartYDomain(priceValues, {
     cost: costRef ?? undefined,
@@ -969,7 +1009,11 @@ export function PositionHistoryChart({
           )}
         >
           {range === "1d"
-            ? "No bars yet for this session — Yahoo may still be catching up after the open. Auto-refresh will retry."
+            ? data?.meta?.session_status === "overnight" ||
+              data?.meta?.session_status === "pre_market" ||
+              data?.meta?.session_status === "prior_session"
+              ? "No Yahoo prints yet for this session. Auto-refresh will retry."
+              : "No bars yet for this session — Yahoo may still be catching up after the open. Auto-refresh will retry."
             : "No history returned for this scope. Yahoo may not cover this symbol, or markets may be closed."}
         </div>
       )}
@@ -1109,13 +1153,27 @@ export function PositionHistoryChart({
               />
               <Area
                 type="monotone"
-                dataKey="value"
+                dataKey="rthValue"
                 stroke={stroke}
                 fill="url(#phFill)"
                 strokeWidth={2}
                 dot={false}
+                connectNulls={false}
                 isAnimationActive={false}
                 name="value"
+              />
+              <Line
+                type="monotone"
+                dataKey="extValue"
+                stroke={stroke}
+                strokeWidth={1.5}
+                strokeDasharray="4 4"
+                strokeOpacity={0.75}
+                dot={false}
+                connectNulls={false}
+                isAnimationActive={false}
+                legendType="none"
+                name="extended"
               />
               {dayOpenY != null && (
                 <ReferenceLine

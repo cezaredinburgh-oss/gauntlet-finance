@@ -43,7 +43,7 @@ async def price_history(
     ttl = 45.0 if range_norm == "1d" else 180.0
     cache_key = (
         f"phist:{scope}:{range_norm}:{(ticker or '').upper()}:"
-        f"{(asset_class or '').lower()}:{settings.holding_period_exemption_days}:{tz}"
+        f"{(asset_class or '').lower()}:{settings.holding_period_exemption_days}:{tz}:ext1"
     )
 
     def _build() -> PriceHistoryResponse:
@@ -80,7 +80,14 @@ async def price_history(
             series_kind=result.series_kind,
             interval=result.interval,
             as_of=result.as_of.isoformat(),
-            points=[{"date": p["date"], "value": p["value"]} for p in result.points],
+            points=[
+                {
+                    "date": p["date"],
+                    "value": p["value"],
+                    **({"session": p["session"]} if p.get("session") else {}),
+                }
+                for p in result.points
+            ],
             meta=result.meta,
         )
 
@@ -107,7 +114,7 @@ async def window_performance(
     range_norm = (range_key or "1y").strip().lower()
     tz = resolve_day_timezone(repo)
     ttl = 45.0 if range_norm == "1d" else 180.0
-    cache_key = f"wperf:{range_norm}:{tz}"
+    cache_key = f"wperf:{range_norm}:{tz}:ext1"
 
     def _build() -> dict:
         svc = PriceHistoryService(

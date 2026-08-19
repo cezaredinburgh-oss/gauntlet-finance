@@ -221,6 +221,9 @@ function signedUsdCell(value: number | null) {
 }
 
 function priorDaySubtitle(status: string | null | undefined): string | undefined {
+  if (status === "overnight") return "Overnight";
+  if (status === "pre_market") return "Pre-market";
+  if (status === "after_hours") return "After-hours";
   if (status === "prior_session" || status === "prior_local_day") return "Prior day";
   return undefined;
 }
@@ -690,20 +693,20 @@ export function HoldingsTableNext({
                     onSort={onSort}
                   />
                   <SortTh
-                    label="Day Δ $"
+                    label="Day Δ $ vs close"
                     col="dayPnl"
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    title="Mark P/L on current open qty × DayPolicy price move."
+                    title="vs close — vs prior RTH last (5m), includes pre/post"
                   />
                   <SortTh
-                    label="Day %"
+                    label="Day % vs close"
                     col="dayPct"
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    title="DayPolicy last vs day-open %"
+                    title="vs close — vs prior RTH last (5m), includes pre/post"
                   />
                   <SortTh
                     label="MV"

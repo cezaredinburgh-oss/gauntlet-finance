@@ -211,13 +211,24 @@ def test_history_1d_intraday():
             ]
         }
 
+    from zoneinfo import ZoneInfo
+
+    now = datetime(2026, 8, 10, 10, 0, tzinfo=ZoneInfo("America/New_York"))
+    # 10:00 ET Monday — regular; fixture is prior Friday so path is seed only
     svc = PriceHistoryService(repo, fetcher=fake_fetch)
-    result = svc.history(scope="ticker", range_key="1d", ticker="PLTR")
+    result = svc.history(
+        scope="ticker", range_key="1d", ticker="PLTR", now=now
+    )
     assert result.interval == "5m"
     assert result.meta["point_kind"] == "intraday"
     assert len(result.points) >= 1
-    assert result.meta.get("session_status") in ("regular", "prior_session")
-    # Window change on the trimmed series (prior session if "today" not in fixture)
+    assert result.meta.get("session_status") in (
+        "overnight",
+        "pre_market",
+        "regular",
+        "after_hours",
+        "prior_session",
+    )
     assert result.meta["change_pct"] is not None
 
 
@@ -554,7 +565,10 @@ def test_trim_intraday_rth_today_or_prior():
         series, mode="rth_today_or_prior", now=now
     )
     assert status == "regular"
-    assert len(trimmed) == 2
+    # Seed (prior RTH last) + two today RTH prints
+    assert len(trimmed) == 3
+    assert trimmed[0].session == "prior_close"
+    assert {p.session for p in trimmed[1:]} == {"rth"}
     assert Decimal(trimmed[-1][1]) == Decimal("111")
 
 
@@ -565,12 +579,15 @@ def test_trim_intraday_prior_when_no_today():
     for h in range(10, 15):
         ts = _parse_ts(f"2026-08-07T{h:02d}:00:00-04:00").astimezone(timezone.utc).isoformat()
         series.append((ts, Decimal(str(100 + h))))
-    now = _parse_ts("2026-08-10T08:00:00-04:00")  # pre-open
+    now = _parse_ts("2026-08-10T08:00:00-04:00")  # pre-open weekday
     trimmed, status = trim_intraday_series(
         series, mode="rth_today_or_prior", now=now
     )
-    assert status == "prior_session"
-    assert len(trimmed) == 5
+    assert status == "pre_market"
+    # Seed only — fixture has no today pre. Zero yesterday RTH vertices besides seed.
+    assert len(trimmed) == 1
+    assert trimmed[0].session == "prior_close"
+    assert all(p.session != "rth" for p in trimmed)
 
 
 def test_intraday_coverage_allows_partial_book():
@@ -1635,6 +1652,8 @@ def test_window_performance_pnl_usd():
         our = yahoo_map[yahoo_symbols[0]]
         return {
             our: [
+                # Friday 15:55 ET prior RTH last
+                ("2026-08-07T19:55:00+00:00", Decimal("9")),
                 ("2026-08-10T13:30:00+00:00", Decimal("10")),
                 ("2026-08-10T17:00:00+00:00", Decimal("11")),
             ]
@@ -1643,7 +1662,41 @@ def test_window_performance_pnl_usd():
     svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
     result = svc.window_performance(range_key="1d", now=now, zone=zone)
     item = next(i for i in result["items"] if i["ticker"] == "AAA")
+    # qty 2 × (11 − 9 prior close)
+    assert item["pnl_usd"] == "4.00"
+    assert item["change_abs"] == "2.0000"
+    assert item["prior_close"] == "9.0000"
+    assert item["day_open"] == "10.0000"
+
+
+def test_window_performance_pnl_usd_no_prior_rth_fallback():
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("America/New_York")
+    now = datetime(2026, 8, 10, 14, 0, tzinfo=zone)
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [_lot(ticker="AAA", asset_class=AssetClass.STOCK, qty="2", cost_usd="20")],
+    )
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        our = yahoo_map[yahoo_symbols[0]]
+        return {
+            our: [
+                ("2026-08-10T13:30:00+00:00", Decimal("10")),
+                ("2026-08-10T17:00:00+00:00", Decimal("11")),
+            ]
+        }
+
+    svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
+    result = svc.window_performance(range_key="1d", now=now, zone=zone)
+    item = next(i for i in result["items"] if i["ticker"] == "AAA")
+    # Fallback (2) last − first plotted (vs 09:30)
     assert item["pnl_usd"] == "2.00"
+    assert item["change_abs"] is not None
+    assert item["prior_close"] is None
+    assert item["day_open"] == "10.0000"
 
 
 def test_resolve_day_change_1d_uses_trimmed_series():
@@ -1743,3 +1796,306 @@ def test_resolve_day_change_mixed_mv_not_last_two_daily():
     assert result.meta["day_open"] != "1900.00"
     # T_open = 2026-08-09T22:00Z: stock last daily ≤ T = 95; crypto 5m ≤ T = 980
     assert result.meta["day_open"] == "1930.00"
+
+
+def _et(y: int, m: int, d: int, hh: int, mm: int):
+    from zoneinfo import ZoneInfo
+
+    return datetime(y, m, d, hh, mm, tzinfo=ZoneInfo("America/New_York"))
+
+
+def _stock_extended_bars() -> list[tuple[str, Decimal]]:
+    """Prior Friday 15:55 + Mon 04:30 / 10:00 / 15:55 / 16:00 / 17:00 ET."""
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+
+    def iso(day: int, hh: int, mm: int) -> str:
+        return (
+            datetime(2026, 8, day, hh, mm, tzinfo=et)
+            .astimezone(timezone.utc)
+            .isoformat()
+        )
+
+    return [
+        (iso(7, 15, 55), Decimal("100")),
+        (iso(10, 4, 30), Decimal("101")),
+        (iso(10, 10, 0), Decimal("102")),
+        (iso(10, 15, 55), Decimal("103")),
+        (iso(10, 16, 0), Decimal("104")),
+        (iso(10, 17, 0), Decimal("105")),
+    ]
+
+
+def test_classify_us_session_rth_excludes_1600():
+    from zoneinfo import ZoneInfo
+
+    from backend.services.price_history import classify_us_session
+
+    et = ZoneInfo("America/New_York")
+
+    def iso(hh: int, mm: int) -> str:
+        return (
+            datetime(2026, 8, 10, hh, mm, tzinfo=et)
+            .astimezone(timezone.utc)
+            .isoformat()
+        )
+
+    assert classify_us_session(iso(4, 0)) == "pre"
+    assert classify_us_session(iso(9, 29)) == "pre"
+    assert classify_us_session(iso(9, 30)) == "rth"
+    assert classify_us_session(iso(15, 55)) == "rth"
+    assert classify_us_session(iso(16, 0)) == "ah"
+    assert classify_us_session(iso(17, 0)) == "ah"
+    assert classify_us_session(iso(20, 0)) == "ah"
+    assert classify_us_session(iso(2, 0)) is None
+
+
+def test_trim_extended_clocks():
+    from backend.services.price_history import trim_intraday_series
+
+    series = _stock_extended_bars()
+
+    def run(now):
+        return trim_intraday_series(series, mode="rth_today_or_prior", now=now)
+
+    trimmed, status = run(_et(2026, 8, 10, 2, 0))
+    assert status == "overnight"
+    assert [p.session for p in trimmed] == ["prior_close"]
+    assert trimmed[0].px == Decimal("100")
+
+    trimmed, status = run(_et(2026, 8, 10, 8, 0))
+    assert status == "pre_market"
+    assert [p.session for p in trimmed] == ["prior_close", "pre"]
+    assert all(p.session != "rth" for p in trimmed)
+
+    trimmed, status = run(_et(2026, 8, 10, 10, 0))
+    assert status == "regular"
+    assert trimmed[0].session == "prior_close"
+    assert "pre" in {p.session for p in trimmed}
+    assert "rth" in {p.session for p in trimmed}
+
+    trimmed, status = run(_et(2026, 8, 10, 16, 0))
+    assert status == "after_hours"
+    assert trimmed[-1].session == "ah"
+    rth_last = [p for p in trimmed if p.session == "rth"][-1]
+    assert rth_last.px == Decimal("103")
+
+    trimmed, status = run(_et(2026, 8, 9, 2, 0))  # Sunday
+    assert status == "prior_session"
+    assert [p.session for p in trimmed] == ["prior_close"]
+    assert trimmed[0].px == Decimal("100")
+
+    trimmed, status = run(_et(2026, 8, 8, 10, 0))  # Saturday
+    assert status == "prior_session"
+    assert [p.session for p in trimmed] == ["prior_close"]
+
+    from zoneinfo import ZoneInfo
+
+    prague = datetime(2026, 8, 10, 8, 0, tzinfo=ZoneInfo("Europe/Prague"))
+    trimmed, status = run(prague)
+    assert status == "overnight"
+    assert [p.session for p in trimmed] == ["prior_close"]
+
+
+def test_window_performance_1d_matches_history_stock_extended():
+    from zoneinfo import ZoneInfo
+
+    from backend.services.price_history import extended_change_meta, trim_intraday_series
+
+    zone = ZoneInfo("America/New_York")
+    bars = _stock_extended_bars()
+    clocks = [
+        _et(2026, 8, 10, 4, 30),
+        _et(2026, 8, 10, 10, 0),
+        _et(2026, 8, 10, 15, 55),
+        _et(2026, 8, 10, 16, 0),
+        _et(2026, 8, 10, 17, 0),
+    ]
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [_lot(ticker="PLTR", asset_class=AssetClass.STOCK, qty="3", cost_usd="30")],
+    )
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        our = yahoo_map[yahoo_symbols[0]]
+        return {our: list(bars)}
+
+    svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
+    for now in clocks:
+        hist = svc.history(
+            scope="ticker", range_key="1d", ticker="PLTR", now=now, zone=zone
+        )
+        wperf = svc.window_performance(range_key="1d", now=now, zone=zone)
+        item = next(i for i in wperf["items"] if i["ticker"] == "PLTR")
+        for key in (
+            "last_value",
+            "change_pct",
+            "change_abs",
+            "day_open",
+            "prior_close",
+            "change_rth_abs",
+            "change_rth_pct",
+            "session_status",
+        ):
+            assert item[key] == hist.meta[key], (now, key, item[key], hist.meta[key])
+        assert item["last_value"] == hist.points[-1]["value"]
+        if now.hour < 9 or (now.hour == 9 and now.minute < 30):
+            assert item["change_rth_abs"] is None
+            assert hist.meta["day_open"] is None
+        trimmed, _ = trim_intraday_series(
+            bars, mode="rth_today_or_prior", now=now
+        )
+        ext = extended_change_meta(trimmed, qty=Decimal("3"), places=4)
+        assert item["change_abs"] == ext["change_abs"]
+        assert item["pnl_usd"] == ext["pnl_usd"]
+        if now.hour == 4:
+            assert hist.points[0].get("session") == "prior_close"
+            assert all(p.get("session") != "rth" for p in hist.points)
+
+
+def test_pre_market_change_rth_is_none():
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("America/New_York")
+    now = _et(2026, 8, 10, 8, 0)
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [_lot(ticker="PLTR", asset_class=AssetClass.STOCK, qty="1", cost_usd="10")],
+    )
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        our = yahoo_map[yahoo_symbols[0]]
+        return {our: list(_stock_extended_bars())}
+
+    svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
+    hist = svc.history(scope="ticker", range_key="1d", ticker="PLTR", now=now, zone=zone)
+    assert hist.meta["session_status"] == "pre_market"
+    assert hist.meta["change_rth_abs"] is None
+    assert hist.meta["change_rth_pct"] is None
+    assert hist.meta["day_open"] is None
+    assert hist.points[0]["session"] == "prior_close"
+    assert hist.meta["change_abs"] == "1.0000"  # 101 − 100
+
+
+def test_portfolio_grid_overnight_ignores_pre_print():
+    from zoneinfo import ZoneInfo
+
+    from backend.services.price_history import (
+        _prior_rth_close,
+        build_portfolio_1d_aligned_closes,
+    )
+
+    zone = ZoneInfo("Europe/Prague")
+    now = _et(2026, 8, 10, 8, 0)  # 14:00 Prague summer
+    et = ZoneInfo("America/New_York")
+    stock = [
+        (
+            datetime(2026, 8, 7, 15, 55, tzinfo=et).astimezone(timezone.utc).isoformat(),
+            Decimal("100"),
+        ),
+        (
+            datetime(2026, 8, 10, 4, 30, tzinfo=et).astimezone(timezone.utc).isoformat(),
+            Decimal("120"),
+        ),
+    ]
+    crypto = [
+        ("2026-08-09T22:00:00+00:00", Decimal("1000")),
+        ("2026-08-10T12:00:00+00:00", Decimal("1000")),
+    ]
+    aligned, status = build_portfolio_1d_aligned_closes(
+        {"STK": stock, "CRY": crypto},
+        {"STK": "Stock", "CRY": "Crypto"},
+        now=now,
+        zone=zone,
+    )
+    assert status == "local_day"
+    prior = _prior_rth_close(
+        stock,
+        before=datetime(2026, 8, 9, 22, 0, tzinfo=timezone.utc),
+    )
+    assert prior == Decimal("100")
+    assert all(p[1] == Decimal("100") for p in aligned["STK"])
+
+
+def test_yfinance_history_batch_prepost_kwarg(monkeypatch):
+    import sys
+    import types
+
+    import backend.services.price_history as ph
+
+    calls: list[tuple[str, bool | None, str | None]] = []
+
+    class DummyDF:
+        empty = True
+        columns: list[str] = []
+
+    fake_yf = types.ModuleType("yfinance")
+
+    def download(**kwargs):
+        calls.append(("download", kwargs.get("prepost"), kwargs.get("interval")))
+        return DummyDF()
+
+    class Ticker:
+        def __init__(self, _s: str) -> None:
+            pass
+
+        def history(self, **kwargs):
+            calls.append(("history", kwargs.get("prepost"), kwargs.get("interval")))
+            return DummyDF()
+
+    fake_yf.download = download  # type: ignore[attr-defined]
+    fake_yf.Ticker = Ticker  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "yfinance", fake_yf)
+
+    ph._yfinance_history_batch(
+        ["PLTR"], {"PLTR": "PLTR"}, "5d", "5m", prepost=True
+    )
+    ph._yfinance_history_batch(
+        ["BTC-USD"], {"BTC-USD": "BTC"}, "5d", "5m", prepost=False
+    )
+    ph._yfinance_history_batch(
+        ["PLTR"], {"PLTR": "PLTR"}, "1y", "1d", prepost=False
+    )
+
+    preposts = [(kind, pre, iv) for kind, pre, iv in calls]
+    assert ("download", True, "5m") in preposts
+    assert ("download", False, "5m") in preposts
+    assert ("download", False, "1d") in preposts
+
+
+def test_fetch_closes_equity_5m_passes_prepost(monkeypatch):
+    import backend.services.price_history as ph
+
+    seen: list[tuple[list[str], str, bool]] = []
+
+    def wrapper(syms, m, period, interval, *, prepost=False):
+        seen.append((list(syms), interval, prepost))
+        return {
+            m[s]: [ph.SeriesPoint("2026-08-10T13:30:00+00:00", Decimal("1"))]
+            for s in syms
+        }
+
+    monkeypatch.setattr(ph, "_yfinance_history_batch", wrapper)
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [
+            _lot(ticker="PLTR", asset_class=AssetClass.STOCK, qty="1", cost_usd="10"),
+            _lot(ticker="BTC", asset_class=AssetClass.CRYPTO, qty="1", cost_usd="10"),
+        ],
+    )
+    svc = PriceHistoryService(repo, enabled=True)
+    svc._fetch_closes(
+        ["PLTR", "BTC"],
+        {"PLTR": "Stock", "BTC": "Crypto"},
+        "5d",
+        "5m",
+    )
+    eq = [c for c in seen if c[2] is True]
+    cr = [c for c in seen if c[2] is False]
+    assert eq and eq[0][1] == "5m"
+    assert cr and cr[0][1] == "5m"
+    assert "PLTR" in eq[0][0] or any("PLTR" in s for s in eq[0][0])

@@ -35,6 +35,15 @@ assert(shouldShowCostBasis(120, [100, 110]), "1× gap above → show");
 assert(!shouldShowCostBasis(80, [100, 110]), "2× gap → hide");
 assert(!shouldShowCostBasis(130, [100, 110]), "2× gap above → hide");
 assert(!shouldShowCostBasis(40_000, [96_800, 97_200]), "far cost → hide");
+// Tight RTH band + wild pre print: cost follows RTH y-span only.
+assert(
+  shouldShowCostBasis(40_000, [40_000, 96_800, 97_200]),
+  "including pre would show — caller must pass RTH y's",
+);
+assert(
+  !shouldShowCostBasis(40_000, [96_800, 97_200]),
+  "tight RTH band hides cost even if pre wicked toward it",
+);
 
 assert(!shouldShowCostBasis(80, [50, 50, 50]), "flat+far → hide");
 assert(shouldShowCostBasis(50, [50, 50]), "flat+equal → show");

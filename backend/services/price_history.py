@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Callable, Literal
@@ -55,11 +56,65 @@ _RANGE_SPEC: dict[str, tuple[str, str, str]] = {
     "5y": ("5y", "1d", "daily"),
 }
 
-# Process cache: key -> (fetched_monotonic, closes_by_our_ticker)
-# Values are list of (timestamp_iso, price)
-_HISTORY_CACHE: dict[str, tuple[float, dict[str, list[tuple[str, Decimal]]]]] = {}
+SessionTag = Literal["pre", "rth", "ah", "prior_close", "local"]
 
-SeriesPoint = tuple[str, Decimal]  # iso timestamp, price
+
+@dataclass(frozen=True, slots=True)
+class SeriesPoint:
+    """One tape print. ``session`` is set by 1D trim; raw fetch leaves it None."""
+
+    ts: str
+    px: Decimal
+    session: SessionTag | None = None
+
+    def __getitem__(self, i: int) -> str | Decimal:
+        if i == 0:
+            return self.ts
+        if i == 1:
+            return self.px
+        raise IndexError(i)
+
+    def __iter__(self) -> Iterator[str | Decimal]:
+        yield self.ts
+        yield self.px
+
+
+def sp(
+    ts: str,
+    px: Decimal | str | int | float,
+    session: SessionTag | None = None,
+) -> SeriesPoint:
+    """Test/helper constructor."""
+    px_d = px if isinstance(px, Decimal) else Decimal(str(px))
+    return SeriesPoint(ts=ts, px=px_d, session=session)
+
+
+def _coerce_point(p: SeriesPoint | Sequence[Any]) -> SeriesPoint:
+    if isinstance(p, SeriesPoint):
+        return p
+    ts = str(p[0])
+    raw_px = p[1]
+    px = raw_px if isinstance(raw_px, Decimal) else Decimal(str(raw_px))
+    session = p[2] if len(p) > 2 else None  # type: ignore[misc]
+    return SeriesPoint(ts=ts, px=px, session=session)
+
+
+def _coerce_series(series: Sequence[Any] | None) -> list[SeriesPoint]:
+    if not series:
+        return []
+    return [_coerce_point(p) for p in series]
+
+
+def _serialize_point(p: SeriesPoint, places: int = 2) -> dict[str, str]:
+    out: dict[str, str] = {"date": p.ts, "value": _str_dec(p.px, places)}
+    if p.session is not None:
+        out["session"] = p.session
+    return out
+
+
+# Process cache: key -> (fetched_monotonic, closes_by_our_ticker)
+_HISTORY_CACHE: dict[str, tuple[float, dict[str, list[SeriesPoint]]]] = {}
+
 HistoryFetcher = Callable[
     [list[str], dict[str, str], str, str],
     dict[str, list[SeriesPoint]],
@@ -158,17 +213,52 @@ def _to_et(dt: datetime) -> datetime:
     return dt.astimezone(_et_zone())
 
 
+def classify_us_session(ts: str) -> Literal["pre", "rth", "ah"] | None:
+    """ET session bucket. Never call on a point already tagged ``prior_close``."""
+    tet = _to_et(_parse_ts(ts))
+    t = tet.hour * 60 + tet.minute
+    if 4 * 60 <= t < 9 * 60 + 30:
+        return "pre"
+    if 9 * 60 + 30 <= t < 16 * 60:
+        return "rth"
+    if 16 * 60 <= t <= 20 * 60:
+        return "ah"
+    return None
+
+
+def _is_weekend_et(dt_et: datetime) -> bool:
+    return dt_et.weekday() >= 5
+
+
+def _session_status_from_clock(now_et: datetime) -> str:
+    """Displayed 1D status from the America/New_York clock (no yesterday envelope)."""
+    if _is_weekend_et(now_et):
+        return "prior_session"
+    t = now_et.hour * 60 + now_et.minute
+    if t < 4 * 60:
+        return "overnight"
+    if t < 9 * 60 + 30:
+        return "pre_market"
+    if t < 16 * 60:
+        return "regular"
+    return "after_hours"
+
+
+def _tag_local(points: list[SeriesPoint]) -> list[SeriesPoint]:
+    return [SeriesPoint(ts=p.ts, px=p.px, session="local") for p in points]
+
+
 def _last_px_at_or_before(
     series: list[SeriesPoint], cutoff: datetime
 ) -> Decimal | None:
     """Last observed print with timestamp ≤ cutoff (aware-to-aware)."""
     best_px: Decimal | None = None
     best_ts: datetime | None = None
-    for ts, px in series:
-        tdt = _parse_ts(ts)
+    for p in _coerce_series(series):
+        tdt = _parse_ts(p.ts)
         if tdt <= cutoff and (best_ts is None or tdt > best_ts):
             best_ts = tdt
-            best_px = px
+            best_px = p.px
     return best_px
 
 
@@ -179,12 +269,13 @@ def _seed_local_midnight(
     open_px: Decimal | None,
 ) -> list[SeriesPoint]:
     """Prepend observed midnight print when the first live bar is later."""
+    today = _coerce_series(today)
     if open_px is None:
         return today
-    if today and _parse_ts(today[0][0]) <= midnight:
+    if today and _parse_ts(today[0].ts) <= midnight:
         return today
     seed_ts = midnight.astimezone(timezone.utc).replace(microsecond=0).isoformat()
-    return [(seed_ts, open_px), *today]
+    return [SeriesPoint(seed_ts, open_px), *today]
 
 
 def _trim_local_day_or_prior(
@@ -193,39 +284,110 @@ def _trim_local_day_or_prior(
     now: datetime,
     zone: ZoneInfo,
 ) -> tuple[list[SeriesPoint], str]:
+    series = _coerce_series(series)
     midnight = local_midnight(now, zone)
-    today = [(ts, px) for ts, px in series if _parse_ts(ts) >= midnight]
-    today.sort(key=lambda p: _parse_ts(p[0]))
+    today = [p for p in series if _parse_ts(p.ts) >= midnight]
+    today.sort(key=lambda p: _parse_ts(p.ts))
     open_px = _last_px_at_or_before(series, midnight)
 
     if today:
-        return _seed_local_midnight(today, midnight=midnight, open_px=open_px), "local_day"
+        return _tag_local(
+            _seed_local_midnight(today, midnight=midnight, open_px=open_px)
+        ), "local_day"
 
     by_day: dict[date, list[SeriesPoint]] = {}
-    for ts, px in series:
-        local_d = _parse_ts(ts).astimezone(zone).date()
+    for p in series:
+        local_d = _parse_ts(p.ts).astimezone(zone).date()
         if local_d < midnight.date():
-            by_day.setdefault(local_d, []).append((ts, px))
+            by_day.setdefault(local_d, []).append(p)
     if not by_day:
-        return series[-min(12, len(series)) :], "prior_local_day"
+        return _tag_local(series[-min(12, len(series)) :]), "prior_local_day"
 
     last_day = max(by_day.keys())
     midnight = datetime(last_day.year, last_day.month, last_day.day, tzinfo=zone)
     next_d = last_day + timedelta(days=1)
     next_midnight = datetime(next_d.year, next_d.month, next_d.day, tzinfo=zone)
-    today = [
-        (ts, px)
-        for ts, px in series
-        if midnight <= _parse_ts(ts) < next_midnight
-    ]
-    today.sort(key=lambda p: _parse_ts(p[0]))
+    today = [p for p in series if midnight <= _parse_ts(p.ts) < next_midnight]
+    today.sort(key=lambda p: _parse_ts(p.ts))
     open_px = _last_px_at_or_before(series, midnight)
     if not today:
-        return series[-min(12, len(series)) :], "prior_local_day"
+        return _tag_local(series[-min(12, len(series)) :]), "prior_local_day"
     return (
-        _seed_local_midnight(today, midnight=midnight, open_px=open_px),
+        _tag_local(_seed_local_midnight(today, midnight=midnight, open_px=open_px)),
         "prior_local_day",
     )
+
+
+def _prior_rth_point(
+    series: list[SeriesPoint],
+    *,
+    before: datetime,
+) -> SeriesPoint | None:
+    """Last 5m RTH print (09:30 ≤ ET < 16:00) strictly before ``before``."""
+    best: SeriesPoint | None = None
+    best_ts: datetime | None = None
+    for p in _coerce_series(series):
+        tdt = _parse_ts(p.ts)
+        if tdt.tzinfo is None:
+            tdt = tdt.replace(tzinfo=timezone.utc)
+        if tdt >= before:
+            continue
+        if classify_us_session(p.ts) != "rth":
+            continue
+        if best_ts is None or tdt > best_ts:
+            best_ts = tdt
+            best = p
+    if best is None:
+        return None
+    return SeriesPoint(ts=best.ts, px=best.px, session="prior_close")
+
+
+def _trim_us_extended(
+    series: list[SeriesPoint],
+    *,
+    now: datetime,
+) -> tuple[list[SeriesPoint], str]:
+    """
+    Stock/ETF 1D envelope: prior-close seed + today's pre/rth/ah.
+
+    Any now_et < 09:30 (incl. 00:00–03:59 and weekends) keeps zero yesterday RTH
+    vertices besides the single ``prior_close`` seed.
+    """
+    series = _coerce_series(series)
+    now_et = _to_et(now)
+    status = _session_status_from_clock(now_et)
+    displayed = now_et.date()
+    session_open = datetime(
+        displayed.year, displayed.month, displayed.day, 9, 30, tzinfo=_et_zone()
+    )
+
+    live: list[SeriesPoint] = []
+    if status != "prior_session":
+        for p in series:
+            tdt = _parse_ts(p.ts)
+            if tdt.tzinfo is None:
+                tdt = tdt.replace(tzinfo=timezone.utc)
+            if tdt > now:
+                continue
+            sess = classify_us_session(p.ts)
+            if sess is None:
+                continue
+            tet = _to_et(tdt)
+            if tet.date() != displayed:
+                continue
+            live.append(SeriesPoint(ts=p.ts, px=p.px, session=sess))
+        live.sort(key=lambda p: _parse_ts(p.ts))
+
+    seed = _prior_rth_point(series, before=session_open)
+    out: list[SeriesPoint] = []
+    if seed is not None:
+        if live and live[0].ts == seed.ts:
+            live = live[1:]
+        out.append(seed)
+    out.extend(live)
+    if not out:
+        return [], "empty"
+    return out, status
 
 
 def trim_intraday_series(
@@ -238,9 +400,10 @@ def trim_intraday_series(
     """
     Trim 5m bars for 1D display.
 
-    rth_today_or_prior — US regular session today; if none yet, prior RTH day.
+    rth_today_or_prior — US extended envelope (seed + today pre/rth/ah).
     local_day_or_prior — local calendar day from midnight; if none yet, prior day.
     """
+    series = _coerce_series(series)
     if not series:
         return [], "empty"
 
@@ -253,41 +416,7 @@ def trim_intraday_series(
             series, now=now, zone=zone or resolve_zone(None)
         )
 
-    # US RTH: 09:30–16:00 America/New_York
-    et = _to_et(now)
-    today = et.date()
-    session_open = datetime(today.year, today.month, today.day, 9, 30, tzinfo=_et_zone())
-
-    today_bars: list[SeriesPoint] = []
-    for ts, px in series:
-        tdt = _parse_ts(ts)
-        tet = _to_et(tdt)
-        if tet.date() == today and tet >= session_open:
-            # Keep through session; after-hours 5m usually absent without prepost
-            today_bars.append((ts, px))
-
-    if today_bars:
-        return today_bars, "regular"
-
-    # Prior complete RTH day: last calendar date before today that has bars in 09:30–16:00 ET
-    by_day: dict[date, list[SeriesPoint]] = {}
-    for ts, px in series:
-        tdt = _parse_ts(ts)
-        tet = _to_et(tdt)
-        if tet.date() >= today:
-            continue
-        if tet.hour > 16 or (tet.hour == 16 and tet.minute > 0):
-            continue
-        if tet.hour < 9 or (tet.hour == 9 and tet.minute < 30):
-            continue
-        by_day.setdefault(tet.date(), []).append((ts, px))
-
-    if not by_day:
-        # Fall back to last 78 bars (~RTH length) of whatever we have
-        return series[-min(78, len(series)) :], "prior_session"
-
-    last_day = max(by_day.keys())
-    return by_day[last_day], "prior_session"
+    return _trim_us_extended(series, now=now)
 
 
 def trim_closes_map(
@@ -297,7 +426,7 @@ def trim_closes_map(
     now: datetime | None = None,
     zone: ZoneInfo | None = None,
 ) -> tuple[dict[str, list[SeriesPoint]], str]:
-    """Trim each ticker; session_status is worst/best summary across tickers."""
+    """Trim each ticker; session_status ranks extended statuses over prior."""
     out: dict[str, list[SeriesPoint]] = {}
     statuses: list[str] = []
     for t, series in closes.items():
@@ -307,10 +436,14 @@ def trim_closes_map(
             statuses.append(st)
     if not statuses:
         return {}, "empty"
-    if all(s == "regular" for s in statuses):
+    if any(s == "regular" for s in statuses):
         status = "regular"
-    elif any(s == "regular" for s in statuses):
-        status = "regular"  # stocks dominate mixed books
+    elif any(s == "after_hours" for s in statuses):
+        status = "after_hours"
+    elif any(s == "pre_market" for s in statuses):
+        status = "pre_market"
+    elif any(s == "overnight" for s in statuses):
+        status = "overnight"
     elif any(s == "local_day" for s in statuses):
         status = "local_day"
     elif any(s == "prior_local_day" for s in statuses):
@@ -326,23 +459,18 @@ def _prior_rth_close(
     before: datetime,
 ) -> Decimal | None:
     """Last US RTH close strictly before ``before`` (for overnight carry)."""
-    best_px: Decimal | None = None
-    best_ts: datetime | None = None
-    for ts, px in series:
-        tdt = _parse_ts(ts)
-        if tdt.tzinfo is None:
-            tdt = tdt.replace(tzinfo=timezone.utc)
-        if tdt >= before:
-            continue
-        tet = _to_et(tdt)
-        if tet.hour < 9 or (tet.hour == 9 and tet.minute < 30):
-            continue
-        if tet.hour > 16 or (tet.hour == 16 and tet.minute > 0):
-            continue
-        if best_ts is None or tdt > best_ts:
-            best_ts = tdt
-            best_px = px
-    return best_px
+    pt = _prior_rth_point(series, before=before)
+    return pt.px if pt is not None else None
+
+
+def rth_only(series: list[SeriesPoint]) -> list[SeriesPoint]:
+    """Keep RTH prints only (09:30 ≤ ET < 16:00). Used inside the mixed 1D grid."""
+    out: list[SeriesPoint] = []
+    for p in _coerce_series(series):
+        sess = p.session if p.session is not None else classify_us_session(p.ts)
+        if sess == "rth":
+            out.append(SeriesPoint(ts=p.ts, px=p.px, session="rth"))
+    return out
 
 
 def _snap_down_5m(dt: datetime) -> datetime:
@@ -357,13 +485,13 @@ def _snap_down_5m(dt: datetime) -> datetime:
 
 def _series_to_sorted_pairs(series: list[SeriesPoint]) -> list[tuple[datetime, Decimal]]:
     pairs: list[tuple[datetime, Decimal]] = []
-    for ts, px in series:
-        tdt = _parse_ts(ts)
+    for p in _coerce_series(series):
+        tdt = _parse_ts(p.ts)
         if tdt.tzinfo is None:
             tdt = tdt.replace(tzinfo=timezone.utc)
         else:
             tdt = tdt.astimezone(timezone.utc)
-        pairs.append((tdt, px))
+        pairs.append((tdt, p.px))
     pairs.sort(key=lambda x: x[0])
     return pairs
 
@@ -407,8 +535,10 @@ def _align_closes_on_grid(
             continue
         ac = (asset_classes.get(ticker) or "").lower()
         is_crypto = ac == "crypto"
-        pairs = _series_to_sorted_pairs(full)
-        if not pairs:
+        full_pts = _coerce_series(full)
+        live_src = full_pts if is_crypto else rth_only(full_pts)
+        pairs = _series_to_sorted_pairs(live_src)
+        if is_crypto and not pairs:
             continue
 
         if is_crypto:
@@ -421,11 +551,13 @@ def _align_closes_on_grid(
             if open_px is None:
                 open_px = pairs[0][1]
         else:
-            open_px = _prior_rth_close(full, before=window_open)
+            open_px = _prior_rth_close(full_pts, before=window_open)
             if open_px is None:
-                open_px, _ = _px_asof(pairs, window_open)
-            if open_px is None:
+                open_px, _ = _px_asof(pairs, window_open) if pairs else (None, 0)
+            if open_px is None and pairs:
                 open_px = pairs[0][1]
+            if open_px is None:
+                continue
 
         series_out: list[SeriesPoint] = []
         last_px = open_px
@@ -434,7 +566,9 @@ def _align_closes_on_grid(
             live, hint = _px_asof(pairs, g, start_i=hint)
             if live is not None:
                 last_px = live
-            series_out.append((g.replace(microsecond=0).isoformat(), last_px))
+            series_out.append(
+                SeriesPoint(g.replace(microsecond=0).isoformat(), last_px)
+            )
         out[ticker] = series_out
     return out
 
@@ -562,7 +696,7 @@ def _series_from_close(close: Any, *, intraday: bool) -> list[SeriesPoint]:
             ts = _index_to_iso(idx, intraday=intraday)
         except Exception:  # noqa: BLE001
             continue
-        series.append((ts, px))
+        series.append(SeriesPoint(ts, px))
     return series
 
 
@@ -571,8 +705,10 @@ def _yfinance_history_batch(
     yahoo_to_our: dict[str, str],
     period: str,
     interval: str,
+    *,
+    prepost: bool = False,
 ) -> dict[str, list[SeriesPoint]]:
-    """Fetch closes; keys are our tickers; values (iso_ts, price)."""
+    """Fetch closes; keys are our tickers. ``prepost`` is production-only (tests never pass it)."""
     try:
         import yfinance as yf
     except ImportError as exc:
@@ -593,6 +729,7 @@ def _yfinance_history_batch(
             auto_adjust=True,
             threads=True,
             progress=False,
+            prepost=prepost,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("yfinance history download failed: %s", exc)
@@ -609,7 +746,12 @@ def _yfinance_history_batch(
             # latency/timeout source under soft-refresh thrash.
             if not series and data is None:
                 t = yf.Ticker(ysym)
-                hist = t.history(period=period, interval=interval, auto_adjust=True)
+                hist = t.history(
+                    period=period,
+                    interval=interval,
+                    auto_adjust=True,
+                    prepost=prepost,
+                )
                 if hist is not None and not hist.empty:
                     hclose = hist["Close"] if "Close" in hist.columns else None
                     series = _series_from_close(hclose, intraday=intraday)
@@ -617,8 +759,14 @@ def _yfinance_history_batch(
             logger.warning("history failed for %s: %s", ysym, exc)
             continue
         if series:
-            series.sort(key=lambda x: x[0])
+            series.sort(key=lambda x: x.ts)
             out[our] = series
+    if prepost:
+        logger.debug(
+            "equity 5m prepost=True symbols=%s bars=%s",
+            len(yahoo_symbols),
+            sum(len(s) for s in out.values()),
+        )
     return out
 
 
@@ -647,6 +795,7 @@ def aggregate_mv_series(
         return [], empty_meta
 
     price_maps: dict[str, dict[str, Decimal]] = {}
+    session_maps: dict[str, dict[str, SessionTag | None]] = {}
     first_bar: dict[str, str] = {}
     latest_px: dict[str, Decimal] = {}
     all_ts: set[str] = set()
@@ -654,11 +803,14 @@ def aggregate_mv_series(
         if t not in qty_by_ticker:
             continue
         m: dict[str, Decimal] = {}
-        for ts, px in series:
-            m[ts] = px
-            all_ts.add(ts)
+        sm: dict[str, SessionTag | None] = {}
+        for p in _coerce_series(series):
+            m[p.ts] = p.px
+            sm[p.ts] = p.session
+            all_ts.add(p.ts)
         if m:
             price_maps[t] = m
+            session_maps[t] = sm
             ordered_ts = sorted(m.keys(), key=_parse_ts)
             first_bar[t] = ordered_ts[0]
             latest_px[t] = m[ordered_ts[-1]]
@@ -697,9 +849,20 @@ def aggregate_mv_series(
             if qty <= 0:
                 continue
             total += qty * px
-        result.append((ts, _q2(total)))
+        at_ts = [
+            session_maps[t][ts]
+            for t, sm in session_maps.items()
+            if ts in sm
+        ]
+        if at_ts and all(s == "prior_close" for s in at_ts):
+            sess: SessionTag | None = "prior_close"
+        elif "T" in ts:
+            sess = classify_us_session(ts)
+        else:
+            sess = None
+        result.append(SeriesPoint(ts, _q2(total), sess))
 
-    series_start = result[0][0] if result else None
+    series_start = result[0].ts if result else None
     short: list[dict[str, str]] = []
     if series_start is not None:
         for t, fb in first_bar.items():
@@ -832,29 +995,30 @@ def densify_daily_closes(
     so multi-month sparse fixtures / long ranges are not exploded into every day.
     Skips intraday (ISO-T) series.
     """
+    series = _coerce_series(series)
     if len(series) < 2:
         return series
-    if any("T" in ts for ts, _ in series):
+    if any("T" in p.ts for p in series):
         return series
     # Sort by date
-    ordered = sorted(series, key=lambda p: p[0][:10])
+    ordered = sorted(series, key=lambda p: p.ts[:10])
     out: list[SeriesPoint] = [ordered[0]]
     for i in range(1, len(ordered)):
-        prev_ts, prev_px = out[-1]
-        cur_ts, cur_px = ordered[i]
+        prev = out[-1]
+        cur = ordered[i]
         try:
-            prev_d = date.fromisoformat(prev_ts[:10])
-            cur_d = date.fromisoformat(cur_ts[:10])
+            prev_d = date.fromisoformat(prev.ts[:10])
+            cur_d = date.fromisoformat(cur.ts[:10])
         except ValueError:
-            out.append((cur_ts[:10], cur_px))
+            out.append(SeriesPoint(cur.ts[:10], cur.px, cur.session))
             continue
         gap = (cur_d - prev_d).days
         if 1 < gap <= max_gap_days:
             d = prev_d + timedelta(days=1)
             while d < cur_d:
-                out.append((d.isoformat(), prev_px))
+                out.append(SeriesPoint(d.isoformat(), prev.px, prev.session))
                 d += timedelta(days=1)
-        out.append((cur_ts[:10], cur_px))
+        out.append(SeriesPoint(cur.ts[:10], cur.px, cur.session))
     return out
 
 
@@ -1109,12 +1273,13 @@ def _price_on_or_before(
     """Last price at or before chart timestamp (forward-fill friendly)."""
     if not series:
         return None
+    series = _coerce_series(series)
     as_of = _parse_ts(as_of_ts)
     best: Decimal | None = None
-    for ts, px in sorted(series, key=lambda p: _parse_ts(p[0])):
-        if _parse_ts(ts) <= as_of:
+    for p in sorted(series, key=lambda x: _parse_ts(x.ts)):
+        if _parse_ts(p.ts) <= as_of:
             try:
-                best = px if isinstance(px, Decimal) else Decimal(str(px))
+                best = p.px if isinstance(p.px, Decimal) else Decimal(str(p.px))
             except Exception:  # noqa: BLE001
                 continue
         else:
@@ -1123,8 +1288,8 @@ def _price_on_or_before(
         return best
     # Before first print: use first available (still gate qty separately)
     try:
-        ordered = sorted(series, key=lambda p: _parse_ts(p[0]))
-        px = ordered[0][1]
+        ordered = sorted(series, key=lambda x: _parse_ts(x.ts))
+        px = ordered[0].px
         return px if isinstance(px, Decimal) else Decimal(str(px))
     except Exception:  # noqa: BLE001
         return None
@@ -1171,8 +1336,8 @@ def window_mark_performance(
     if chart_first_ts is None or chart_last_ts is None:
         all_ts: list[str] = []
         for series in closes_by_ticker.values():
-            for ts, _ in series:
-                all_ts.append(ts)
+            for p in _coerce_series(series):
+                all_ts.append(p.ts)
         if not all_ts:
             return {
                 "performance_abs": Decimal("0.00"),
@@ -1329,21 +1494,25 @@ def aggregate_mv_series_time_aware(
         return [], empty_meta
 
     price_maps: dict[str, dict[str, Decimal]] = {}
+    session_maps: dict[str, dict[str, SessionTag | None]] = {}
     first_bar: dict[str, str] = {}
     first_px: dict[str, Decimal] = {}
     latest_px: dict[str, Decimal] = {}
     all_ts: set[str] = set()
     for t in universe:
-        series = closes_by_ticker.get(t) or []
+        series = _coerce_series(closes_by_ticker.get(t) or [])
         if not series:
             continue
         m: dict[str, Decimal] = {}
-        for ts, px in series:
-            m[ts] = px
-            all_ts.add(ts)
+        sm: dict[str, SessionTag | None] = {}
+        for p in series:
+            m[p.ts] = p.px
+            sm[p.ts] = p.session
+            all_ts.add(p.ts)
         if not m:
             continue
         price_maps[t] = m
+        session_maps[t] = sm
         ordered_ts = sorted(m.keys(), key=_parse_ts)
         first_bar[t] = ordered_ts[0]
         first_px[t] = m[ordered_ts[0]]
@@ -1410,9 +1579,20 @@ def aggregate_mv_series_time_aware(
 
         if covered / total_weight < threshold:
             continue
-        result.append((ts, _q2(total_mv)))
+        at_ts = [
+            session_maps[t][ts]
+            for t, sm in session_maps.items()
+            if ts in sm
+        ]
+        if at_ts and all(s == "prior_close" for s in at_ts):
+            sess: SessionTag | None = "prior_close"
+        elif "T" in ts:
+            sess = classify_us_session(ts)
+        else:
+            sess = None
+        result.append(SeriesPoint(ts, _q2(total_mv), sess))
 
-    series_start = result[0][0] if result else None
+    series_start = result[0].ts if result else None
     short: list[dict[str, str]] = []
     if series_start is not None:
         for t, fb in first_bar.items():
@@ -1473,7 +1653,7 @@ def _book_mv_window(
     )
     if not series:
         return None, None, Decimal("0")
-    first, last = series[0][1], series[-1][1]
+    first, last = series[0].px, series[-1].px
     return first, last, last - first
 
 
@@ -1530,18 +1710,8 @@ def portfolio_window_from_components(
             stock_closes, crypto_closes = _split_closes_by_class(aligned, ac_map)
             used_aligned_grid = True
         else:
-            stock_closes, _ = trim_closes_map(
-                {t: closes_raw[t] for t in stock_ts if t in closes_raw},
-                mode="rth_today_or_prior",
-                now=now,
-                zone=zone,
-            )
-            crypto_closes, _ = trim_closes_map(
-                {t: closes_raw[t] for t in crypto_ts if t in closes_raw},
-                mode="local_day_or_prior",
-                now=now,
-                zone=zone,
-            )
+            # Do not run extended rth_today_or_prior on mixed-book raw series.
+            stock_closes, crypto_closes = {}, {}
     else:
         stock_closes = {t: closes_raw[t] for t in stock_ts if t in closes_raw}
         crypto_closes = {t: closes_raw[t] for t in crypto_ts if t in closes_raw}
@@ -1560,8 +1730,8 @@ def portfolio_window_from_components(
     ) -> tuple[str | None, str | None]:
         ts_all: list[str] = []
         for series in closes.values():
-            for ts, _ in series:
-                ts_all.append(ts)
+            for p in _coerce_series(series):
+                ts_all.append(p.ts)
         if not ts_all:
             return None, None
         ts_all.sort(key=_parse_ts)
@@ -1600,7 +1770,7 @@ def portfolio_window_from_components(
                 best = series
         if not best:
             return Decimal("0"), Decimal("0")
-        pts = [{"date": ts, "value": str(px)} for ts, px in best]
+        pts = [{"date": p.ts, "value": str(p.px)} for p in _coerce_series(best)]
         fl = window_external_flows(
             events,
             pts,
@@ -1688,6 +1858,7 @@ def portfolio_window_from_components(
 
 
 def _day_change_from_series(series: list[SeriesPoint], *, places: int = 2) -> dict[str, Any]:
+    series = _coerce_series(series)
     if not series:
         return {
             "day_open": None,
@@ -1695,14 +1866,119 @@ def _day_change_from_series(series: list[SeriesPoint], *, places: int = 2) -> di
             "day_change_pct": None,
             "day_change_abs": None,
         }
-    first, last = series[0][1], series[-1][1]
+    first, last = series[0].px, series[-1].px
     abs_ch = last - first
     pct = float((abs_ch / first) * 100) if first != 0 else None
+    rth_open = next((p.px for p in series if p.session == "rth"), None)
+    tagged = any(p.session in ("pre", "rth", "ah", "prior_close") for p in series)
+    day_open_px = rth_open if tagged else first
     return {
-        "day_open": _str_dec(first, places),
+        "day_open": _str_dec(day_open_px, places) if day_open_px is not None else None,
         "day_last": _str_dec(last, places),
         "day_change_pct": round(pct, 2) if pct is not None else None,
         "day_change_abs": _str_dec(abs_ch, places),
+    }
+
+
+def _null_extended_fields() -> dict[str, Any]:
+    return {
+        "prior_close": None,
+        "change_since_close_abs": None,
+        "change_since_close_pct": None,
+        "change_rth_abs": None,
+        "change_rth_pct": None,
+        "pnl_rth_usd": None,
+        "rth_last": None,
+    }
+
+
+def extended_change_meta(
+    series: list[SeriesPoint],
+    *,
+    qty: Decimal | None = None,
+    places: int = 4,
+) -> dict[str, Any]:
+    """
+    Stock 1D vs-close primary + RTH pair.
+
+    Primary Δ: (1) last − prior RTH last (5m), (2) last − first plotted, (3) null.
+    Fallback (2) is vs 09:30 when the 5d tape has no prior RTH.
+    """
+    series = _coerce_series(series)
+    empty = {
+        "first_value": None,
+        "last_value": None,
+        "change_abs": None,
+        "change_pct": None,
+        "day_open": None,
+        "day_last": None,
+        "day_change_abs": None,
+        "day_change_pct": None,
+        "pnl_usd": None,
+        **_null_extended_fields(),
+    }
+    if not series:
+        return empty
+
+    first_px = series[0].px
+    last_any = series[-1].px
+    prior_close_px: Decimal | None = None
+    for p in series:
+        if p.session == "prior_close":
+            prior_close_px = p.px
+            break
+    rth_pts = [p for p in series if p.session == "rth"]
+    rth_open = rth_pts[0].px if rth_pts else None
+    last_rth = rth_pts[-1].px if rth_pts else None
+
+    change_abs: Decimal | None = None
+    denom: Decimal | None = None
+    if last_any is not None and prior_close_px is not None:
+        change_abs = last_any - prior_close_px
+        denom = prior_close_px
+    elif last_any is not None and first_px is not None:
+        change_abs = last_any - first_px
+        denom = first_px
+
+    change_pct = None
+    if change_abs is not None and denom is not None and denom != 0:
+        change_pct = float((change_abs / denom) * 100)
+
+    change_rth_abs = (
+        last_rth - rth_open if last_rth is not None and rth_open is not None else None
+    )
+    change_rth_pct = None
+    if change_rth_abs is not None and rth_open is not None and rth_open != 0:
+        change_rth_pct = float((change_rth_abs / rth_open) * 100)
+
+    pnl = qty * change_abs if qty is not None and change_abs is not None else None
+    pnl_rth = (
+        qty * change_rth_abs if qty is not None and change_rth_abs is not None else None
+    )
+    pct_r = round(change_pct, 2) if change_pct is not None else None
+    return {
+        "first_value": _str_dec(first_px, places),
+        "last_value": _str_dec(last_any, places),
+        "change_abs": _str_dec(change_abs, places) if change_abs is not None else None,
+        "change_pct": pct_r,
+        "change_since_close_abs": (
+            _str_dec(change_abs, places) if change_abs is not None else None
+        ),
+        "change_since_close_pct": pct_r,
+        "prior_close": (
+            _str_dec(prior_close_px, places) if prior_close_px is not None else None
+        ),
+        "day_open": _str_dec(rth_open, places) if rth_open is not None else None,
+        "rth_last": _str_dec(last_rth, places) if last_rth is not None else None,
+        "change_rth_abs": (
+            _str_dec(change_rth_abs, places) if change_rth_abs is not None else None
+        ),
+        "change_rth_pct": round(change_rth_pct, 2) if change_rth_pct is not None else None,
+        "pnl_usd": _str_dec(pnl, 2) if pnl is not None else None,
+        "pnl_rth_usd": _str_dec(pnl_rth, 2) if pnl_rth is not None else None,
+        "day_last": _str_dec(last_any, places),
+        "day_change_abs": _str_dec(change_abs, places) if change_abs is not None else None,
+        "day_change_pct": pct_r,
     }
 
 
@@ -1879,7 +2155,8 @@ class PriceHistoryService:
         yahoo_symbols = list(yahoo_map.keys())
         session_tag = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         cache_key = (
-            f"{period}|{interval}|{session_tag}|{'|'.join(sorted(yahoo_symbols))}"
+            f"{period}|{interval}|{session_tag}|extended_v1|"
+            f"{'|'.join(sorted(yahoo_symbols))}"
         )
         is_intraday = interval != "1d"
         ttl = self.intraday_cache_ttl if is_intraday else self.cache_ttl
@@ -1894,8 +2171,14 @@ class PriceHistoryService:
             if not group:
                 continue
             sub_map = {ys: yahoo_map[ys] for ys in group}
-            part = self._fetcher(group, sub_map, period, interval)
-            payload.update(part)
+            prepost = interval == "5m" and group is equity_syms
+            if self._fetcher is _yfinance_history_batch:
+                part = _yfinance_history_batch(
+                    group, sub_map, period, interval, prepost=prepost
+                )
+            else:
+                part = self._fetcher(group, sub_map, period, interval)
+            payload.update({k: _coerce_series(v) for k, v in part.items()})
 
         # Don't pin empty / near-empty intraday results for full TTL (open-flash)
         max_len = max((len(s) for s in payload.values()), default=0)
@@ -1968,9 +2251,9 @@ class PriceHistoryService:
         last = _q2(last_mv) if places == 2 else last_mv
         series: list[SeriesPoint] = []
         if any_open:
-            series.append((t_open.isoformat(), first))
+            series.append(SeriesPoint(t_open.isoformat(), first))
         if any_last:
-            series.append((t_last.isoformat(), last))
+            series.append(SeriesPoint(t_last.isoformat(), last))
         return _day_change_from_series(series, places=places)
 
     def _resolve_day_change(
@@ -2130,32 +2413,54 @@ class PriceHistoryService:
                 and series
             ):
                 series = list(series)
-                last_ts = series[-1][0]
-                series[-1] = (last_ts, book_px)
-            points = [
-                {"date": d_ts, "value": _str_dec(px, places)} for d_ts, px in series
-            ]
-            first = series[0][1] if series else None
-            last = series[-1][1] if series else None
-            ch = _change_meta(first, last, places=places)
-            day = self._resolve_day_change(
-                qty_map,
-                ac_map,
-                series_kind="price",
-                main_range=range_norm,
-                main_series=series,
-                places=places,
-                now=ts,
-                zone=zone_info,
-            )
+                series[-1] = replace(series[-1], px=book_px)
+            series = _coerce_series(series)
+            points = [_serialize_point(p, places) for p in series]
+            first = series[0].px if series else None
+            last = series[-1].px if series else None
+            stock_1d = is_intraday and ac != "crypto"
+            if stock_1d:
+                ch = extended_change_meta(series, qty=qty, places=4)
+                day = {
+                    "day_open": ch["day_open"],
+                    "day_last": ch["day_last"],
+                    "day_change_pct": ch["day_change_pct"],
+                    "day_change_abs": ch["day_change_abs"],
+                }
+            else:
+                ch = {
+                    **_change_meta(first, last, places=places),
+                    **_null_extended_fields(),
+                }
+                day = self._resolve_day_change(
+                    qty_map,
+                    ac_map,
+                    series_kind="price",
+                    main_range=range_norm,
+                    main_series=series,
+                    places=places,
+                    now=ts,
+                    zone=zone_info,
+                )
             ysym = _normalize_yahoo_symbol(t, ac_map.get(t))
             note = (
                 "Intraday (5m) USD path from Yahoo · desk mark is separate (Prices tab)."
                 if point_kind == "intraday"
                 else "Daily close (USD). Avg cost from open lots · buy/sell markers."
             )
-            if is_intraday and session_status == "prior_session":
-                note = "Prior regular session (today’s open not in Yahoo yet). " + note
+            if is_intraday and session_status == "overnight":
+                note = "Overnight · prior RTH last (5m). " + note
+            elif is_intraday and session_status == "pre_market":
+                n_pre = sum(1 for p in series if p.session == "pre")
+                note = (
+                    f"Pre-market · {n_pre} bar(s) since prior RTH last. " + note
+                    if n_pre
+                    else "Pre-market · no Yahoo prints yet. " + note
+                )
+            elif is_intraday and session_status == "after_hours":
+                note = "After-hours · Yahoo 5m path (not desk book). " + note
+            elif is_intraday and session_status == "prior_session":
+                note = "Prior session · market closed. " + note
             elif is_intraday and session_status == "regular" and len(series) <= 3:
                 note = f"Session open · {len(series)} bar(s). " + note
             if missing:
@@ -2348,16 +2653,20 @@ class PriceHistoryService:
             book_mv = self._book_mv_from_qty(qty_map, book_prices)
         if not is_intraday and mv_series and book_mv is not None:
             mv_series = list(mv_series)
-            last_ts = mv_series[-1][0]
-            mv_series[-1] = (last_ts, _q2(book_mv))
+            mv_series[-1] = replace(mv_series[-1], px=_q2(book_mv))
         if is_intraday and book_mv is not None:
             note = (
                 "Path from Yahoo 5m · desk book mark is the executive snapshot total "
                 "(shown separately; not forced onto the last bar). "
             ) + note
-        points = [{"date": d_ts, "value": _str_dec(v)} for d_ts, v in mv_series]
-        first = mv_series[0][1] if mv_series else None
-        last = mv_series[-1][1] if mv_series else None
+        mv_series = _coerce_series(mv_series)
+        # scope=all 1D stays untagged at book level (grid has no session).
+        if ac_filter is None and is_intraday:
+            points = [{"date": p.ts, "value": _str_dec(p.px, 2)} for p in mv_series]
+        else:
+            points = [_serialize_point(p, 2) for p in mv_series]
+        first = mv_series[0].px if mv_series else None
+        last = mv_series[-1].px if mv_series else None
         flows = window_external_flows(
             events,
             points,
@@ -2365,8 +2674,8 @@ class PriceHistoryService:
             asset_class_by_ticker=ac_map,
         )
         # Pure mark P&L on qty held at chart open (aligned to displayed series)
-        chart_first_ts = mv_series[0][0] if mv_series else None
-        chart_last_ts = mv_series[-1][0] if mv_series else None
+        chart_first_ts = mv_series[0].ts if mv_series else None
+        chart_last_ts = mv_series[-1].ts if mv_series else None
         mark = window_mark_performance(
             timeline,
             closes,
@@ -2435,8 +2744,14 @@ class PriceHistoryService:
             note += " Late listings: " + ", ".join(bits)
             if len(short) > 8:
                 note += "…"
-        if is_intraday and session_status == "prior_session":
-            note = "Prior regular session (today’s open not in Yahoo yet). " + note
+        if is_intraday and session_status == "overnight":
+            note = "Overnight · prior RTH last (5m). " + note
+        elif is_intraday and session_status == "pre_market":
+            note = "Pre-market · Yahoo 5m path (not desk book). " + note
+        elif is_intraday and session_status == "after_hours":
+            note = "After-hours · Yahoo 5m path (not desk book). " + note
+        elif is_intraday and session_status == "prior_session":
+            note = "Prior session · market closed. " + note
         elif is_intraday and session_status == "prior_local_day":
             note = "Prior local day (today’s midnight not in Yahoo yet). " + note
         elif is_intraday and session_status == "local_day":
@@ -2545,18 +2860,19 @@ class PriceHistoryService:
         items: list[dict[str, Any]] = []
         for t in tickers:
             ac = ac_map.get(t)
+            is_crypto = (ac or "").lower() == "crypto"
             series = closes.get(t) or []
             session_status = None
             if is_intraday and series:
                 mode: Literal["rth_today_or_prior", "local_day_or_prior"] = (
-                    "local_day_or_prior"
-                    if (ac or "").lower() == "crypto"
-                    else "rth_today_or_prior"
+                    "local_day_or_prior" if is_crypto else "rth_today_or_prior"
                 )
                 series, session_status = trim_intraday_series(
                     series, mode=mode, now=ts, zone=zone_info
                 )
-            places = 4 if (ac or "").lower() == "crypto" else 2
+            qty = qty_map.get(t, Decimal("0"))
+            stock_1d = is_intraday and not is_crypto
+            places = 4 if is_crypto or stock_1d else 2
             if not series:
                 items.append(
                     {
@@ -2570,12 +2886,36 @@ class PriceHistoryService:
                         "day_open": None,
                         "currency": "USD",
                         "session_status": session_status,
+                        **_null_extended_fields(),
                     }
                 )
                 continue
-            first, last = series[0][1], series[-1][1]
+            if stock_1d:
+                ext = extended_change_meta(series, qty=qty, places=4)
+                items.append(
+                    {
+                        "ticker": t,
+                        "asset_class": ac,
+                        "first_value": ext["first_value"],
+                        "last_value": ext["last_value"],
+                        "change_pct": ext["change_pct"],
+                        "change_abs": ext["change_abs"],
+                        "pnl_usd": ext["pnl_usd"],
+                        "day_open": ext["day_open"],
+                        "currency": "USD",
+                        "session_status": session_status,
+                        "prior_close": ext["prior_close"],
+                        "change_since_close_abs": ext["change_since_close_abs"],
+                        "change_since_close_pct": ext["change_since_close_pct"],
+                        "change_rth_abs": ext["change_rth_abs"],
+                        "change_rth_pct": ext["change_rth_pct"],
+                        "pnl_rth_usd": ext["pnl_rth_usd"],
+                        "rth_last": ext["rth_last"],
+                    }
+                )
+                continue
+            first, last = series[0].px, series[-1].px
             ch = _change_meta(first, last, places=places)
-            qty = qty_map.get(t, Decimal("0"))
             pnl = qty * (last - first)
             items.append(
                 {
@@ -2589,6 +2929,7 @@ class PriceHistoryService:
                     "day_open": ch["first_value"],
                     "currency": "USD",
                     "session_status": session_status,
+                    **_null_extended_fields(),
                 }
             )
 

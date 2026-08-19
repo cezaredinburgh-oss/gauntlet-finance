@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -131,6 +131,7 @@ class PriceRefreshResponse(BaseModel):
 class PriceHistoryPoint(BaseModel):
     date: str
     value: str
+    session: Literal["pre", "rth", "ah", "prior_close", "local"] | None = None
 
 
 class PriceHistoryResponse(BaseModel):
