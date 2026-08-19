@@ -20,6 +20,12 @@ export type ChartHeadlineInput = {
   markPnlPct: number | null;
   netCapitalAbs: number | null;
   reconThreshold?: number;
+  /** Ticker price 1D only — vs-close / vs-open labels. MV books ignore this. */
+  range?: string;
+  sessionStatus?: string | null;
+  /** Last RTH − 09:30; null before the bell. */
+  changeRthAbs?: number | null;
+  changeRthPct?: number | null;
 };
 
 export type ChartHeadlineSecondary = {
@@ -50,6 +56,14 @@ function hasMark(markPnlAbs: number | null): boolean {
   return markPnlAbs != null && Number.isFinite(markPnlAbs);
 }
 
+function isLocalDaySession(status: string | null | undefined): boolean {
+  return status === "local_day" || status === "last_24h" || status === "prior_local_day";
+}
+
+function finiteOrNull(n: number | null | undefined): number | null {
+  return n != null && Number.isFinite(n) ? n : null;
+}
+
 /**
  * Select primary + secondary change display for chart chrome.
  */
@@ -63,18 +77,39 @@ export function selectChartHeadline(input: ChartHeadlineInput): ChartHeadline {
     markPnlPct,
     netCapitalAbs,
     reconThreshold = RECON_THRESHOLD_USD,
+    range,
+    sessionStatus,
+    changeRthAbs,
+    changeRthPct,
   } = input;
 
   const isPrice = seriesKind === "price";
 
   if (isPrice) {
+    // Dual US-session numbers on ticker price 1D only. Crypto local-day and
+    // multi-day keep a single "Price change". Stock-class / scope=all never
+    // enter this branch (series_kind is market_value).
+    const useSessionLabels = range === "1d" && !isLocalDaySession(sessionStatus);
+    const rthAbs = finiteOrNull(changeRthAbs);
+    const rthPct = finiteOrNull(changeRthPct);
+    const showVsOpen = useSessionLabels && (rthAbs != null || rthPct != null);
     return {
       effectiveMode: "price",
       primaryAbs: changeAbs,
       primaryPct: changePct,
-      primaryLabel: "Price change",
-      primaryTitle: "Price change over this chart window",
-      secondary: null,
+      primaryLabel: useSessionLabels ? "vs close" : "Price change",
+      primaryTitle: useSessionLabels
+        ? "vs close — vs prior RTH last (5m), includes pre/post"
+        : "Price change over this chart window",
+      secondary: showVsOpen
+        ? {
+            otherAbs: rthAbs,
+            otherPct: rthPct,
+            otherLabel: "vs open",
+            otherTitle: "vs open — last RTH minus 9:30 ET (regular session only)",
+            netCapitalAbs: null,
+          }
+        : null,
       performanceUnavailable: false,
       hasDivergence: false,
     };

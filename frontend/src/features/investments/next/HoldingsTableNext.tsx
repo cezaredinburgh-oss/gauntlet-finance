@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Search } from "lucide-react";
 import { api, ApiError } from "../../../api/client";
 import type { TaxTranche, TickerDigest, WindowPerformanceItem } from "../../../api/types";
@@ -217,6 +217,18 @@ function signedUsdCell(value: number | null) {
       {value >= 0 ? "+" : ""}
       {formatUsd(value)}
     </span>
+  );
+}
+
+function vsOpenLine(value: ReactNode) {
+  return (
+    <div
+      className="text-[10px] text-ink-faint"
+      title="vs open — last RTH minus 9:30 ET (regular session only)"
+    >
+      {value}
+      <span> vs open</span>
+    </div>
   );
 }
 
@@ -698,7 +710,7 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    title="vs close — vs prior RTH last (5m), includes pre/post"
+                    title="vs close — vs prior RTH last (5m), includes pre/post. After the bell, vs open (RTH only) appears below. Sort stays vs close."
                   />
                   <SortTh
                     label="Day % vs close"
@@ -706,7 +718,7 @@ export function HoldingsTableNext({
                     activeCol={sortColumn}
                     dir={sortDir}
                     onSort={onSort}
-                    title="vs close — vs prior RTH last (5m), includes pre/post"
+                    title="vs close — vs prior RTH last (5m), includes pre/post. After the bell, vs open (RTH only) appears below. Sort stays vs close."
                   />
                   <SortTh
                     label="MV"
@@ -843,9 +855,16 @@ export function HoldingsTableNext({
                         </td>
                         <td className="px-2 py-2 text-center">
                           {signedUsdCell(dayPnlDisplay(t, perf))}
+                          {hasMoneyValue(perf?.pnl_rth_usd)
+                            ? vsOpenLine(signedUsdCell(d(perf?.pnl_rth_usd)))
+                            : null}
                         </td>
                         <td className="px-2 py-2 text-center">
                           {pctCell(perf?.change_pct ?? null)}
+                          {perf?.change_rth_pct != null &&
+                          Number.isFinite(perf.change_rth_pct)
+                            ? vsOpenLine(pctCell(perf.change_rth_pct))
+                            : null}
                         </td>
                         <HonestMvCell t={t} />
                       </>

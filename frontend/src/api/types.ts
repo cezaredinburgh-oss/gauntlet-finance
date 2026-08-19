@@ -582,6 +582,7 @@ export type WindowPerformanceItem = {
   asset_class?: string | null;
   first_value?: string | null;
   last_value?: string | null;
+  /** Since-close (stock 1D). Daily/strip sort this — not change_rth_pct. */
   change_pct?: number | null;
   change_abs?: string | null;
   pnl_usd?: string | null;
@@ -591,6 +592,7 @@ export type WindowPerformanceItem = {
   prior_close?: string | null;
   change_since_close_abs?: string | null;
   change_since_close_pct?: number | null;
+  /** Last RTH − 09:30; null before the bell. Daily/ticker-headline secondary only. */
   change_rth_abs?: string | null;
   change_rth_pct?: number | null;
   pnl_rth_usd?: string | null;
@@ -654,6 +656,7 @@ export type PriceHistory = {
     prior_close?: string | null;
     change_since_close_abs?: string | null;
     change_since_close_pct?: number | null;
+    /** Last RTH − 09:30; null before the bell. Ticker price 1D headline secondary. */
     change_rth_abs?: string | null;
     change_rth_pct?: number | null;
     rth_last?: string | null;

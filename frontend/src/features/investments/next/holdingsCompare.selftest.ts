@@ -3,6 +3,7 @@
  * Run: npx --yes tsx src/features/investments/next/holdingsCompare.selftest.ts  (from frontend/)
  */
 import type { TickerDigest, WindowPerformanceItem } from "../../../api/types";
+import { selectChartHeadline } from "../../../lib/chartChangeHeadline";
 import { compareHoldingsColumn } from "../holdingsSort";
 import {
   compareNextHoldingsColumn,
@@ -550,6 +551,129 @@ function memoryStorage(initial: Record<string, string> = {}): SortStorage & {
   assertEq(pctAsc[0]?.ticker, "AAA", "dayPct asc: smaller pct first");
   const pctAscTail = tickers(pctAsc).slice(2).sort().join(",");
   assertEq(pctAscTail, "MISS,NULL", "dayPct nulls last (asc)");
+}
+
+// --- Daily sort stays since-close primary, not RTH vs-open ---
+{
+  const closeLoserRthWinner = digest({ ticker: "RTHWIN" });
+  const closeWinnerRthLoser = digest({ ticker: "CLOSEWIN" });
+  const rows = [closeLoserRthWinner, closeWinnerRthLoser];
+  const join: Record<string, WindowPerformanceItem> = {
+    RTHWIN: {
+      ticker: "RTHWIN",
+      change_pct: 1,
+      pnl_usd: "1.00",
+      change_rth_pct: 50,
+      pnl_rth_usd: "99.00",
+    },
+    CLOSEWIN: {
+      ticker: "CLOSEWIN",
+      change_pct: 8,
+      pnl_usd: "20.00",
+      change_rth_pct: -3,
+      pnl_rth_usd: "0.10",
+    },
+  };
+  const pctDesc = sortBy(rows, "dayPct", "desc", "total", join);
+  assertEq(
+    tickers(pctDesc).join(","),
+    "CLOSEWIN,RTHWIN",
+    "dayPct sorts by change_pct, not change_rth_pct",
+  );
+  const pnlDesc = sortBy(rows, "dayPnl", "desc", "total", join);
+  assertEq(
+    tickers(pnlDesc).join(","),
+    "CLOSEWIN,RTHWIN",
+    "dayPnl sorts by pnl_usd, not pnl_rth_usd",
+  );
+}
+
+// --- Ticker 1D headline: vs close primary, vs open hidden before the bell ---
+{
+  const base = {
+    mode: "performance" as const,
+    changeAbs: 1.25,
+    changePct: 2.5,
+    markPnlAbs: 3,
+    markPnlPct: 4,
+    netCapitalAbs: 0.1,
+  };
+  const ticker1dOpen = selectChartHeadline({
+    ...base,
+    seriesKind: "price",
+    range: "1d",
+    sessionStatus: "regular",
+    changeRthAbs: 0.4,
+    changeRthPct: 0.8,
+  });
+  assertEq(ticker1dOpen.primaryLabel, "vs close", "ticker 1D primary is vs close");
+  assertEq(ticker1dOpen.secondary?.otherLabel, "vs open", "ticker 1D secondary is vs open");
+  assertEq(ticker1dOpen.secondary?.otherAbs, 0.4, "vs open abs from change_rth_abs");
+  assertEq(ticker1dOpen.secondary?.otherPct, 0.8, "vs open pct from change_rth_pct");
+
+  const ticker1dPre = selectChartHeadline({
+    ...base,
+    seriesKind: "price",
+    range: "1d",
+    sessionStatus: "pre_market",
+    changeRthAbs: null,
+    changeRthPct: null,
+  });
+  assertEq(ticker1dPre.primaryLabel, "vs close", "pre-bell ticker 1D still vs close");
+  assertEq(ticker1dPre.secondary, null, "vs open hidden before the bell");
+
+  const ticker7d = selectChartHeadline({
+    ...base,
+    seriesKind: "price",
+    range: "7d",
+    sessionStatus: "regular",
+    changeRthAbs: 0.4,
+    changeRthPct: 0.8,
+  });
+  assertEq(ticker7d.primaryLabel, "Price change", "multi-day ticker stays Price change");
+  assertEq(ticker7d.secondary, null, "multi-day ticker has no vs-open");
+
+  const crypto1d = selectChartHeadline({
+    ...base,
+    seriesKind: "price",
+    range: "1d",
+    sessionStatus: "local_day",
+    changeRthAbs: 9,
+    changeRthPct: 9,
+  });
+  assertEq(crypto1d.primaryLabel, "Price change", "crypto 1D stays Price change");
+  assertEq(crypto1d.secondary, null, "crypto 1D has no vs-open pair");
+
+  const stockClass = selectChartHeadline({
+    ...base,
+    seriesKind: "market_value",
+    range: "1d",
+    sessionStatus: "regular",
+    changeRthAbs: 9,
+    changeRthPct: 9,
+  });
+  assertEq(stockClass.primaryLabel, "Performance", "stock-class 1D stays Performance");
+  assertEq(
+    stockClass.secondary?.otherLabel,
+    "Market value Δ",
+    "stock-class secondary stays book recon, not vs open",
+  );
+
+  const portfolio = selectChartHeadline({
+    ...base,
+    seriesKind: "market_value",
+    range: "1d",
+    sessionStatus: "local_day",
+    changeRthAbs: 9,
+    changeRthPct: 9,
+  });
+  assertEq(portfolio.primaryLabel, "Performance", "scope=all 1D stays Performance");
+  assertEq(portfolio.effectiveMode, "performance", "scope=all effective mode unchanged");
+  assertEq(
+    portfolio.secondary?.otherLabel,
+    "Market value Δ",
+    "scope=all secondary stays book recon, not vs open",
+  );
 }
 
 {

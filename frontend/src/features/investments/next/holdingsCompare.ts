@@ -178,6 +178,7 @@ function dayPnlMetric(
   t: TickerDigest,
   perfByTicker: Readonly<Record<string, WindowPerformanceItem>>,
 ): number | null {
+  // Sort stays since-close primary. pnl_rth_usd is Daily display-only.
   const perf = perfItem(t, perfByTicker);
   if (!perf || !hasMoneyValue(perf.pnl_usd)) return null;
   return d(perf.pnl_usd);
@@ -187,6 +188,7 @@ function dayPctMetric(
   t: TickerDigest,
   perfByTicker: Readonly<Record<string, WindowPerformanceItem>>,
 ): number | null {
+  // Sort stays since-close primary. change_rth_pct is Daily display-only.
   const pct = perfItem(t, perfByTicker)?.change_pct;
   return pct == null || !Number.isFinite(pct) ? null : pct;
 }

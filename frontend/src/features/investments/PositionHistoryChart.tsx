@@ -428,6 +428,7 @@ export function PositionHistoryChart({
         return { digest: t, perf: p };
       })
       .sort((a, b) => {
+        // Strip stays since-close (change_pct). RTH vs-open is Daily/headline only.
         const ap = a.perf?.change_pct;
         const bp = b.perf?.change_pct;
         if (ap == null && bp == null) return a.digest.ticker.localeCompare(b.digest.ticker);
@@ -453,6 +454,9 @@ export function PositionHistoryChart({
   const netCapitalAbs =
     data?.meta.net_capital_abs != null ? d(data.meta.net_capital_abs) : null;
   const isPrice = data?.series_kind === "price";
+  const rthAbsRaw = data?.meta.change_rth_abs;
+  const changeRthAbs = hasMoneyValue(rthAbsRaw) ? d(rthAbsRaw) : null;
+  const changeRthPct = data?.meta.change_rth_pct ?? null;
   const headline = selectChartHeadline({
     seriesKind: data?.series_kind ?? (isPrice ? "price" : "market_value"),
     mode: changeMode,
@@ -461,6 +465,10 @@ export function PositionHistoryChart({
     markPnlAbs,
     markPnlPct,
     netCapitalAbs,
+    range,
+    sessionStatus: data?.meta.session_status ?? null,
+    changeRthAbs,
+    changeRthPct,
   });
   const primaryAbs = headline.primaryAbs;
   const primaryPct = headline.primaryPct;
@@ -709,8 +717,9 @@ export function PositionHistoryChart({
                 <div
                   className="mt-0.5 space-y-0.5 text-[11px] tabular-nums text-ink-faint"
                   title={
-                    headline.secondary.otherTitle +
-                    ". Cash/qty effect is market value Δ minus performance (buys/sells and residual)."
+                    headline.secondary.netCapitalAbs != null
+                      ? `${headline.secondary.otherTitle}. Cash/qty effect is market value Δ minus performance (buys/sells and residual).`
+                      : headline.secondary.otherTitle
                   }
                 >
                   <div>
@@ -722,7 +731,7 @@ export function PositionHistoryChart({
                       >
                         {headline.secondary.otherLabel}{" "}
                         {headline.secondary.otherAbs >= 0 ? "+" : ""}
-                        {formatUsd(headline.secondary.otherAbs)}
+                        {fmt(headline.secondary.otherAbs)}
                       </span>
                     )}
                     {headline.secondary.otherPct != null && (
