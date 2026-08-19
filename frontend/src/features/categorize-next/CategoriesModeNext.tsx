@@ -65,10 +65,12 @@ export function CategoriesModeNext({
   cats,
   isReadOnly,
   onChanged,
+  onOpenCategory,
 }: {
   cats: Category[];
   isReadOnly: boolean;
   onChanged: () => Promise<void>;
+  onOpenCategory: (cat: Category) => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [createDraft, setCreateDraft] = useState<Draft>(EMPTY_DRAFT);
@@ -251,7 +253,13 @@ export function CategoriesModeNext({
                     <>
                       <td className="min-w-0 break-words px-4 py-2">
                         <div className={parent ? "pl-4" : ""}>
-                          <div className="font-medium text-ink">{c.name}</div>
+                          <button
+                            type="button"
+                            className="min-w-0 max-w-full break-words text-left font-medium text-ink hover:underline"
+                            onClick={() => onOpenCategory(c)}
+                          >
+                            {c.name}
+                          </button>
                           {parent && (
                             <div className="text-[11px] text-ink-faint">under {parent.name}</div>
                           )}
@@ -270,13 +278,14 @@ export function CategoriesModeNext({
                         {!c.is_income && !c.is_transfer ? "—" : ""}
                       </td>
                       <td className="px-4 py-2 font-mono text-xs">{c.sort_order}</td>
-                      <td className="px-4 py-2 text-right">
+                      <td className="px-4 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex flex-wrap justify-end gap-1">
                           <button
                             type="button"
                             className="btn-secondary px-2 py-0.5 text-[11px]"
                             disabled={isReadOnly}
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setEditingId(c.id);
                               setEditDraft(draftFrom(c));
                               setDeleteId(null);
@@ -288,7 +297,8 @@ export function CategoriesModeNext({
                             type="button"
                             className="btn-ghost px-2 py-0.5 text-[11px] text-danger"
                             disabled={isReadOnly}
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setDeleteId(c.id);
                               setReassignTo("");
                               setCascadeChildren(false);

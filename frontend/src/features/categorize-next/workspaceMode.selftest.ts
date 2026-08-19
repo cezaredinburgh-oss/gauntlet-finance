@@ -6,11 +6,15 @@ import {
   applyParamPatch,
   applyWorkspaceMode,
   categorizeHref,
+  categoryDrillParamPatch,
+  categoryHasDescendants,
+  categorySubtreeIds,
   chooseAllowlistWrite,
   drillParamPatch,
   FOCUS_MAX_CHARS,
   hasListScope,
   parseFocusIds,
+  ruleDrillParamPatch,
   screenFromSearchParams,
   shouldRestoreNextStepsFromSimilar,
   undrillParamPatch,
@@ -411,5 +415,82 @@ assertEq(grokOverflow.type, "focus_key", "Grok+ overflow never uses vendor=");
 
 assertEq(parseFocusIds("a, b, ,c").join("|"), "a|b|c", "parseFocusIds trims");
 assertEq(parseFocusIds("").length, 0, "parseFocusIds empty");
+
+// --- PR3: rule / category drills ---
+
+const ruleDrill = ruleDrillParamPatch("rule-uuid");
+assertEq(ruleDrill.mode, "txs", "rule drill writes mode=txs");
+assertEq(ruleDrill.src, "rules", "rule drill writes src=rules");
+assertEq(ruleDrill.rule, "rule-uuid", "rule drill writes rule=");
+assertEq(ruleDrill.hide_transfers, "0", "rule drill writes hide_transfers=0 (internals in load())");
+assertEq(ruleDrill.focus, null, "rule drill clears focus");
+assertEq(ruleDrill.vendor, null, "rule drill clears vendor");
+
+const ruleUrl = applyParamPatch(new URLSearchParams("mode=rules"), ruleDrill);
+assertEq(ruleUrl.get("hide_transfers"), "0", "rule URL includes internals");
+assertEq(screenFromSearchParams(ruleUrl), "txs", "rule= overlays → txs");
+const ruleUndrill = applyParamPatch(ruleUrl, undrillParamPatch(ruleUrl));
+assertEq(ruleUndrill.get("hide_transfers"), null, "undrill src=rules drops hide_transfers");
+assertEq(ruleUndrill.get("rule"), null, "undrill src=rules drops rule");
+assertEq(ruleUndrill.get("mode"), "rules", "undrill src=rules restores Rules");
+
+const CAT_SELF_EDUCATION = "self-edu";
+const catsTree = [
+  { id: CAT_SELF_EDUCATION, parent_id: null },
+  { id: "food", parent_id: null },
+  { id: "groceries", parent_id: "food" },
+  { id: "restaurants", parent_id: "food" },
+  { id: "user-root", parent_id: "" },
+  { id: "nested", parent_id: "groceries" },
+];
+assertTrue(!categoryHasDescendants(catsTree, CAT_SELF_EDUCATION), "root Self-education has no children");
+assertTrue(!categoryHasDescendants(catsTree, "user-root"), "user No parent has no children");
+assertTrue(categoryHasDescendants(catsTree, "food"), "root-with-children is a folder");
+assertTrue(categoryHasDescendants(catsTree, "groceries"), "mid folder has descendants");
+assertEq(
+  [...categorySubtreeIds(catsTree, "food")].sort().join(","),
+  "food,groceries,nested,restaurants",
+  "folder subtree is self+descendants",
+);
+
+const folderDrill = categoryDrillParamPatch(catsTree, "food");
+assertEq(folderDrill.src, "categories", "folder drill src=categories");
+assertEq(folderDrill.category_id, null, "root-with-children does not write server category_id");
+assertEq(
+  (folderDrill.category_ids || "").split(",").sort().join(","),
+  "food,groceries,nested,restaurants",
+  "root-with-children writes category_ids",
+);
+const folderUrl = applyParamPatch(new URLSearchParams("mode=categories"), folderDrill);
+assertEq(folderUrl.get("category_id"), null, "folder URL has no category_id for load()");
+assertEq(folderUrl.get("category_ids")?.split(",")[0], "food", "folder URL category_ids starts with self");
+assertEq(screenFromSearchParams(folderUrl), "txs", "category folder drill → txs");
+
+const leafRoot = categoryDrillParamPatch(catsTree, CAT_SELF_EDUCATION);
+assertEq(leafRoot.category_id, CAT_SELF_EDUCATION, "root-with-no-children sets server category_id");
+assertEq(leafRoot.category_ids, null, "root-with-no-children does not write category_ids");
+const userLeaf = categoryDrillParamPatch(catsTree, "user-root");
+assertEq(userLeaf.category_id, "user-root", "user No parent is a leaf category_id");
+assertEq(userLeaf.category_ids, null, "user No parent does not write category_ids");
+
+const catUndrill = applyParamPatch(
+  applyParamPatch(new URLSearchParams("mode=categories"), folderDrill),
+  undrillParamPatch(applyParamPatch(new URLSearchParams("mode=categories"), folderDrill)),
+);
+assertEq(catUndrill.get("category_ids"), null, "undrill src=categories drops category_ids");
+assertEq(catUndrill.get("mode"), "categories", "undrill src=categories restores Categories");
+
+const hubUsd = applyParamPatch(
+  new URLSearchParams(),
+  drillParamPatch({
+    src: "hub_usd",
+    category_id: "uncategorized",
+    expenses_only: "1",
+  }),
+);
+const hubUsdUndrill = applyParamPatch(hubUsd, undrillParamPatch(hubUsd));
+assertEq(hubUsdUndrill.get("category_id"), null, "undrill src=hub_usd drops category_id");
+assertEq(hubUsdUndrill.get("expenses_only"), null, "undrill src=hub_usd drops expenses_only");
+assertEq(hubUsdUndrill.get("src"), null, "undrill src=hub_usd drops src");
 
 console.log("workspaceMode.selftest: ok");

@@ -215,6 +215,8 @@ function fieldValue(tx: Transaction, field: string): string {
       return tx.description || "";
     case "original_description":
       return tx.original_description || "";
+    case "counterparty_name":
+      return tx.counterparty_name || "";
     case "source_institution":
       return tx.source_institution || "";
     default:
@@ -222,7 +224,53 @@ function fieldValue(tx: Transaction, field: string): string {
   }
 }
 
-/** How many txs would match (simple client preview; ignores regex). */
+/** Preview matcher aligned to backend/engines/categorize.py::rule_matches. */
+export type RuleMatchSpec = {
+  match_field: string;
+  match_type: string;
+  match_value: string;
+  institution_scope?: string | null;
+  is_active?: boolean;
+  archived?: boolean;
+};
+
+export function txMatchesRule(tx: Transaction, rule: RuleMatchSpec): boolean {
+  if (rule.is_active === false || rule.archived) return false;
+  if (rule.institution_scope) {
+    if (
+      (tx.source_institution || "").toLowerCase() !==
+      rule.institution_scope.toLowerCase()
+    ) {
+      return false;
+    }
+  }
+
+  const hay = fieldValue(tx, rule.match_field);
+  const needle = rule.match_value;
+  const mt = rule.match_type;
+
+  if (mt === "exact") return hay.toLowerCase() === needle.toLowerCase();
+  if (mt === "exact_case") return hay === needle;
+  if (mt === "contains") return hay.toLowerCase().includes(needle.toLowerCase());
+  if (mt === "starts_with") return hay.toLowerCase().startsWith(needle.toLowerCase());
+  if (mt === "regex") {
+    try {
+      return new RegExp(needle, "i").test(hay);
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export function transactionsMatchingRule(
+  txs: Transaction[],
+  rule: RuleMatchSpec,
+): Transaction[] {
+  return txs.filter((t) => txMatchesRule(t, rule));
+}
+
+/** How many txs would match (same matcher as txMatchesRule). */
 export function countRuleMatches(
   txs: Transaction[],
   opts: {
@@ -234,32 +282,12 @@ export function countRuleMatches(
     onlyUncategorized?: boolean;
   },
 ): number {
-  const needle = opts.match_value.trim().toLowerCase();
-  if (!needle) return 0;
+  if (!opts.match_value.trim()) return 0;
   let n = 0;
   for (const t of txs) {
     if (opts.onlyWithoutOverride && t.category_override) continue;
     if (opts.onlyUncategorized && t.category_id) continue;
-    if (
-      opts.institution_scope &&
-      (t.source_institution || "").toLowerCase() !== opts.institution_scope.toLowerCase()
-    ) {
-      continue;
-    }
-    const hay = fieldValue(t, opts.match_field).toLowerCase();
-    if (!hay) continue;
-    let ok = false;
-    if (opts.match_type === "exact") ok = hay === needle;
-    else if (opts.match_type === "starts_with") ok = hay.startsWith(needle);
-    else if (opts.match_type === "contains") ok = hay.includes(needle);
-    else if (opts.match_type === "regex") {
-      try {
-        ok = new RegExp(opts.match_value, "i").test(fieldValue(t, opts.match_field));
-      } catch {
-        ok = false;
-      }
-    }
-    if (ok) n += 1;
+    if (txMatchesRule(t, opts)) n += 1;
   }
   return n;
 }

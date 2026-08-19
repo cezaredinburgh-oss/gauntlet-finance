@@ -3,7 +3,9 @@
  */
 
 import type { Transaction } from "../api/types";
-import { countRuleMatches, type RuleSuggestion } from "./ruleSuggest";
+import { txMatchesRule, type RuleSuggestion } from "./ruleSuggest";
+
+export { txMatchesRule };
 
 export function describeRuleMatch(opts: {
   match_field: string;
@@ -38,25 +40,6 @@ export function describeRuleMatch(opts: {
 
 export function describeRuleAction(categoryName: string): string {
   return `set category to ${categoryName}`;
-}
-
-/** True if tx would match the rule pattern (same logic as countRuleMatches). */
-export function txMatchesRule(
-  tx: Transaction,
-  opts: {
-    match_field: string;
-    match_type: string;
-    match_value: string;
-    institution_scope?: string | null;
-  },
-): boolean {
-  return (
-    countRuleMatches([tx], {
-      ...opts,
-      onlyWithoutOverride: false,
-      onlyUncategorized: false,
-    }) === 1
-  );
 }
 
 export type RuleExclusionAnalysis = {

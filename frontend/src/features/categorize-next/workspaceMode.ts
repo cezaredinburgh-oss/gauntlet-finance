@@ -175,6 +175,79 @@ export function drillParamPatch(input: DrillParamInput): Record<string, string |
   return out;
 }
 
+/** Active rule preview: include internals (hide_transfers=0 triggers existing load()). */
+export function ruleDrillParamPatch(ruleId: string): Record<string, string | null> {
+  return drillParamPatch({
+    src: "rules",
+    rule: ruleId,
+    hide_transfers: "0",
+  });
+}
+
+export type CategoryTreeNode = {
+  id: string;
+  parent_id?: string | null;
+};
+
+/** Parent = has descendants, not “empty parent_id”. */
+export function categoryHasDescendants(
+  cats: CategoryTreeNode[],
+  id: string,
+): boolean {
+  return cats.some((x) => x.parent_id === id);
+}
+
+/** Self + every category whose ancestor chain includes rootId. */
+export function categorySubtreeIds(
+  cats: CategoryTreeNode[],
+  rootId: string,
+): string[] {
+  const childrenByParent = new Map<string, string[]>();
+  for (const c of cats) {
+    if (!c.parent_id) continue;
+    const arr = childrenByParent.get(c.parent_id);
+    if (arr) arr.push(c.id);
+    else childrenByParent.set(c.parent_id, [c.id]);
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const stack = [rootId];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    const kids = childrenByParent.get(id);
+    if (kids) {
+      for (let i = kids.length - 1; i >= 0; i -= 1) stack.push(kids[i]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Leaf (no descendants, including root Self-education / “No parent”) → category_id
+ * so load() server-filters. Folder → category_ids (self+descendants); never send
+ * that UUID as server category_id.
+ */
+export function categoryDrillParamPatch(
+  cats: CategoryTreeNode[],
+  catId: string,
+): Record<string, string | null> {
+  if (categoryHasDescendants(cats, catId)) {
+    return drillParamPatch({
+      src: "categories",
+      category_id: null,
+      category_ids: categorySubtreeIds(cats, catId).join(","),
+    });
+  }
+  return drillParamPatch({
+    src: "categories",
+    category_id: catId,
+    category_ids: null,
+  });
+}
+
 export function undrillParamPatch(
   params: URLSearchParams,
 ): Record<string, string | null> {

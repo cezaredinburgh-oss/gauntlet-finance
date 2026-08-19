@@ -26,6 +26,7 @@ export function GrokPlusPanelNext({
   onApplyRule,
   onApplyAll,
   onOpen,
+  onOpenGroup,
   onExpandCategory,
   onCategoryCreated,
   coachNote,
@@ -47,6 +48,7 @@ export function GrokPlusPanelNext({
   onApplyRule: (bucket: VendorBucket, categoryId: string) => void;
   onApplyAll: (rows: VendorApplyRow[], makeRule: boolean) => void;
   onOpen: (bucket: VendorBucket) => void;
+  onOpenGroup: (ids: string[]) => void;
   onExpandCategory?: () => void;
   onCategoryCreated?: (cat: Category) => void;
   coachNote?: string | null;
@@ -243,6 +245,7 @@ export function GrokPlusPanelNext({
                       onApplyAll={() => onApplyAll(ready, false)}
                       onApplyAllRules={() => onApplyAll(ready, true)}
                       onOpen={onOpen}
+                      onOpenGroup={onOpenGroup}
                     />
                   );
                 })}
@@ -282,6 +285,7 @@ export function GrokPlusPanelNext({
                     onApplyAll={() => onApplyAll(rowsFor(unassigned), false)}
                     onApplyAllRules={() => onApplyAll(rowsFor(unassigned), true)}
                     onOpen={onOpen}
+                    onOpenGroup={onOpenGroup}
                   />
                 ) : null}
               </tbody>
@@ -317,6 +321,7 @@ function CategoryBlock({
   onApplyAll,
   onApplyAllRules,
   onOpen,
+  onOpenGroup,
 }: {
   categoryId: string;
   categoryName: string;
@@ -341,16 +346,16 @@ function CategoryBlock({
   onApplyAll: () => void;
   onApplyAllRules: () => void;
   onOpen: (bucket: VendorBucket) => void;
+  onOpenGroup: (ids: string[]) => void;
 }) {
+  const groupIds = vendors.flatMap((v) => v.ids);
   return (
     <>
       <tr
         className={cn(
-          "cursor-pointer hover:bg-white/[0.03]",
           open && "bg-brand/5",
           !ticked && "opacity-60",
         )}
-        onClick={onToggle}
       >
         <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
           <input
@@ -364,19 +369,33 @@ function CategoryBlock({
         </td>
         <td className="min-w-0 px-3 py-3 font-medium text-ink">
           <span className="inline-flex min-w-0 items-center gap-1.5">
-            <ChevronDown
-              className={cn(
-                "h-3.5 w-3.5 shrink-0 text-ink-muted transition",
-                open ? "rotate-0" : "-rotate-90",
-              )}
-            />
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 text-ink-muted hover:text-ink"
+              aria-expanded={open}
+              aria-label={open ? `Collapse ${categoryName}` : `Expand ${categoryName}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggle();
+              }}
+            >
+              <ChevronDown
+                className={cn(
+                  "h-3.5 w-3.5 transition",
+                  open ? "rotate-0" : "-rotate-90",
+                )}
+              />
+            </button>
             <select
               className="input max-w-[14rem] py-1.5 text-sm"
               value={categoryId}
               disabled={busy || isReadOnly}
               aria-label={`Category for ${categoryName}`}
               onClick={(e) => e.stopPropagation()}
-              onChange={(e) => onRemapGroup(e.target.value)}
+              onChange={(e) => {
+                e.stopPropagation();
+                onRemapGroup(e.target.value);
+              }}
             >
               <option value="">Unmatched</option>
               {catsSorted.map((cat) => (
@@ -390,8 +409,17 @@ function CategoryBlock({
         <td className="min-w-0 max-w-md truncate px-3 py-3 text-ink-muted" title={preview}>
           {preview}
         </td>
-        <td className="whitespace-nowrap px-3 py-3 text-right text-ink-muted">
-          {vendorCount} · ×{txCount}
+        <td className="whitespace-nowrap px-3 py-3 text-right">
+          <button
+            type="button"
+            className="text-ink-muted hover:text-ink hover:underline"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenGroup(groupIds);
+            }}
+          >
+            {vendorCount} · ×{txCount}
+          </button>
         </td>
         <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex flex-wrap justify-end gap-1.5">
@@ -399,7 +427,10 @@ function CategoryBlock({
               type="button"
               className="btn-primary text-xs"
               disabled={busy || isReadOnly || readyCount === 0}
-              onClick={onApplyAll}
+              onClick={(e) => {
+                e.stopPropagation();
+                onApplyAll();
+              }}
             >
               Apply all
             </button>
@@ -407,7 +438,10 @@ function CategoryBlock({
               type="button"
               className="btn-secondary text-xs"
               disabled={busy || isReadOnly || readyCount === 0}
-              onClick={onApplyAllRules}
+              onClick={(e) => {
+                e.stopPropagation();
+                onApplyAllRules();
+              }}
             >
               Apply all + rules
             </button>
@@ -444,7 +478,11 @@ function CategoryBlock({
                       className="input max-w-[12rem] py-1.5 text-sm"
                       value={pick}
                       disabled={busy || isReadOnly}
-                      onChange={(e) => onPick(b.key, e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        onPick(b.key, e.target.value);
+                      }}
                     >
                       <option value="">Category…</option>
                       {catsSorted.map((cat) => (
@@ -457,7 +495,10 @@ function CategoryBlock({
                       type="button"
                       className="btn-primary text-xs"
                       disabled={busy || isReadOnly || !pick}
-                      onClick={() => onApply(b, pick)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onApply(b, pick);
+                      }}
                     >
                       {applyingKey === b.key ? (
                         <Spinner className="h-3.5 w-3.5 border-t-slate-900" />
@@ -468,7 +509,10 @@ function CategoryBlock({
                       type="button"
                       className="btn-secondary text-xs"
                       disabled={busy || isReadOnly || !pick}
-                      onClick={() => onApplyRule(b, pick)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onApplyRule(b, pick);
+                      }}
                     >
                       Apply + rule
                     </button>

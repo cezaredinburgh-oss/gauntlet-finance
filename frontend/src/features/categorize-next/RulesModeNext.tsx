@@ -47,12 +47,14 @@ export function RulesModeNext({
   catMap,
   isReadOnly,
   onChanged,
+  onOpenRule,
 }: {
   rules: CategoryRule[];
   catsSorted: Category[];
   catMap: Map<string, Category>;
   isReadOnly: boolean;
   onChanged: () => Promise<void>;
+  onOpenRule: (rule: CategoryRule) => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [createDraft, setCreateDraft] = useState<RuleDraft>(EMPTY_CREATE);
@@ -246,10 +248,21 @@ export function RulesModeNext({
             <tbody className="divide-y divide-white/5">
               {sorted.map((r) => {
                 const isEditing = editingId === r.id && editDraft;
+                const drillable = r.is_active && !isEditing;
                 return (
-                  <tr key={r.id} className={!r.is_active ? "opacity-50" : undefined}>
+                  <tr
+                    key={r.id}
+                    className={
+                      !r.is_active
+                        ? "opacity-50"
+                        : drillable
+                          ? "cursor-pointer hover:bg-white/[0.03]"
+                          : undefined
+                    }
+                    onClick={drillable ? () => onOpenRule(r) : undefined}
+                  >
                     {isEditing && editDraft ? (
-                      <td colSpan={6} className="px-4 py-3">
+                      <td colSpan={6} className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                         <RuleForm
                           draft={editDraft}
                           onChange={setEditDraft}
@@ -295,13 +308,14 @@ export function RulesModeNext({
                           {r.is_active ? "Active" : "Off"}
                           {r.set_internal_transfer ? " · Internal xfer" : ""}
                         </td>
-                        <td className="px-4 py-2 text-right">
+                        <td className="px-4 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                           <div className="flex flex-wrap justify-end gap-1">
                             <button
                               type="button"
                               className="btn-secondary px-2 py-0.5 text-[11px]"
                               disabled={isReadOnly}
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 setEditingId(r.id);
                                 setEditDraft({
                                   priority: r.priority,
@@ -321,7 +335,10 @@ export function RulesModeNext({
                               type="button"
                               className="btn-ghost px-2 py-0.5 text-[11px] text-danger"
                               disabled={busyId === r.id || isReadOnly}
-                              onClick={() => void onRemove(r.id, r.match_value)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void onRemove(r.id, r.match_value);
+                              }}
                             >
                               Remove
                             </button>

@@ -44,9 +44,11 @@ import { CategorizeHub } from "../features/categorize-next/CategorizeHub";
 import { VendorInbox, type VendorApplyRow } from "../features/categorize-next/VendorInbox";
 import {
   applyParamPatch,
+  categoryDrillParamPatch,
   chooseAllowlistWrite,
   drillParamPatch,
   parseFocusIds,
+  ruleDrillParamPatch,
   screenFromSearchParams,
   shouldRestoreNextStepsFromSimilar,
   srcWindowLabel,
@@ -77,6 +79,7 @@ import {
   isResidualCategory,
   ledgerCategoryCounts,
   suggestRuleFromTransactions,
+  transactionsMatchingRule,
   vendorDisplayName,
   vendorKey,
 } from "../lib/ruleSuggest";
@@ -190,6 +193,7 @@ export function NewEtCategorizePageNext() {
   const vendorParam = searchParams.get("vendor") || "";
   const focusKeyParam = searchParams.get("focus_key") || "";
   const srcParam = searchParams.get("src") || "";
+  const ruleParam = searchParams.get("rule") || "";
   const hasAllowlist = Boolean(focusParam || vendorParam || focusKeyParam);
   const focusKeyMissing = Boolean(
     focusKeyParam && !focusParam && !(focusKeyParam in focusAllowlists),
@@ -230,7 +234,9 @@ export function NewEtCategorizePageNext() {
       if (!quiet) setError(null);
       try {
         const apiCategoryId =
-          categoryIdParam && isUuid(categoryIdParam) ? categoryIdParam : undefined;
+          categoryIdParam && isUuid(categoryIdParam) && !categoryIdsParam
+            ? categoryIdParam
+            : undefined;
         const [t, c, cov, r] = await Promise.all([
           api.transactions({
             limit: 3000,
@@ -318,7 +324,7 @@ export function NewEtCategorizePageNext() {
   useEffect(() => {
     if (simFlow.phase === "reviewing_similar") return;
     setSelected(new Set());
-  }, [dateFrom, dateTo, currency, hideTransfers, expensesOnly, incomeOnly, categoryIdParam, categoryIdsParam, q, simFlow.phase]);
+  }, [dateFrom, dateTo, currency, hideTransfers, expensesOnly, incomeOnly, categoryIdParam, categoryIdsParam, q, ruleParam, simFlow.phase]);
 
   useEffect(() => {
     if (!undoEntry) return;
@@ -394,6 +400,11 @@ export function NewEtCategorizePageNext() {
       return rows.filter((t) => allow.has(normTxId(t.id)));
     }
 
+    if (ruleParam) {
+      const rule = rules.find((r) => r.id === ruleParam);
+      rows = rule ? transactionsMatchingRule(rows, rule) : [];
+    }
+
     if (categoryIdParam === "uncategorized") {
       rows = rows.filter((t) => !txHasRealCategory(t, catMap));
     } else if (multiCategoryIds.length > 0) {
@@ -462,6 +473,8 @@ export function NewEtCategorizePageNext() {
     catMap,
     focusIds,
     hasAllowlist,
+    ruleParam,
+    rules,
   ]);
 
   const sortedRows = useMemo(() => {
@@ -1292,13 +1305,17 @@ export function NewEtCategorizePageNext() {
               <CategorizeWindowBar
                 title={windowTitle(screen)}
                 honesty={
-                  screen === "txs"
-                    ? `${filtered.length.toLocaleString()} shown · ${
-                        total > items.length
-                          ? `newest ${items.length.toLocaleString()} of ${total.toLocaleString()}`
-                          : `newest ${items.length.toLocaleString()}`
-                      }`
-                    : undefined
+                  screen === "txs" && ruleParam
+                    ? `Matching in newest ${items.length.toLocaleString()} of ${total.toLocaleString()}. Internals included for preview.`
+                    : screen === "txs" && srcParam === "categories" && multiCategoryIds.length > 0
+                      ? `This category and its children, matching in newest ${items.length.toLocaleString()} of ${total.toLocaleString()}.`
+                      : screen === "txs"
+                        ? `${filtered.length.toLocaleString()} shown · ${
+                            total > items.length
+                              ? `newest ${items.length.toLocaleString()} of ${total.toLocaleString()}`
+                              : `newest ${items.length.toLocaleString()}`
+                          }`
+                        : undefined
                 }
                 backToWindowLabel={
                   screen === "txs" ? srcWindowLabel(srcParam) : null
@@ -1392,6 +1409,7 @@ export function NewEtCategorizePageNext() {
                   }
                   onApplyAll={(rows, makeRule) => void applyVendorBatch(rows, makeRule)}
                   onOpen={(b) => void openAllowlist({ ids: b.ids, src: "grokplus" })}
+                  onOpenGroup={(ids) => void openAllowlist({ ids, src: "grokplus" })}
                   onCategoryCreated={(cat) => setCats((prev) => [...prev, cat])}
                   coachNote={
                     grokPlus.coachNote ||
@@ -1416,6 +1434,7 @@ export function NewEtCategorizePageNext() {
                   catMap={catMap}
                   isReadOnly={isReadOnly}
                   onChanged={() => load({ quiet: true })}
+                  onOpenRule={(rule) => pushParams(ruleDrillParamPatch(rule.id))}
                 />
               ) : null}
 
@@ -1424,6 +1443,7 @@ export function NewEtCategorizePageNext() {
                   cats={cats}
                   isReadOnly={isReadOnly}
                   onChanged={() => load({ quiet: true })}
+                  onOpenCategory={(cat) => pushParams(categoryDrillParamPatch(cats, cat.id))}
                 />
               ) : null}
 
@@ -1445,6 +1465,11 @@ export function NewEtCategorizePageNext() {
                   {focusKeyMissing ? (
                     <p className="min-w-0 max-w-full break-words text-sm text-ink-muted">
                       This filter is too large to bookmark; go back and click again.
+                    </p>
+                  ) : null}
+                  {ruleParam ? (
+                    <p className="min-w-0 max-w-full break-words text-sm text-ink-muted">
+                      Preview on this list — does not recategorize.
                     </p>
                   ) : null}
                   <ReviewFilterChips
@@ -1535,7 +1560,13 @@ export function NewEtCategorizePageNext() {
                     hasActiveScope={hasActiveScope}
                     onClearScope={clearScope}
                     focusCount={
-                      hasAllowlist ? focusIds?.length || 1 : 0
+                      hasAllowlist
+                        ? focusIds?.length || 1
+                        : ruleParam ||
+                            (srcParam === "categories" &&
+                              (Boolean(categoryIdParam) || multiCategoryIds.length > 0))
+                          ? 1
+                          : 0
                     }
                     onClearFocus={onUndrill}
                     onSelectUncategorized={selectUncategorizedInView}
