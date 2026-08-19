@@ -191,7 +191,7 @@ def test_alert_clears_on_category_override_even_in_other():
 
 def test_override_to_internal_sets_flag():
     """API-level: assigning CAT_INTERNAL forces is_internal_transfer."""
-    from backend.api.routes.categories import _category_implies_internal_transfer
+    from backend.services.categorization import _category_implies_internal_transfer
 
     internal = _cat(
         "Internal transfer",

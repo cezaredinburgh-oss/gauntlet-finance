@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
@@ -60,6 +61,8 @@ from backend.schema.models import (
 from backend.services.fx_amounts import build_fx_service, tx_signed_usd
 from backend.services.response_cache import cache_invalidate
 from backend.sheets.repository import SheetsRepository
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_default_categories(repo: SheetsRepository) -> dict[str, Any]:
@@ -294,6 +297,20 @@ def apply_match_to_all_transactions(
     }
 
 
+def _category_implies_internal_transfer(cat: Category) -> bool:
+    """
+    Assigning this category should also set is_internal_transfer=True.
+
+    Only true Internal transfer (not External transfer / Broker funding).
+    """
+    if cat.id == CAT_INTERNAL:
+        return True
+    name = (cat.name or "").strip().lower()
+    if cat.is_transfer and "internal" in name and "external" not in name:
+        return True
+    return False
+
+
 def _is_blank_or_other_category(
     tx: Transaction,
     cats: dict[UUID, Category],
@@ -310,6 +327,108 @@ def _is_blank_or_other_category(
     if cat.life_domain is not None and cat.life_domain.value == "Other":
         return True
     return False
+
+
+def apply_one_rule_fill_residuals(
+    repo: SheetsRepository,
+    rule: CategoryRule,
+) -> dict[str, Any]:
+    """Fill leftover residuals that match this one rule. Full Transactions tab.
+
+    Skips category_override. Does not set category_override.
+    Sets is_internal_transfer when the rule or target category implies Internal.
+    One Transactions list_rows + at most one Transactions upsert for this fill.
+    cache_invalidate if dirty.
+    ValueError on empty/whitespace match_value or missing/archived target category.
+    """
+    needle = (rule.match_value or "").strip()
+    if not needle:
+        raise ValueError("match_value is required")
+
+    cats = {
+        c.id: c for c in repo.list_rows("Categories") if isinstance(c, Category)
+    }
+    target = cats.get(rule.category_id)
+    if target is None or target.archived:
+        raise ValueError("Category not found")
+
+    empty = {
+        "scanned": 0,
+        "matched": 0,
+        "updated": 0,
+        "skipped_override": 0,
+        "skipped_already": 0,
+        "rule_id": str(rule.id),
+        "category_id": str(rule.category_id),
+    }
+    if not rule.is_active or rule.archived:
+        return empty
+
+    probe = (
+        rule
+        if needle == (rule.match_value or "")
+        else rule.model_copy(update={"match_value": needle})
+    )
+    needs_internal = bool(rule.set_internal_transfer) or _category_implies_internal_transfer(
+        target
+    )
+
+    now = utc_now()
+    scanned = 0
+    matched = 0
+    updated_n = 0
+    skipped_override = 0
+    skipped_already = 0
+    dirty: list[Transaction] = []
+
+    for tx in repo.list_rows("Transactions"):
+        if not isinstance(tx, Transaction) or tx.archived:
+            continue
+        scanned += 1
+        if not rule_matches(tx, probe):
+            continue
+        matched += 1
+        if tx.category_override:
+            skipped_override += 1
+            continue
+        if not _is_blank_or_other_category(tx, cats):
+            skipped_already += 1
+            continue
+        if tx.category_id == rule.category_id and (
+            not needs_internal or tx.is_internal_transfer
+        ):
+            skipped_already += 1
+            continue
+
+        updates: dict[str, Any] = {
+            "category_id": rule.category_id,
+            "updated_at": now,
+        }
+        if needs_internal:
+            updates["is_internal_transfer"] = True
+        dirty.append(tx.model_copy(update=updates))
+        updated_n += 1
+
+    if dirty:
+        repo.upsert_rows("Transactions", dirty)
+        cache_invalidate()
+
+    logger.info(
+        "apply_one_rule_fill_residuals rule_id=%s match_field=%s updated=%s skipped_override=%s",
+        rule.id,
+        getattr(rule.match_field, "value", rule.match_field),
+        updated_n,
+        skipped_override,
+    )
+    return {
+        "scanned": scanned,
+        "matched": matched,
+        "updated": updated_n,
+        "skipped_override": skipped_override,
+        "skipped_already": skipped_already,
+        "rule_id": str(rule.id),
+        "category_id": str(rule.category_id),
+    }
 
 
 def ledger_tx_counts(

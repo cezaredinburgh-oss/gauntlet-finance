@@ -18,9 +18,9 @@ from backend.api.schemas import (
     RestoreAssignmentsResponse,
 )
 from backend.common.timeutil import utc_now
-from backend.schema.default_categories import CAT_INTERNAL
 from backend.schema.models import Category, Transaction
 from backend.services.categorization import (
+    _category_implies_internal_transfer,
     _is_blank_or_other_category,
     apply_match_to_all_transactions,
     apply_merchant_queue_item,
@@ -41,20 +41,6 @@ from backend.services.categorization import (
 from backend.services.response_cache import cache_invalidate
 
 router = APIRouter(tags=["categories"])
-
-
-def _category_implies_internal_transfer(cat: Category) -> bool:
-    """
-    Assigning this category should also set is_internal_transfer=True.
-
-    Only true Internal transfer (not External transfer / Broker funding).
-    """
-    if cat.id == CAT_INTERNAL:
-        return True
-    name = (cat.name or "").strip().lower()
-    if cat.is_transfer and "internal" in name and "external" not in name:
-        return True
-    return False
 
 
 class RuleBody(BaseModel):
