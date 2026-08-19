@@ -40,11 +40,13 @@ import {
   type SortDir,
   type TxSortKey,
 } from "../features/categorize-next/txView";
+import { CategorizeHub } from "../features/categorize-next/CategorizeHub";
 import { VendorInbox, type VendorApplyRow } from "../features/categorize-next/VendorInbox";
 import {
   isGrokPlusOverlay,
   MODES,
   modeFromSearchParams,
+  screenFromSearchParams,
   workspaceModeParamPatch,
   type WorkspaceMode,
 } from "../features/categorize-next/workspaceMode";
@@ -161,9 +163,8 @@ export function NewEtCategorizePageNext() {
   const filterFlag = searchParams.get("filter") || "";
   const unconvertedOnly = searchParams.get("unconverted") === "1";
   const grokPlusOpen = isGrokPlusOverlay(searchParams);
-  const mode: WorkspaceMode = grokPlusOpen
-    ? "review"
-    : modeFromSearchParams(searchParams);
+  const screen = screenFromSearchParams(searchParams);
+  const mode: WorkspaceMode = modeFromSearchParams(searchParams);
 
   useEffect(() => {
     setQ(qFromUrl);
@@ -1128,6 +1129,16 @@ export function NewEtCategorizePageNext() {
     ? `Est. leftover $ ${ladder.map((r) => `${r.pct}% ~${formatUsdEstimate(r.estUsd)}`).join(" · ")}`
     : null;
 
+  const residualTxCount = vendorBuckets.reduce((n, b) => n + b.count, 0);
+  const grokPlusSupporting =
+    grokPlus.phase === "running"
+      ? "Working — matching leftovers"
+      : (grokPlus.phase === "paused" || grokPlus.phase === "caught_up") &&
+          grokPlus.buckets.length
+        ? "Ready for review"
+        : "Suggest only";
+  const ledgerTxTotal = coverage?.tx_total ?? ledgerCoverage.total;
+
   return (
     <LabNextChrome config={CATEGORIZE_DESK} label="Categorize desk">
       {loading && items.length === 0 ? (
@@ -1144,6 +1155,36 @@ export function NewEtCategorizePageNext() {
         />
       ) : (
         <div className="min-w-0 max-w-full space-y-4">
+          {screen === "hub" ? (
+            <CategorizeHub
+              leftoverCount={ledgerCoverage.uncategorized}
+              categorizedCount={ledgerCoverage.categorized}
+              ledgerTxTotal={ledgerTxTotal}
+              itemsLength={items.length}
+              total={total}
+              leftoverVendorCount={vendorBuckets.length}
+              residualTxCount={residualTxCount}
+              rulesCount={rules.length}
+              categoriesCount={cats.length}
+              coveragePct={coverage != null ? coverage.coverage_pct : null}
+              coverageStatus={coverage?.status}
+              progressNote={coverage?.progress_note}
+              ladderText={ladderText}
+              grokPlusSupporting={grokPlusSupporting}
+              showSetupBanner={setupBanner}
+              onSkipSetup={() => {
+                markWizardDone();
+                setSetupBanner(false);
+              }}
+              onAskGrokPlus={() => {
+                if (grokPlus.phase !== "running") grokPlus.start(catsSorted);
+              }}
+              isReadOnly={isReadOnly}
+              wipeBusy={wipeBusy}
+              onWipe={onWipe}
+            />
+          ) : (
+            <>
           <div
             className="inline-flex flex-wrap rounded-xl border border-white/10 bg-white/[0.03] p-1"
             role="tablist"
@@ -1169,36 +1210,6 @@ export function NewEtCategorizePageNext() {
               </button>
             ))}
           </div>
-
-          {setupBanner && mode === "review" ? (
-            <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-ink-muted">
-              <span>Finish setup</span>
-              <button
-                type="button"
-                className="font-medium text-brand hover:underline"
-                onClick={() => setWorkspaceMode("categories")}
-              >
-                Categories
-              </button>
-              <button
-                type="button"
-                className="font-medium text-brand hover:underline"
-                onClick={() => setWorkspaceMode("rules")}
-              >
-                Rules
-              </button>
-              <button
-                type="button"
-                className="btn-ghost text-xs"
-                onClick={() => {
-                  markWizardDone();
-                  setSetupBanner(false);
-                }}
-              >
-                Skip
-              </button>
-            </div>
-          ) : null}
 
           {mode === "review" ? (
             <>
@@ -1470,6 +1481,8 @@ export function NewEtCategorizePageNext() {
               onChanged={() => load({ quiet: true })}
             />
           ) : null}
+            </>
+          )}
 
           {undoVisible && undoEntry ? (
             <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-white/15 bg-slate-950/95 px-4 py-3 shadow-2xl backdrop-blur-md">
