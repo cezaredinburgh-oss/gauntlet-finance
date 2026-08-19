@@ -708,4 +708,425 @@ def test_post_rule_apply_description_with_confirm_fills(http_client: TestClient)
     assert _tx_by_id(repo, leftover.id).category_id == CAT_GROCERIES
     assert _tx_by_id(repo, leftover.id).category_override is False
     assert _tx_by_id(repo, locked.id).category_id == CAT_FUEL_CAR
-    assert _tx_by_id(repo, locked.id).category_override is True
+    assert _tx_by_id(repo, locked.id).category_override is True
+
+from backend.scripts.apply_merchant_rules_fill_residuals import (
+    iter_merchant_rules,
+    plan_merchant_residual_fills,
+)
+from backend.services.categorization import (
+    apply_one_rule_fill_residuals,
+    create_rule,
+)
+from backend.sheets.repository import InMemorySheetsRepository
+from backend.tests.helpers import rule, tx
+
+
+class _TrackingRepo(InMemorySheetsRepository):
+    """Records tab list/upsert so tests can prove no Transactions write."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.listed: list[str] = []
+        self.upserted: list[str] = []
+
+    def list_rows(self, tab: str) -> list:
+        self.listed.append(tab)
+        return super().list_rows(tab)
+
+    def upsert_rows(self, tab: str, rows: list) -> None:
+        self.upserted.append(tab)
+        super().upsert_rows(tab, rows)
+
+
+def _repo(*rows: Transaction) -> _TrackingRepo:
+    repo = _TrackingRepo()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    if rows:
+        repo.upsert_rows("Transactions", list(rows))
+    repo.listed.clear()
+    repo.upserted.clear()
+    return repo
+
+
+def _fuel_rule() -> CategoryRule:
+    return rule(
+        priority=10,
+        category_id=CAT_FUEL_CAR,
+        match_field=MatchField.MERCHANT,
+        match_value="EuroOil",
+    )
+
+
+def _tx_by_id(repo: InMemorySheetsRepository, tx_id: UUID) -> Transaction:
+    row = repo.get_by_id("Transactions", tx_id)
+    assert isinstance(row, Transaction)
+    return row
+
+
+def test_outside_bucket_fill():
+    already = tx(merchant="EuroOil Praha", amount=Decimal("-80"), category_id=CAT_FUEL_CAR)
+    outside = tx(merchant="EuroOil Brno", amount=Decimal("-40"))
+    lidl = tx(merchant="Lidl", amount=Decimal("-25"))
+    applied = _fuel_rule()
+    repo = _repo(already, outside, lidl)
+
+    stats = apply_one_rule_fill_residuals(repo, applied)
+
+    assert stats["updated"] == 1
+    assert stats["skipped_already"] == 1
+    assert stats["matched"] == 2
+    assert stats["rule_id"] == str(applied.id)
+    assert stats["category_id"] == str(CAT_FUEL_CAR)
+    assert _tx_by_id(repo, outside.id).category_id == CAT_FUEL_CAR
+    assert _tx_by_id(repo, lidl.id).category_id is None
+    assert _tx_by_id(repo, already.id).category_id == CAT_FUEL_CAR
+    assert repo.listed.count("Transactions") == 1
+    assert repo.upserted.count("Transactions") == 1
+
+
+def test_residual_other_not_just_null():
+    lidl = tx(merchant="Lidl Vinohrady", amount=Decimal("-30"), category_id=CAT_OTHER)
+    repo = _repo(lidl)
+    groceries = rule(
+        priority=10,
+        category_id=CAT_GROCERIES,
+        match_field=MatchField.MERCHANT,
+        match_value="Lidl",
+    )
+
+    stats = apply_one_rule_fill_residuals(repo, groceries)
+
+    assert stats["updated"] == 1
+    filled = _tx_by_id(repo, lidl.id)
+    assert filled.category_id == CAT_GROCERIES
+    assert filled.category_override is False
+
+
+def test_override_skipped():
+    locked = tx(
+        merchant="EuroOil",
+        amount=Decimal("-55"),
+        category_id=CAT_GROCERIES,
+        category_override=True,
+    )
+    repo = _repo(locked)
+
+    stats = apply_one_rule_fill_residuals(repo, _fuel_rule())
+
+    assert stats["updated"] == 0
+    assert stats["skipped_override"] == 1
+    after = _tx_by_id(repo, locked.id)
+    assert after.category_id == CAT_GROCERIES
+    assert after.category_override is True
+    assert "Transactions" not in repo.upserted
+
+
+def test_non_matching_vendor_untouched():
+    tmobile = tx(merchant="T-Mobile", amount=Decimal("-19.90"))
+    repo = _repo(tmobile)
+
+    stats = apply_one_rule_fill_residuals(repo, _fuel_rule())
+
+    assert stats["updated"] == 0
+    assert stats["matched"] == 0
+    assert _tx_by_id(repo, tmobile.id).category_id is None
+    assert "Transactions" not in repo.upserted
+
+
+def test_no_override_lock():
+    blank = tx(merchant="EuroOil", amount=Decimal("-12.50"))
+    repo = _repo(blank)
+
+    apply_one_rule_fill_residuals(repo, _fuel_rule())
+
+    filled = _tx_by_id(repo, blank.id)
+    assert filled.category_id == CAT_FUEL_CAR
+    assert filled.category_override is False
+
+
+def test_internal_flag_from_rule_and_category():
+    via_flag = tx(merchant="To CZK pot", amount=Decimal("-1000"), description="To CZK")
+    via_cat = tx(merchant="Internal hop", amount=Decimal("-250.75"), description="wallet")
+    repo = _repo(via_flag, via_cat)
+
+    flag_rule = rule(
+        priority=5,
+        category_id=CAT_GROCERIES,
+        match_field=MatchField.MERCHANT,
+        match_value="To CZK",
+        set_internal_transfer=True,
+    )
+    cat_rule = rule(
+        priority=5,
+        category_id=CAT_INTERNAL,
+        match_field=MatchField.MERCHANT,
+        match_value="Internal hop",
+    )
+
+    flag_stats = apply_one_rule_fill_residuals(repo, flag_rule)
+    cat_stats = apply_one_rule_fill_residuals(repo, cat_rule)
+
+    assert flag_stats["updated"] == 1
+    assert cat_stats["updated"] == 1
+    flagged = _tx_by_id(repo, via_flag.id)
+    assert flagged.category_id == CAT_GROCERIES
+    assert flagged.is_internal_transfer is True
+    assert flagged.amount == Decimal("-1000")
+    categorized = _tx_by_id(repo, via_cat.id)
+    assert categorized.category_id == CAT_INTERNAL
+    assert categorized.is_internal_transfer is True
+    assert categorized.amount == Decimal("-250.75")
+    assert isinstance(categorized.amount, Decimal)
+
+
+def test_inactive_rule_is_noop():
+    blank = tx(merchant="EuroOil", amount=Decimal("-10"))
+    repo = _repo(blank)
+    inactive = _fuel_rule().model_copy(update={"is_active": False})
+
+    stats = apply_one_rule_fill_residuals(repo, inactive)
+
+    assert stats["updated"] == 0
+    assert stats["scanned"] == 0
+    assert _tx_by_id(repo, blank.id).category_id is None
+    assert "Transactions" not in repo.listed
+    assert "Transactions" not in repo.upserted
+
+
+def test_archived_rule_is_noop():
+    blank = tx(merchant="EuroOil", amount=Decimal("-10"))
+    repo = _repo(blank)
+    archived = _fuel_rule().model_copy(update={"archived": True})
+
+    stats = apply_one_rule_fill_residuals(repo, archived)
+
+    assert stats["updated"] == 0
+    assert _tx_by_id(repo, blank.id).category_id is None
+    assert "Transactions" not in repo.upserted
+
+
+def test_create_rule_does_not_scan_transactions():
+    blank = tx(merchant="EuroOil", amount=Decimal("-10"))
+    repo = _repo(blank)
+
+    created = create_rule(
+        repo,
+        {
+            "priority": 10,
+            "match_field": "merchant",
+            "match_type": "contains",
+            "match_value": "EuroOil",
+            "category_id": CAT_FUEL_CAR,
+        },
+    )
+
+    assert created.match_value == "EuroOil"
+    assert "Transactions" not in repo.listed
+    assert repo.upserted == ["CategoryRules"]
+    assert _tx_by_id(repo, blank.id).category_id is None
+
+
+@pytest.mark.parametrize("needle", ["", "   ", "\t"])
+def test_empty_needle_does_not_write_txs(needle: str):
+    blank = tx(merchant="EuroOil", amount=Decimal("-10"))
+    repo = _repo(blank)
+    bad = _fuel_rule().model_copy(update={"match_value": needle})
+
+    with pytest.raises(ValueError, match="match_value"):
+        apply_one_rule_fill_residuals(repo, bad)
+
+    assert _tx_by_id(repo, blank.id).category_id is None
+    assert "Transactions" not in repo.upserted
+
+
+def test_missing_category_does_not_write_txs():
+    blank = tx(merchant="EuroOil", amount=Decimal("-10"))
+    repo = _repo(blank)
+    missing = _fuel_rule().model_copy(update={"category_id": uuid4()})
+
+    with pytest.raises(ValueError, match="Category not found"):
+        apply_one_rule_fill_residuals(repo, missing)
+
+    assert _tx_by_id(repo, blank.id).category_id is None
+    assert "Transactions" not in repo.upserted
+
+
+def test_archived_category_does_not_write_txs():
+    blank = tx(merchant="EuroOil", amount=Decimal("-10"))
+    repo = _repo(blank)
+    fuel = repo.get_by_id("Categories", CAT_FUEL_CAR)
+    assert isinstance(fuel, Category)
+    repo.upsert_rows("Categories", [fuel.model_copy(update={"archived": True})])
+    repo.listed.clear()
+    repo.upserted.clear()
+
+    with pytest.raises(ValueError, match="Category not found"):
+        apply_one_rule_fill_residuals(repo, _fuel_rule())
+
+    assert _tx_by_id(repo, blank.id).category_id is None
+    assert "Transactions" not in repo.upserted
+
+
+def test_iter_merchant_rules_includes_merchant_excludes_description_and_short():
+    euro = rule(
+        priority=10,
+        category_id=CAT_FUEL_CAR,
+        match_field=MatchField.MERCHANT,
+        match_value="EuroOil",
+    )
+    payment = rule(
+        priority=0,
+        category_id=CAT_GROCERIES,
+        match_field=MatchField.DESCRIPTION,
+        match_value="Single payment",
+    )
+    short = rule(
+        priority=1,
+        category_id=CAT_FUEL_CAR,
+        match_field=MatchField.MERCHANT,
+        match_value="O2",
+    )
+    ws_short = rule(
+        priority=1,
+        category_id=CAT_FUEL_CAR,
+        match_field=MatchField.MERCHANT,
+        match_value="  ab ",
+    )
+    counterparty = rule(
+        priority=2,
+        category_id=CAT_GROCERIES,
+        match_field=MatchField.COUNTERPARTY_NAME,
+        match_value="EuroOil",
+    )
+    inactive = rule(
+        priority=3,
+        category_id=CAT_FUEL_CAR,
+        match_field=MatchField.MERCHANT,
+        match_value="Shell",
+    ).model_copy(update={"is_active": False})
+    archived = rule(
+        priority=3,
+        category_id=CAT_FUEL_CAR,
+        match_field=MatchField.MERCHANT,
+        match_value="Benzina",
+    ).model_copy(update={"archived": True})
+
+    got = iter_merchant_rules(
+        [euro, payment, short, ws_short, counterparty, inactive, archived]
+    )
+    ids = {r.id for r in got}
+
+    assert euro.id in ids
+    assert payment.id not in ids
+    assert short.id not in ids
+    assert ws_short.id not in ids
+    assert counterparty.id not in ids
+    assert inactive.id not in ids
+    assert archived.id not in ids
+    assert all(r.match_field == MatchField.MERCHANT for r in got)
+    assert all(len((r.match_value or "").strip()) >= 3 for r in got)
+
+
+def test_plan_merchant_residual_fills_first_match_wins_single_pass():
+    fuel = rule(
+        priority=5,
+        category_id=CAT_FUEL_CAR,
+        match_field=MatchField.MERCHANT,
+        match_value="EuroOil",
+    )
+    broad = rule(
+        priority=20,
+        category_id=CAT_GROCERIES,
+        match_field=MatchField.MERCHANT,
+        match_value="Euro",
+    )
+    payment = rule(
+        priority=0,
+        category_id=CAT_INTERNAL,
+        match_field=MatchField.DESCRIPTION,
+        match_value="Single payment",
+    )
+    lidl_rule = rule(
+        priority=10,
+        category_id=CAT_GROCERIES,
+        match_field=MatchField.MERCHANT,
+        match_value="Lidl",
+    )
+    short = rule(
+        priority=0,
+        category_id=CAT_FUEL_CAR,
+        match_field=MatchField.MERCHANT,
+        match_value="O2",
+    )
+
+    euro_blank = tx(
+        merchant="EuroOil Brno",
+        description="Single payment",
+        amount=Decimal("-40.25"),
+    )
+    lidl_blank = tx(merchant="Lidl Vinohrady", amount=Decimal("-12.50"))
+    locked = tx(
+        merchant="EuroOil",
+        amount=Decimal("-55"),
+        category_id=CAT_GROCERIES,
+        category_override=True,
+    )
+    tmobile = tx(
+        merchant="T-Mobile",
+        description="Single payment",
+        amount=Decimal("-19.90"),
+    )
+    already = tx(
+        merchant="EuroOil Praha",
+        amount=Decimal("-80"),
+        category_id=CAT_FUEL_CAR,
+    )
+
+    repo = _repo(euro_blank, lidl_blank, locked, tmobile, already)
+    repo.upsert_rows("CategoryRules", [fuel, broad, payment, lidl_rule, short])
+    repo.listed.clear()
+    repo.upserted.clear()
+
+    cats = {c.id: c for c in repo.list_rows("Categories") if isinstance(c, Category)}
+    txs = [t for t in repo.list_rows("Transactions") if isinstance(t, Transaction)]
+    rules = list(repo.list_rows("CategoryRules"))
+    listed_after_load = list(repo.listed)
+
+    plan = plan_merchant_residual_fills(txs, cats, rules)
+
+    assert repo.listed == listed_after_load
+    assert repo.listed.count("Transactions") == 1
+    assert repo.listed.count("Categories") == 1
+    assert repo.listed.count("CategoryRules") == 1
+    assert repo.upserted == []
+
+    dirty_ids = {row.id for row in plan.dirty}
+    assert euro_blank.id in dirty_ids
+    assert lidl_blank.id in dirty_ids
+    assert locked.id not in dirty_ids
+    assert tmobile.id not in dirty_ids
+    assert already.id not in dirty_ids
+
+    by_id = {row.id: row for row in plan.dirty}
+    filled_euro = by_id[euro_blank.id]
+    assert filled_euro.category_id == CAT_FUEL_CAR
+    assert filled_euro.category_override is False
+    assert filled_euro.amount == Decimal("-40.25")
+    assert isinstance(filled_euro.amount, Decimal)
+
+    filled_lidl = by_id[lidl_blank.id]
+    assert filled_lidl.category_id == CAT_GROCERIES
+
+    assert plan.updated == 2
+    assert plan.skipped_override == 1
+    assert plan.skipped_already == 1
+    assert plan.matched == 4
+    fuel_n = next(item.updated for item in plan.by_rule if item.rule_id == fuel.id)
+    lidl_n = next(item.updated for item in plan.by_rule if item.rule_id == lidl_rule.id)
+    broad_n = next(item.updated for item in plan.by_rule if item.rule_id == broad.id)
+    assert fuel_n == 1
+    assert lidl_n == 1
+    assert broad_n == 0
+    assert payment.id not in {item.rule_id for item in plan.by_rule}
+    assert short.id not in {item.rule_id for item in plan.by_rule}
