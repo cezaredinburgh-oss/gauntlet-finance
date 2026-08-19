@@ -10,8 +10,6 @@ import {
   drillParamPatch,
   FOCUS_MAX_CHARS,
   hasListScope,
-  isGrokPlusOverlay,
-  modeFromSearchParams,
   parseFocusIds,
   screenFromSearchParams,
   shouldRestoreNextStepsFromSimilar,
@@ -160,23 +158,6 @@ assertEq(
   screenFromSearchParams(new URLSearchParams("rule=rule-id")),
   "txs",
   "rule= → txs",
-);
-
-// Tab helper still maps grokplus / hub / txs → review for the tablist
-assertEq(
-  modeFromSearchParams(new URLSearchParams("mode=rules&panel=grokplus")),
-  "rules",
-  "tab helper: mode=rules wins over panel",
-);
-assertEq(
-  modeFromSearchParams(new URLSearchParams("panel=grokplus")),
-  "review",
-  "tab helper: grokplus highlights Review",
-);
-assertEq(
-  isGrokPlusOverlay(new URLSearchParams("panel=grokplus")),
-  true,
-  "panel=grokplus is overlay",
 );
 
 // --- writes ---

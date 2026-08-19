@@ -115,6 +115,21 @@ const IDLE_SIM: SimFlow = {
   excludedIds: [],
 };
 
+const TX_ID_FETCH_CAP = 5000;
+
+function mergeTxItems(prev: Transaction[], extra: Transaction[]): Transaction[] {
+  const seen = new Set(prev.map((t) => normTxId(t.id)));
+  const next = prev.slice();
+  for (const t of extra) {
+    const key = normTxId(t.id);
+    if (!seen.has(key)) {
+      next.push(t);
+      seen.add(key);
+    }
+  }
+  return next;
+}
+
 /** Lab next Categorize: one surface per URL. Same ledger mutations as classic. */
 export function NewEtCategorizePageNext() {
   const { isReadOnly } = useAuth();
@@ -251,6 +266,37 @@ export function NewEtCategorizePageNext() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (loading) return;
+    const ids = focusParam
+      ? parseFocusIds(focusParam)
+      : focusKeyParam
+        ? (focusAllowlists[focusKeyParam] ?? [])
+        : [];
+    if (!ids.length) return;
+    const have = new Set(items.map((t) => normTxId(t.id)));
+    const missing = ids.map(normTxId).filter((id) => id && !have.has(id));
+    if (!missing.length) return;
+    const gen = loadGen.current;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const extra = await api.transactions({
+          tx_ids: missing.join(","),
+          ids: missing.join(","),
+          limit: Math.min(Math.max(missing.length, 1), TX_ID_FETCH_CAP),
+        });
+        if (cancelled || gen !== loadGen.current || !extra.items.length) return;
+        setItems((prev) => mergeTxItems(prev, extra.items));
+      } catch {
+        /* keep the loaded page */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, items, focusParam, focusKeyParam, focusAllowlists]);
 
   useEffect(() => {
     simFlowRef.current = simFlow;
@@ -1006,8 +1052,6 @@ export function NewEtCategorizePageNext() {
     }
   }
 
-  const TX_ID_FETCH_CAP = 5000;
-
   function newFocusKey(): string {
     return `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   }
@@ -1050,18 +1094,7 @@ export function NewEtCategorizePageNext() {
           limit: Math.min(Math.max(missing.length, 1), TX_ID_FETCH_CAP),
         });
         if (extra.items.length) {
-          setItems((prev) => {
-            const seen = new Set(prev.map((t) => normTxId(t.id)));
-            const next = prev.slice();
-            for (const t of extra.items) {
-              const key = normTxId(t.id);
-              if (!seen.has(key)) {
-                next.push(t);
-                seen.add(key);
-              }
-            }
-            return next;
-          });
+          setItems((prev) => mergeTxItems(prev, extra.items));
         }
       } catch {
         /* still focus rows we already have */
@@ -1275,7 +1308,6 @@ export function NewEtCategorizePageNext() {
                     ? onUndrill
                     : undefined
                 }
-                onHub={idleWorkspace}
               />
 
               {screen === "review" ? (

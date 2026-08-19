@@ -71,17 +71,6 @@ export function screenFromSearchParams(params: URLSearchParams): CategorizeScree
   return "hub";
 }
 
-/** Tablist helper. Screen identity is screenFromSearchParams (omit-mode is hub). */
-export function modeFromSearchParams(params: URLSearchParams): WorkspaceMode {
-  const screen = screenFromSearchParams(params);
-  if (screen === "rules" || screen === "categories") return screen;
-  return "review";
-}
-
-export function isGrokPlusOverlay(params: URLSearchParams): boolean {
-  return params.get("panel") === "grokplus";
-}
-
 export function hubParamPatch(): Record<string, string | null> {
   return { mode: null, panel: null };
 }
@@ -94,7 +83,6 @@ export function windowParamPatch(win: WindowId): Record<string, string | null> {
   return { mode: win, panel: null };
 }
 
-/** Tablist writes. Review is no longer the omit-mode default. */
 export function workspaceModeParamPatch(
   next: WorkspaceMode,
 ): Record<string, string | null> {
@@ -290,12 +278,7 @@ export function srcWindowLabel(src: string | null): string | null {
 
 export type SimRestorePhase = "idle" | "next_steps" | "reviewing_similar";
 
-/**
- * popstate contract: similar drill is a push, so history.back lands on leftovers
- * (screen=review, no focus/vendor/focus_key) while React phase is still
- * reviewing_similar. The page must then call restoreNextStepsFromSimilar →
- * enterNextSteps (phase next_steps). undrillParamPatch is not run by the browser.
- */
+/** Browser Back pops the similar push; it does not run undrillParamPatch. */
 export function shouldRestoreNextStepsFromSimilar(
   phase: SimRestorePhase,
   screen: CategorizeScreen,
