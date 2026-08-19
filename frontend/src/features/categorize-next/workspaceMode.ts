@@ -28,7 +28,11 @@ const WINDOW_MODES = new Set<string>(["review", "rules", "categories", "txs"]);
 
 export const CATEGORIZE_PATH = "/expenses/categorize";
 
-/** Inbound Spending/Alerts filters, allowlists, and tx= skip the hub. */
+/**
+ * Inbound Spending/Alerts filters, allowlists, and tx= skip the hub.
+ * tx= alone must resolve to txs so a deep-link drawer is not over the hub;
+ * the page fetches GET /transactions?tx_ids=&ids=&limit=1 only if the id is missing.
+ */
 export function hasListScope(params: URLSearchParams): boolean {
   return Boolean(
     params.get("date_from") ||
@@ -246,6 +250,11 @@ export function categoryDrillParamPatch(
     category_id: catId,
     category_ids: null,
   });
+}
+
+/** Open or close the ledger drawer. Other params stay. */
+export function txParamPatch(txId: string | null): Record<string, string | null> {
+  return { tx: txId };
 }
 
 export function undrillParamPatch(

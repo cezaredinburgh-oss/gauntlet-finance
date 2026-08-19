@@ -17,6 +17,7 @@ import {
   ruleDrillParamPatch,
   screenFromSearchParams,
   shouldRestoreNextStepsFromSimilar,
+  txParamPatch,
   undrillParamPatch,
   windowParamPatch,
   workspaceModeParamPatch,
@@ -111,11 +112,23 @@ assertEq(
   "txs",
   "q → txs",
 );
+// Deep-link /expenses/categorize?tx=<uuid>: screen txs; page fetches
+// GET /transactions?tx_ids=&ids=&limit=1 only when the id is missing from items.
 assertEq(
   screenFromSearchParams(new URLSearchParams("tx=abc-uuid")),
   "txs",
   "tx= alone → txs",
 );
+assertTrue(
+  hasListScope(new URLSearchParams("tx=abc-uuid")),
+  "tx= alone is list scope (drawer backdrop)",
+);
+const openedTx = applyParamPatch(new URLSearchParams(), txParamPatch("abc-uuid"));
+assertEq(openedTx.get("tx"), "abc-uuid", "txParamPatch writes tx");
+assertEq(screenFromSearchParams(openedTx), "txs", "txParamPatch alone → txs");
+const closedTx = applyParamPatch(openedTx, txParamPatch(null));
+assertEq(closedTx.get("tx"), null, "txParamPatch(null) deletes tx");
+assertEq(screenFromSearchParams(closedTx), "hub", "close tx with no other scope → hub");
 assertEq(
   screenFromSearchParams(
     new URLSearchParams(

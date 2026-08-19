@@ -32,6 +32,7 @@ export function ReviewWorkbench({
   onApplyBulk,
   onClearSelected,
   onClearSelection,
+  onOpenTx,
 }: {
   tableRef: Ref<HTMLDivElement>;
   filteredCount: number;
@@ -58,6 +59,7 @@ export function ReviewWorkbench({
   onApplyBulk: () => void;
   onClearSelected: () => void;
   onClearSelection: () => void;
+  onOpenTx: (id: string) => void;
 }) {
   return (
     <div className="min-w-0 max-w-full space-y-3">
@@ -189,9 +191,13 @@ export function ReviewWorkbench({
                       </td>
                       <td className="min-w-0 max-w-xs break-words px-4 py-3">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <span className="min-w-0 break-words font-medium text-ink">
+                          <button
+                            type="button"
+                            className="min-w-0 break-words text-left font-medium text-ink hover:underline focus-visible:underline"
+                            onClick={() => onOpenTx(t.id)}
+                          >
                             {t.merchant || t.description || "—"}
-                          </span>
+                          </button>
                           {t.is_internal_transfer && (
                             <span className="badge bg-brand/15 text-brand">
                               <ArrowLeftRight className="mr-1 h-3 w-3" />
@@ -203,9 +209,13 @@ export function ReviewWorkbench({
                           )}
                         </div>
                         {t.description && t.merchant && (
-                          <div className="break-words text-xs text-ink-faint">
+                          <button
+                            type="button"
+                            className="break-words text-left text-xs text-ink-faint hover:underline focus-visible:underline"
+                            onClick={() => onOpenTx(t.id)}
+                          >
                             {t.description}
-                          </div>
+                          </button>
                         )}
                       </td>
                       <td className="min-w-0 break-words px-4 py-3">

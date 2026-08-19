@@ -89,17 +89,23 @@ export type Transaction = {
   merchant?: string | null;
   description?: string | null;
   original_description?: string | null;
-  counterparty_name?: string | null;
   source_institution: string;
   external_id?: string | null;
+  counterparty_account?: string | null;
+  counterparty_name?: string | null;
   category_id?: string | null;
   category_override: boolean;
   is_internal_transfer: boolean;
   transfer_group_id?: string | null;
+  original_file_hash?: string | null;
+  source_file_id?: string | null;
   notes?: string | null;
   suggest_category_id?: string | null;
   suggest_source?: string | null;
   suggest_reason?: string | null;
+  archived?: boolean;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type Category = {

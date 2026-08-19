@@ -7,7 +7,7 @@ import {
 } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Undo2, X } from "lucide-react";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import type {
   Category,
   CategoryCoverage,
@@ -27,6 +27,7 @@ import {
 import { ReviewFilterChips } from "../features/categorize-next/ReviewFilterChips";
 import { ReviewWorkbench } from "../features/categorize-next/ReviewWorkbench";
 import { RulesModeNext } from "../features/categorize-next/RulesModeNext";
+import { TxLedgerDetail } from "../features/categorize-next/TxLedgerDetail";
 import {
   isoDaysAgo,
   isUuid,
@@ -52,6 +53,7 @@ import {
   screenFromSearchParams,
   shouldRestoreNextStepsFromSimilar,
   srcWindowLabel,
+  txParamPatch,
   undrillParamPatch,
   windowTitle,
 } from "../features/categorize-next/workspaceMode";
@@ -169,6 +171,14 @@ export function NewEtCategorizePageNext() {
   const loadGen = useRef(0);
   const txTableRef = useRef<HTMLDivElement | null>(null);
   const simFlowRef = useRef(IDLE_SIM);
+  const txPushedRef = useRef(false);
+  const txFetchAttemptRef = useRef<{ id: string; retry: number } | null>(null);
+  const [txRetry, setTxRetry] = useState(0);
+  const [txFetch, setTxFetch] = useState<{
+    key: string;
+    status: "idle" | "loading" | "missing" | "error";
+    error?: string;
+  }>({ key: "", status: "idle" });
   const [setupBanner, setSetupBanner] = useState(() => !wizardDone());
   const [applyProgress, setApplyProgress] = useState<{
     current: number;
@@ -194,6 +204,7 @@ export function NewEtCategorizePageNext() {
   const focusKeyParam = searchParams.get("focus_key") || "";
   const srcParam = searchParams.get("src") || "";
   const ruleParam = searchParams.get("rule") || "";
+  const txParam = searchParams.get("tx") || "";
   const hasAllowlist = Boolean(focusParam || vendorParam || focusKeyParam);
   const focusKeyMissing = Boolean(
     focusKeyParam && !focusParam && !(focusKeyParam in focusAllowlists),
@@ -303,6 +314,75 @@ export function NewEtCategorizePageNext() {
       cancelled = true;
     };
   }, [loading, items, focusParam, focusKeyParam, focusAllowlists]);
+
+  const detailTx = useMemo(() => {
+    if (!txParam) return null;
+    const want = normTxId(txParam);
+    return items.find((t) => normTxId(t.id) === want) ?? null;
+  }, [items, txParam]);
+
+  // Deep-link / missing workbench id: one list-by-ids fetch. Never GET /transactions/{id}.
+  useEffect(() => {
+    if (!txParam) {
+      txFetchAttemptRef.current = null;
+      if (txFetch.key !== "" || txFetch.status !== "idle") {
+        setTxFetch({ key: "", status: "idle" });
+      }
+      return;
+    }
+    const want = normTxId(txParam);
+    if (items.some((t) => normTxId(t.id) === want)) {
+      if (txFetch.key !== want || txFetch.status !== "idle") {
+        setTxFetch({ key: want, status: "idle" });
+      }
+      return;
+    }
+    if (loading) return;
+    const last = txFetchAttemptRef.current;
+    if (
+      last &&
+      last.id === want &&
+      last.retry === txRetry &&
+      txFetch.status !== "idle"
+    ) {
+      return;
+    }
+    txFetchAttemptRef.current = { id: want, retry: txRetry };
+    let cancelled = false;
+    setTxFetch({ key: want, status: "loading" });
+    void (async () => {
+      try {
+        const extra = await api.transactions({
+          tx_ids: txParam,
+          ids: txParam,
+          limit: 1,
+        });
+        if (cancelled) return;
+        if (extra.items.length) {
+          setItems((prev) => mergeTxItems(prev, extra.items));
+          setTxFetch({ key: want, status: "idle" });
+        } else {
+          setTxFetch({ key: want, status: "missing" });
+        }
+      } catch (e) {
+        if (cancelled) return;
+        const detail =
+          e instanceof ApiError
+            ? e.detail
+            : e instanceof Error
+              ? e.message
+              : "Failed to load";
+        setTxFetch({ key: want, status: "error", error: detail });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [txParam, items, loading, txRetry, txFetch.key, txFetch.status]);
+
+  useEffect(() => {
+    if (!txParam) txPushedRef.current = false;
+  }, [txParam]);
 
   useEffect(() => {
     simFlowRef.current = simFlow;
@@ -728,6 +808,22 @@ export function NewEtCategorizePageNext() {
   function onUndrill() {
     restoreNextStepsFromSimilar();
     patchParams(undrillParamPatch(searchParams));
+  }
+
+  function openTx(id: string) {
+    if (searchParams.get("tx") === id) return;
+    txPushedRef.current = true;
+    pushParams(txParamPatch(id));
+  }
+
+  function closeTx() {
+    if (txPushedRef.current && searchParams.get("tx")) {
+      txPushedRef.current = false;
+      window.history.back();
+      return;
+    }
+    txPushedRef.current = false;
+    patchParams(txParamPatch(null));
   }
 
   function similarForSeeds(seeds: Transaction[]): Transaction[] {
@@ -1597,11 +1693,33 @@ export function NewEtCategorizePageNext() {
                     onApplyBulk={() => void applyBulkCategory()}
                     onClearSelected={() => void onClearSelectedCategories()}
                     onClearSelection={() => setSelected(new Set())}
+                    onOpenTx={openTx}
                   />
                 </>
               ) : null}
             </>
           )}
+
+          {txParam ? (
+            <TxLedgerDetail
+              tx={detailTx}
+              loading={
+                !detailTx &&
+                (loading || txFetch.status === "loading" || txFetch.status === "idle")
+              }
+              error={
+                !detailTx && txFetch.status === "error"
+                  ? txFetch.error || "Couldn’t load transaction"
+                  : null
+              }
+              notFound={!detailTx && txFetch.status === "missing"}
+              catMap={catMap}
+              items={items}
+              onClose={closeTx}
+              onRetry={() => setTxRetry((n) => n + 1)}
+              onOpenTx={openTx}
+            />
+          ) : null}
 
           {undoVisible && undoEntry ? (
             <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-white/15 bg-slate-950/95 px-4 py-3 shadow-2xl backdrop-blur-md">
