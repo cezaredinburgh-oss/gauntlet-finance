@@ -238,6 +238,32 @@ def test_tour_seeded_and_read_only(dual_demo_env):
         # Still never touches real sheet id via demo path
         assert client.get("/api/auth/me").json()["is_demo"] is True
 
+
+def test_tour_post_category_rules_forbidden(dual_demo_env):
+    """WritableUserDep blocks tour create-rule (default also_apply would write txs)."""
+    with _client() as client:
+        r = client.post("/api/auth/demo/tour")
+        assert r.status_code == 200, r.text
+        cats = client.get("/api/categories")
+        assert cats.status_code == 200, cats.text
+        items = cats.json().get("items") or []
+        cid = items[0]["id"] if items else "c2000001-0000-4000-8000-000000000001"
+        created = client.post(
+            "/api/category-rules",
+            json={
+                "match_field": "merchant",
+                "match_type": "contains",
+                "match_value": "EuroOil",
+                "category_id": cid,
+            },
+        )
+        assert created.status_code == 403, created.text
+        apply = client.post(
+            f"/api/category-rules/{cid}/apply",
+            json={},
+        )
+        assert apply.status_code == 403, apply.text
+
         # Dashboard portfolio MV present via seeded Prices
         dash = client.get("/api/dashboard-summary")
         assert dash.status_code == 200, dash.text

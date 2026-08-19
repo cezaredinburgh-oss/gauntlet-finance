@@ -30,6 +30,8 @@ Export: `GET /api/categories/vendor-memory`. Not a repo file.
 
 ## AC
 
+Rule-create fill (one-rule residual, Apply this rule day-2) is `docs/categorize-ux-redesign/RULE_LEDGER_APPLY_DESIGN.md`. Upload remains AC1.
+
 1. Import never sets `category_id` on new rows.  
 2. Core pack may tag + reason.  
 3. Flag internals (core + transfer-match); no category.  

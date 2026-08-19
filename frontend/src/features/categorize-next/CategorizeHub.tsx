@@ -29,7 +29,7 @@ const WINDOW_CARDS: {
     win: "rules",
     title: "Rules",
     explanation:
-      "Create or edit match patterns (merchant, description, …). Saving a rule does not apply it to existing rows or to the next upload.",
+      "Create a match pattern (merchant, description, …). Saving a new rule files leftover matches across the whole ledger. The next upload still only tags. To file later leftovers for a shop rule you already saved, use Apply this rule on the Rules row (merchant patterns one-click; description needles ask to confirm). Do not click Apply + rule again (that would add a second rule).",
   },
   {
     win: "categories",
@@ -191,9 +191,11 @@ export function CategorizeHub({
             Ask Grok+ — paid guesses only. Nothing is saved until you Approve.
           </li>
           <li className="min-w-0 break-words">
-            Rules and Categories — teach patterns and maintain the catalog. Saving a rule
-            does not recategorize the ledger. Apply + rule files those leftover rows and
-            saves the pattern. It does not scan the rest of the ledger.
+            Rules and Categories — teach patterns and maintain the catalog. Saving a new
+            rule files leftover matches in the ledger (overrides stay put). Apply + rule
+            from Review does the same and saves one pattern. Upload still does not
+            categorize. Later statements: Apply this rule on the existing merchant row
+            (description rules confirm first).
           </li>
         </ol>
       </section>

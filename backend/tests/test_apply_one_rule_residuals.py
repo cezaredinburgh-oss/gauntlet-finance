@@ -312,7 +312,7 @@ def _usd_tx(**kwargs):
     return t.model_copy(update={"amount_usd": amt, "amount_czk": None})
 
 
-def _repo(cats, txs, rules=None) -> InMemorySheetsRepository:
+def _ledger_repo(cats, txs, rules=None) -> InMemorySheetsRepository:
     repo = InMemorySheetsRepository()
     repo.replace_all_rows("Categories", cats)
     repo.replace_all_rows("Transactions", txs)
@@ -362,7 +362,7 @@ def test_travel_spend_is_categorized_other_uuid_stays_uncategorized_decimal():
         _usd_tx(amount=travel_amt, merchant="Hotel", category_id=travel.id),
         _usd_tx(amount=other_amt, merchant="Misc", category_id=CAT_OTHER),
     ]
-    repo = _repo(cats, txs)
+    repo = _ledger_repo(cats, txs)
 
     cov = coverage_stats(repo, days=180)
     assert Decimal(cov["expense_usd_categorized"]) == abs(travel_amt).quantize(
@@ -402,7 +402,7 @@ def test_fuel_rule_does_not_overwrite_travel_as_other():
         match_type=MatchType.CONTAINS,
         match_value="EuroOil",
     )
-    repo = _repo([*DEFAULT_CATEGORIES, travel], [row], [fuel_rule])
+    repo = _ledger_repo([*DEFAULT_CATEGORIES, travel], [row], [fuel_rule])
     stats = apply_rules_fill_blanks(repo)
     assert stats["filled"] == 0
     assert stats["skipped_already"] == 1
@@ -417,7 +417,7 @@ def test_bulk_override_travel_as_other_sets_override():
     fuel = next(c for c in DEFAULT_CATEGORIES if c.id == CAT_FUEL_CAR)
     row = _usd_tx(amount=Decimal("-30.00"), merchant="EuroOil", category_id=travel.id)
     other_row = _usd_tx(amount=Decimal("-8.00"), merchant="Lidl", category_id=CAT_OTHER)
-    repo = _repo([*DEFAULT_CATEGORIES, travel], [row, other_row])
+    repo = _ledger_repo([*DEFAULT_CATEGORIES, travel], [row, other_row])
 
     travel_result = asyncio.run(
         bulk_override_category(
@@ -447,4 +447,265 @@ def test_bulk_override_travel_as_other_sets_override():
     first_assign = repo.get_by_id("Transactions", other_row.id)
     assert first_assign is not None
     assert first_assign.category_id == fuel.id
-    assert first_assign.category_override is False
+    assert first_assign.category_override is False
+
+
+# --- PR2 HTTP tests (AUTH_MODE=dev TestClient, not tour) ---
+
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+
+from backend.api.deps import clear_repo_cache, get_settings
+from backend.api.main import create_app
+from backend.config import get_settings as gs
+
+
+@pytest.fixture()
+def http_client(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AUTH_MODE", "dev")
+    monkeypatch.setenv("SPREADSHEET_ID", "")
+    monkeypatch.setenv("SECRET_KEY", "test-secret")
+    monkeypatch.setenv("YFINANCE_ENABLED", "false")
+    get_settings.cache_clear()
+    gs.cache_clear()
+    clear_repo_cache()
+    import backend.api.deps as deps
+
+    deps._DEV_MEMORY_REPO = None
+    app = create_app()
+    with TestClient(app) as c:
+        yield c
+    deps._DEV_MEMORY_REPO = None
+    clear_repo_cache()
+
+
+def _seed_dev_repo(
+    txs: list[Transaction],
+    rules: list[CategoryRule] | None = None,
+) -> InMemorySheetsRepository:
+    import backend.api.deps as deps
+
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    if txs:
+        repo.upsert_rows("Transactions", txs)
+    if rules:
+        repo.upsert_rows("CategoryRules", rules)
+    deps._DEV_MEMORY_REPO = repo
+    return repo
+
+
+def _active_rules(repo: InMemorySheetsRepository) -> list[CategoryRule]:
+    return [
+        r
+        for r in repo.list_rows("CategoryRules")
+        if isinstance(r, CategoryRule) and not r.archived
+    ]
+
+
+def _rule_payload(**overrides: object) -> dict:
+    body: dict = {
+        "priority": 10,
+        "match_field": "merchant",
+        "match_type": "contains",
+        "match_value": "EuroOil",
+        "category_id": str(CAT_FUEL_CAR),
+    }
+    body.update(overrides)
+    return body
+
+
+def test_post_rule_fills_residual_and_does_not_call_apply_rules(http_client: TestClient):
+    euro = tx(merchant="EuroOil Brno", amount=Decimal("-40"))
+    payment = tx(
+        merchant="Shop",
+        amount=Decimal("-12"),
+        description="Single payment leftover",
+    )
+    overbroad = rule(
+        priority=50,
+        category_id=CAT_GROCERIES,
+        match_field=MatchField.DESCRIPTION,
+        match_type=MatchType.CONTAINS,
+        match_value="Single payment",
+    )
+    repo = _seed_dev_repo([euro, payment], [overbroad])
+
+    with patch("backend.api.routes.categories.apply_rules_fill_blanks") as spy:
+        r = http_client.post("/api/category-rules", json=_rule_payload())
+    assert r.status_code == 200, r.text
+    spy.assert_not_called()
+    body = r.json()
+    assert body["apply"]["updated"] == 1
+    assert body["apply_error"] is None
+    assert _tx_by_id(repo, euro.id).category_id == CAT_FUEL_CAR
+    assert _tx_by_id(repo, payment.id).category_id is None
+
+
+def test_post_rule_also_apply_false_leaves_txs(http_client: TestClient):
+    blank = tx(merchant="EuroOil", amount=Decimal("-10"))
+    repo = _seed_dev_repo([blank])
+
+    r = http_client.post(
+        "/api/category-rules",
+        json=_rule_payload(also_apply=False),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["apply"] is None
+    assert body["apply_error"] is None
+    assert _tx_by_id(repo, blank.id).category_id is None
+    assert len(_active_rules(repo)) == 1
+
+
+@pytest.mark.parametrize("needle", ["", "   "])
+def test_post_rule_empty_needle_rejected(http_client: TestClient, needle: str):
+    blank = tx(merchant="EuroOil", amount=Decimal("-10"))
+    repo = _seed_dev_repo([blank])
+
+    r = http_client.post("/api/category-rules", json=_rule_payload(match_value=needle))
+    assert r.status_code in (400, 422), r.text
+    if needle.strip():
+        assert r.status_code == 400
+    assert _tx_by_id(repo, blank.id).category_id is None
+    assert _active_rules(repo) == []
+
+
+def test_post_rule_invalid_field_or_missing_category_400(http_client: TestClient):
+    blank = tx(merchant="EuroOil", amount=Decimal("-10"))
+    repo = _seed_dev_repo([blank])
+
+    bad_field = http_client.post(
+        "/api/category-rules",
+        json=_rule_payload(match_field="not_a_field"),
+    )
+    assert bad_field.status_code == 400, bad_field.text
+    missing = http_client.post(
+        "/api/category-rules",
+        json=_rule_payload(category_id=str(uuid4())),
+    )
+    assert missing.status_code == 400, missing.text
+    assert _tx_by_id(repo, blank.id).category_id is None
+    assert _active_rules(repo) == []
+
+
+def test_post_rule_apply_valueerror_after_persist_is_200(http_client: TestClient):
+    blank = tx(merchant="EuroOil", amount=Decimal("-10"))
+    repo = _seed_dev_repo([blank])
+
+    with patch(
+        "backend.api.routes.categories.apply_one_rule_fill_residuals",
+        side_effect=ValueError("needle exploded"),
+    ):
+        r = http_client.post("/api/category-rules", json=_rule_payload())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["id"]
+    assert body["apply"] is None
+    assert body["apply_error"]["code"] == "apply_failed"
+    assert "Apply this rule" in body["apply_error"]["message"]
+    assert _tx_by_id(repo, blank.id).category_id is None
+    assert len(_active_rules(repo)) == 1
+
+
+def test_post_rule_sheets_failure_after_persist_is_200(http_client: TestClient):
+    class _BoomTx(InMemorySheetsRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.block_tx = False
+
+        def upsert_rows(self, tab: str, rows: list) -> None:
+            if self.block_tx and tab == "Transactions":
+                raise RuntimeError("sheets unavailable")
+            super().upsert_rows(tab, rows)
+
+    import backend.api.deps as deps
+
+    blank = tx(merchant="EuroOil", amount=Decimal("-10"))
+    boom = _BoomTx()
+    boom.upsert_rows("Categories", list(DEFAULT_CATEGORIES))
+    boom.upsert_rows("Transactions", [blank])
+    boom.block_tx = True
+    deps._DEV_MEMORY_REPO = boom
+
+    r = http_client.post("/api/category-rules", json=_rule_payload())
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["id"]
+    assert body["apply"] is None
+    assert body["apply_error"]["code"] == "apply_failed"
+    assert len(_active_rules(boom)) == 1
+
+
+def test_post_rule_apply_merchant_fills_without_second_insert(http_client: TestClient):
+    blank = tx(merchant="EuroOil Brno", amount=Decimal("-22"))
+    stored = rule(
+        priority=10,
+        category_id=CAT_FUEL_CAR,
+        match_field=MatchField.MERCHANT,
+        match_value="EuroOil",
+    )
+    repo = _seed_dev_repo([blank], [stored])
+
+    r = http_client.post(f"/api/category-rules/{stored.id}/apply", json={})
+    assert r.status_code == 200, r.text
+    assert r.json()["updated"] == 1
+    assert _tx_by_id(repo, blank.id).category_id == CAT_FUEL_CAR
+    assert len(_active_rules(repo)) == 1
+
+
+def test_post_rule_apply_description_without_confirm_400(http_client: TestClient):
+    leftover = tx(
+        merchant="Shop",
+        amount=Decimal("-9"),
+        description="Single payment leftover",
+    )
+    stored = rule(
+        priority=50,
+        category_id=CAT_GROCERIES,
+        match_field=MatchField.DESCRIPTION,
+        match_type=MatchType.CONTAINS,
+        match_value="Single payment",
+    )
+    repo = _seed_dev_repo([leftover], [stored])
+
+    r = http_client.post(f"/api/category-rules/{stored.id}/apply", json={})
+    assert r.status_code == 400, r.text
+    assert _tx_by_id(repo, leftover.id).category_id is None
+
+
+def test_post_rule_apply_description_with_confirm_fills(http_client: TestClient):
+    leftover = tx(
+        merchant="Shop",
+        amount=Decimal("-9"),
+        description="Single payment leftover",
+    )
+    locked = tx(
+        merchant="Other",
+        amount=Decimal("-4"),
+        description="Single payment locked",
+        category_id=CAT_FUEL_CAR,
+        category_override=True,
+    )
+    stored = rule(
+        priority=50,
+        category_id=CAT_GROCERIES,
+        match_field=MatchField.DESCRIPTION,
+        match_type=MatchType.CONTAINS,
+        match_value="Single payment",
+    )
+    repo = _seed_dev_repo([leftover, locked], [stored])
+
+    r = http_client.post(
+        f"/api/category-rules/{stored.id}/apply",
+        json={"confirm": True},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["updated"] == 1
+    assert body["skipped_override"] == 1
+    assert _tx_by_id(repo, leftover.id).category_id == CAT_GROCERIES
+    assert _tx_by_id(repo, leftover.id).category_override is False
+    assert _tx_by_id(repo, locked.id).category_id == CAT_FUEL_CAR
+    assert _tx_by_id(repo, locked.id).category_override is True

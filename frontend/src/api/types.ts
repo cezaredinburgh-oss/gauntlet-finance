@@ -993,6 +993,21 @@ export type CategoryRule = {
   notes?: string | null;
 };
 
+export type ApplyOneRuleResult = {
+  scanned: number;
+  matched: number;
+  updated: number;
+  skipped_override: number;
+  skipped_already: number;
+  rule_id: string;
+  category_id: string;
+};
+
+export type CategoryRuleCreateResult = CategoryRule & {
+  apply?: ApplyOneRuleResult | null;
+  apply_error?: { code: string; message: string } | null;
+};
+
 export type CategoryCoverage = {
   days: number;
   /** Full-ledger residual counts (excludes internals). */

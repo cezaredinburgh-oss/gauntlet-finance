@@ -8,10 +8,12 @@ import type {
   AuthMe,
   BootstrapRulesResult,
   ApplyMatchResult,
+  ApplyOneRuleResult,
   BulkOverrideResult,
   Category,
   CategoryCoverage,
   CategoryRule,
+  CategoryRuleCreateResult,
   CleanupPreview,
   CleanupResult,
   DashboardSummary,
@@ -707,10 +709,17 @@ export const api = {
     match_type: string;
     match_value: string;
     category_id: string;
+    also_apply?: boolean;
   }) =>
-    request<CategoryRule>("/category-rules", {
+    request<CategoryRuleCreateResult>("/category-rules", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+
+  applyCategoryRule: (id: string, opts?: { confirm?: boolean }) =>
+    request<ApplyOneRuleResult>(`/category-rules/${id}/apply`, {
+      method: "POST",
+      body: JSON.stringify(opts?.confirm ? { confirm: true } : {}),
     }),
 
   updateCategoryRule: (id: string, body: Partial<CategoryRule>) =>

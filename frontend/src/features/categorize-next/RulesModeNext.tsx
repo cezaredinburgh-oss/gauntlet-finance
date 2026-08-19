@@ -41,6 +41,11 @@ const EMPTY_CREATE: RuleDraft = {
   is_active: true,
 };
 
+function isLowRiskExistingApply(rule: CategoryRule): boolean {
+  const needle = (rule.match_value || "").trim();
+  return rule.match_field === "merchant" && needle.length >= 3;
+}
+
 export function RulesModeNext({
   rules,
   catsSorted,
@@ -68,7 +73,7 @@ export function RulesModeNext({
     setBusyId("create");
     setMsg(null);
     try {
-      await api.createCategoryRule({
+      const result = await api.createCategoryRule({
         priority: createDraft.priority,
         match_field: createDraft.match_field,
         match_type: createDraft.match_type,
@@ -81,9 +86,40 @@ export function RulesModeNext({
       setCreateDraft(EMPTY_CREATE);
       setCreating(false);
       await onChanged();
-      setMsg("Rule saved.");
+      if (result.apply_error?.message) {
+        setMsg(result.apply_error.message);
+      } else {
+        const n = result.apply?.updated ?? 0;
+        setMsg(`Rule saved. Filed ${n} leftover matches.`);
+      }
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Create failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function onApplyThisRule(rule: CategoryRule) {
+    if (!rule.is_active) return;
+    const lowRisk = isLowRiskExistingApply(rule);
+    if (!lowRisk) {
+      const catName = catMap.get(rule.category_id)?.name || "category";
+      const ok = window.confirm(
+        `Apply leftover fill for ${rule.match_field} ${rule.match_type} “${rule.match_value}” → ${catName}? This is not a merchant shop rule and can match many leftover payments.`,
+      );
+      if (!ok) return;
+    }
+    setBusyId(rule.id);
+    setMsg(null);
+    try {
+      const stats = await api.applyCategoryRule(
+        rule.id,
+        lowRisk ? undefined : { confirm: true },
+      );
+      await onChanged();
+      setMsg(`Filed ${stats.updated} leftover matches.`);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Apply failed");
     } finally {
       setBusyId(null);
     }
@@ -310,6 +346,17 @@ export function RulesModeNext({
                         </td>
                         <td className="px-4 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                           <div className="flex flex-wrap justify-end gap-1">
+                            <button
+                              type="button"
+                              className="btn-secondary px-2 py-0.5 text-[11px]"
+                              disabled={!r.is_active || busyId === r.id || isReadOnly}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void onApplyThisRule(r);
+                              }}
+                            >
+                              Apply this rule
+                            </button>
                             <button
                               type="button"
                               className="btn-secondary px-2 py-0.5 text-[11px]"

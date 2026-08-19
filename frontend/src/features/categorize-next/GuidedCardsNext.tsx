@@ -90,15 +90,16 @@ export function NextStepsCardNext({
 
       <p className="break-words text-xs text-ink-faint">
         {hasSimilar
-          ? "High confidence: Apply + save rule categorizes the similar rows and writes the rule in one click."
-          : "Rule only — nothing left to apply on this list."}
+          ? "High confidence: Apply + save rule categorizes the similar rows and writes the rule in one click. Leftover matches outside this list are filed too."
+          : "Save rule files leftover matches across the whole ledger (this list has no similar rows)."}
       </p>
       {rulePreview && (
         <p className="break-words text-sm text-ink">
           {rulePreview}
           <span className="text-ink-faint">
             {" "}
-            · preview {ruleMatchCount} match{ruleMatchCount === 1 ? "" : "es"}
+            · preview on this list · {ruleMatchCount} match
+            {ruleMatchCount === 1 ? "" : "es"}
           </span>
         </p>
       )}

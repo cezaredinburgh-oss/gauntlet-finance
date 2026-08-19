@@ -108,7 +108,7 @@ Wipe assignments **keeps tags and internal flags**, clears `category_id` + `cate
 # fallback_category_id only if caller passes it; import does not
 ```
 
-**Import does not run this engine.** Rules fire later via `POST /categories/apply-rules`, `POST /categories/apply-match`, bootstrap `also_apply`, merchant-queue apply, or `POST /categories/ensure-defaults` (which fill-blanks after ensuring the tree).
+**Import does not run this engine.** Rules fire later via `POST /category-rules` (default `also_apply` → one-rule residual fill), `POST /category-rules/{id}/apply` (day-2, no insert), `POST /categories/apply-rules`, `POST /categories/apply-match`, bootstrap `also_apply`, merchant-queue apply, or `POST /categories/ensure-defaults` (which fill-blanks after ensuring the tree).
 
 A rule-matched row typically has `category_override=False` so a later rule pass can still move residuals / fill blanks.
 
@@ -155,8 +155,10 @@ Vendor buckets on Review are **client-side from `GET /transactions` items** (def
 | Merchant-queue apply | `POST /categories/merchant-queue/apply` | **Entire ledger** via `apply_match_to_all_transactions` (`contains`) | `mark_override=False` | Default `create_rule=True` |
 | Pattern vs whole sheet | `POST /categories/apply-match` | **Entire ledger**, not the UI filter | Default `mark_override=True` | No (rule is separate) |
 | Re-run saved rules | `POST /categories/apply-rules` | Residuals only (`fill_blanks` + Other) | Never | No |
+| New rule | `POST /category-rules` (`also_apply` default true) | Matching leftover residuals, full Transactions tab | Never | The create itself |
+| Apply this rule | `POST /category-rules/{id}/apply` | Same helper, **no insert**. Merchant needle ≥3 unguarded; else `confirm=true` | Never | No |
 
-Vendor apply on Review uses **bulk-override of the bucket’s ids**, not apply-match. Optional “make rule” is `createCategoryRule` from a draft of those seeds (`createVendorRule`). Creating the rule **does not** retro-scan the rest of the ledger unless the user also apply-rules / apply-match.
+Vendor apply on Review uses **bulk-override of the bucket’s ids**, then `createCategoryRule` (one-rule residual fill). Extra-ledger leftovers get the fill; bucket IDs are `skipped_already`. Do not click Apply + rule again — that inserts a duplicate. Day-2 same shop: **Apply this rule** on the existing row.
 
 Undo: `POST /categories/restore-assignments` restores prior `category_id` / `category_override` / optional `is_internal_transfer`. Does not reverse VendorMemory increments.
 
@@ -205,7 +207,8 @@ match_result = match_internal_transfers(combined)
 | `POST /categories/apply-match` | One synthetic rule vs **all** txs. Modes: `fill_blanks` \| `reclassify_non_override` (default) \| `force` (includes overrides) |
 | `POST /categories/bootstrap-rules` | Install generic keyword pack (personal lifestyle needles skipped); `also_apply` default **True** → fill-blanks |
 | `POST /categories/ensure-defaults` | Upsert tree + Digital Assets rule, then fill-blanks |
-| Creating a rule in Rules mode | Persist only. **Does not** apply to historical rows |
+| Creating a rule in Rules mode | Persist **+ one-rule residual fill** (`also_apply` default true). Apply failure after insert is 200 + `apply_error`. |
+| Apply this rule (existing row) | Same helper, **no insert**. Merchant ≥3 one-click; description / short needles need confirm. |
 
 Default new-rule priority in UI is `100`. Bootstrap keywords use priorities 5–45 (internals / salary / DA at the tight end). Merchant-queue rules use priority `40`.
 

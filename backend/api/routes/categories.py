@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -18,12 +19,13 @@ from backend.api.schemas import (
     RestoreAssignmentsResponse,
 )
 from backend.common.timeutil import utc_now
-from backend.schema.models import Category, Transaction
+from backend.schema.models import Category, CategoryRule, MatchField, MatchType, Transaction
 from backend.services.categorization import (
     _category_implies_internal_transfer,
     _is_blank_or_other_category,
     apply_match_to_all_transactions,
     apply_merchant_queue_item,
+    apply_one_rule_fill_residuals,
     apply_rules_fill_blanks,
     archive_category,
     bootstrap_rules_from_data,
@@ -39,6 +41,9 @@ from backend.services.categorization import (
     update_rule,
 )
 from backend.services.response_cache import cache_invalidate
+from backend.sheets.repository import SheetsRepository
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["categories"])
 
@@ -47,12 +52,17 @@ class RuleBody(BaseModel):
     priority: int = 100
     match_field: str
     match_type: str
-    match_value: str
+    match_value: str = Field(..., min_length=1)
     category_id: UUID
     set_internal_transfer: bool = False
     institution_scope: str | None = None
     is_active: bool = True
     notes: str | None = None
+    also_apply: bool = True
+
+
+class RuleApplyBody(BaseModel):
+    confirm: bool = False
 
 
 class RulePatchBody(BaseModel):
@@ -339,13 +349,86 @@ async def get_rules(repo: RepoDep, _user: UserDep) -> dict[str, Any]:
     return {"items": [r.model_dump(mode="json") for r in rows]}
 
 
-@router.post("/category-rules")
-async def post_rule(repo: RepoDep, _user: UserDep, body: RuleBody) -> dict[str, Any]:
+def _validate_rule_target(repo: SheetsRepository, body: RuleBody) -> None:
+    """Reject bad field/type/category before persist (empty contains would mass-fill)."""
     try:
-        rule = create_rule(repo, body.model_dump())
+        MatchField(body.match_field)
+        MatchType(body.match_type)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    cat = repo.get_by_id("Categories", body.category_id)
+    if cat is None or not isinstance(cat, Category) or cat.archived:
+        raise ValueError("Category not found")
+
+
+def _is_low_risk_existing_apply(rule: CategoryRule) -> bool:
+    needle = (rule.match_value or "").strip()
+    return rule.match_field == MatchField.MERCHANT and len(needle) >= 3
+
+
+@router.post("/category-rules")
+async def post_rule(
+    repo: RepoDep,
+    _user: WritableUserDep,
+    body: RuleBody,
+) -> dict[str, Any]:
+    needle = (body.match_value or "").strip()
+    if not needle:
+        raise HTTPException(status_code=400, detail="match_value is required")
+    try:
+        _validate_rule_target(repo, body)
+        payload = body.model_dump()
+        also_apply = bool(payload.pop("also_apply", True))
+        payload["match_value"] = needle
+        rule = create_rule(repo, payload)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return rule.model_dump(mode="json")
+
+    apply_stats: dict[str, Any] | None = None
+    apply_error: dict[str, str] | None = None
+    if also_apply:
+        try:
+            apply_stats = apply_one_rule_fill_residuals(repo, rule)
+        except Exception:
+            # Rule row exists. Never 400/500 after insert — ApiError would
+            # look like a failed create and the UI would POST create again.
+            logger.exception("apply_one_rule_fill_residuals failed after create")
+            apply_error = {
+                "code": "apply_failed",
+                "message": "Rule saved. Ledger fill failed — use Apply this rule to retry.",
+            }
+            apply_stats = None
+    out = rule.model_dump(mode="json")
+    out["apply"] = apply_stats
+    out["apply_error"] = apply_error
+    return out
+
+
+@router.post("/category-rules/{rule_id}/apply")
+async def post_rule_apply(
+    rule_id: UUID,
+    repo: RepoDep,
+    _user: WritableUserDep,
+    body: RuleApplyBody | None = None,
+) -> dict[str, Any]:
+    row = repo.get_by_id("CategoryRules", rule_id)
+    if row is None or not isinstance(row, CategoryRule) or row.archived:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    confirm = bool(body.confirm) if body else False
+    if not _is_low_risk_existing_apply(row) and not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Non-merchant or short rules require confirm=true (overbroad leftover needles).",
+        )
+    try:
+        stats = apply_one_rule_fill_residuals(repo, row)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return stats
 
 
 @router.patch("/category-rules/{rule_id}")

@@ -4,6 +4,15 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-19 — Rule-create fills leftovers; Apply this rule
+
+- `POST /category-rules` validates needle + category, persists, then `apply_one_rule_fill_residuals` (`also_apply` default true). Every apply failure after insert is **200 + `apply_error`** (never 400/500). `WritableUserDep` (tour 403).
+- `POST /category-rules/{id}/apply`: no insert. Merchant needle ≥3 one-click; other fields need `confirm=true`.
+- Creating a rule files leftover residuals across the Transactions tab. **Do not click Apply + rule again** (that inserts a duplicate). Day-2 same shop: **Apply this rule** on the existing merchant row.
+- Import unchanged (tag-only). Existing leftover-created rules are not auto-applied.
+
+---
+
 ## 2026-08-19 — Leftover residual / Travel domain
 
 - Leftover residual is no longer `life_domain == Other`. Residual is blank / missing category / catch-all `CAT_OTHER` + `CAT_UNCATEGORIZED` (stable UUID **and** name `other`|`uncategorized`).

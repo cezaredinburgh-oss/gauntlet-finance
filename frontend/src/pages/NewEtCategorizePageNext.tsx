@@ -12,6 +12,7 @@ import type {
   Category,
   CategoryCoverage,
   CategoryRule,
+  CategoryRuleCreateResult,
   Transaction,
 } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -925,10 +926,18 @@ export function NewEtCategorizePageNext() {
     }
   }
 
-  async function createVendorRule(seeds: Transaction[], categoryId: string) {
+  function applyErrorMessage(result: CategoryRuleCreateResult | undefined): string | null {
+    return result?.apply_error?.message ?? null;
+  }
+
+  async function createVendorRule(
+    seeds: Transaction[],
+    categoryId: string,
+  ): Promise<CategoryRuleCreateResult | undefined> {
     const draft = buildRuleDraft(seeds, [], categoryId);
     if (!draft.match_value.trim() || !draft.category_id) return;
-    await api.createCategoryRule({
+    // One create POST per click. 200 + apply_error is save-ok / fill-fail — do not throw.
+    return api.createCategoryRule({
       priority: 100,
       match_field: draft.match_field,
       match_type: draft.match_type,
@@ -943,7 +952,7 @@ export function NewEtCategorizePageNext() {
 
   async function persistRule(draft: RuleDraft) {
     if (!draft.match_value.trim() || !draft.category_id) return;
-    await api.createCategoryRule({
+    const result = await api.createCategoryRule({
       priority: 100,
       match_field: draft.match_field,
       match_type: draft.match_type,
@@ -954,6 +963,8 @@ export function NewEtCategorizePageNext() {
       is_active: true,
       notes: "Created from New ET guided flow",
     });
+    const fillErr = applyErrorMessage(result);
+    if (fillErr) alert(fillErr);
     setRuleDraft(null);
     setSimFlow(IDLE_SIM);
     await load({ quiet: true });
@@ -1268,7 +1279,9 @@ export function NewEtCategorizePageNext() {
       void refreshCoverage();
       if (screen === "grokplus") grokPlus.consumeKeys([bucket.key]);
       if (opts?.makeRule && seeds.length) {
-        await createVendorRule(seeds, categoryId);
+        const created = await createVendorRule(seeds, categoryId);
+        const fillErr = applyErrorMessage(created);
+        if (fillErr) alert(fillErr);
         void load({ quiet: true });
       } else if (seeds.length) {
         startGuidedAfterAssign(seeds, categoryId);
@@ -1287,6 +1300,7 @@ export function NewEtCategorizePageNext() {
     setApplyProgress({ current: 0, total: rows.length });
     try {
       let working = items;
+      const fillErrors: string[] = [];
       for (let i = 0; i < rows.length; i += 1) {
         const row = rows[i];
         setApplyProgress({ current: i + 1, total: rows.length });
@@ -1294,7 +1308,9 @@ export function NewEtCategorizePageNext() {
         const out = await commitVendorAssign(working, row.bucket, row.categoryId);
         working = out.working;
         if (makeRule && out.seeds.length) {
-          await createVendorRule(out.seeds, row.categoryId);
+          const created = await createVendorRule(out.seeds, row.categoryId);
+          const fillErr = applyErrorMessage(created);
+          if (fillErr) fillErrors.push(`${row.bucket.label}: ${fillErr}`);
         }
       }
       setItems(working);
@@ -1303,6 +1319,7 @@ export function NewEtCategorizePageNext() {
       if (screen === "grokplus") grokPlus.consumeKeys(keys);
       void refreshCoverage();
       if (makeRule) void load({ quiet: true });
+      if (fillErrors.length) alert(fillErrors.join("\n"));
     } catch (e) {
       alert(e instanceof Error ? e.message : "Apply all failed");
     } finally {
