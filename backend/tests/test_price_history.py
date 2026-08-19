@@ -1729,6 +1729,10 @@ def test_resolve_day_change_1d_uses_trimmed_series():
     )
     assert result.meta["day_open"] != "50.0000"
     assert result.meta["day_open"] == "80.0000"
+    assert result.meta["session_status"] == "local_day"
+    assert result.points
+    assert all(p.get("session") == "local" for p in result.points)
+    assert result.points[0]["value"] == result.meta["day_open"]
 
 
 def test_resolve_day_change_mixed_mv_not_last_two_daily():
@@ -2234,3 +2238,226 @@ def test_fetch_closes_equity_5m_passes_prepost(monkeypatch):
     assert eq and eq[0][1] == "5m"
     assert cr and cr[0][1] == "5m"
     assert "PLTR" in eq[0][0] or any("PLTR" in s for s in eq[0][0])
+
+
+_PRAGUE_MIDNIGHT_TS = "2026-08-09T22:00:00+00:00"  # 00:00 Prague / 18:00 ET
+_RTH_OPEN_TS = "2026-08-10T13:30:00+00:00"  # 09:30 ET
+
+
+def test_aggregate_crypto_only_book_keeps_local_session():
+    """Crypto-only MV must pass through local tags, not US-classify T22:00Z as ah."""
+    from backend.services.price_history import SeriesPoint, classify_us_session
+
+    local_bars = [
+        SeriesPoint(_PRAGUE_MIDNIGHT_TS, Decimal("80.00"), "local"),
+        SeriesPoint("2026-08-10T12:00:00+00:00", Decimal("85.00"), "local"),
+        SeriesPoint(_RTH_OPEN_TS, Decimal("90.00"), "local"),
+    ]
+    qty = {"BTC": Decimal("1")}
+    closes = {"BTC": local_bars}
+
+    events = [
+        _event(
+            ticker="BTC",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="1",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    tl = build_holdings_timeline(events, [])
+
+    constant, _ = aggregate_mv_series(qty, closes)
+    aware, _ = aggregate_mv_series_time_aware(tl, closes, tickers=["BTC"])
+    assert constant and aware
+    for series in (constant, aware):
+        assert all(p.session == "local" for p in series)
+        by_ts = {p.ts: p.session for p in series}
+        assert by_ts[_PRAGUE_MIDNIGHT_TS] == "local"
+        assert by_ts[_PRAGUE_MIDNIGHT_TS] != "ah"
+        assert by_ts[_RTH_OPEN_TS] == "local"
+        assert by_ts[_RTH_OPEN_TS] != "rth"
+
+    # Untagged same timestamps still classify on the US clock (no invented local).
+    untagged = [SeriesPoint(p.ts, p.px, None) for p in local_bars]
+    us_series, _ = aggregate_mv_series(qty, {"BTC": untagged})
+    by_ts = {p.ts: p.session for p in us_series}
+    assert classify_us_session(_PRAGUE_MIDNIGHT_TS) == "ah"
+    assert by_ts[_PRAGUE_MIDNIGHT_TS] == "ah"
+    assert by_ts[_RTH_OPEN_TS] == "rth"
+
+
+def test_history_crypto_class_1d_local_session_and_midnight_day_open():
+    """Crypto book 1D (timeline path): solid local tape, day_open = midnight seed."""
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("Europe/Prague")
+    now = datetime(2026, 8, 10, 13, 0, tzinfo=timezone.utc)
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [_lot(ticker="BTC", asset_class=AssetClass.CRYPTO, qty="1", cost_usd="10")],
+    )
+    repo.upsert_rows(
+        "InvestmentEvents",
+        [
+            _event(
+                ticker="BTC",
+                event_type=InvestmentEventType.BUY,
+                event_date=date(2020, 1, 1),
+                qty="1",
+                asset_class=AssetClass.CRYPTO,
+            ),
+        ],
+    )
+    midnight_px = Decimal("80.00")
+    rth_px = Decimal("90.00")
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        assert interval == "5m"
+        our = yahoo_map[yahoo_symbols[0]]
+        return {
+            our: [
+                ("2026-08-09T21:55:00+00:00", Decimal("79.00")),
+                (_PRAGUE_MIDNIGHT_TS, midnight_px),
+                ("2026-08-10T12:00:00+00:00", Decimal("85.00")),
+                (_RTH_OPEN_TS, rth_px),
+            ]
+        }
+
+    svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
+    result = svc.history(
+        scope="asset_class",
+        range_key="1d",
+        asset_class="Crypto",
+        now=now,
+        zone=zone,
+    )
+    assert result.meta["session_status"] == "local_day"
+    assert result.points
+    assert all(p.get("session") == "local" for p in result.points)
+    assert result.meta["day_open"] == result.points[0]["value"]
+    assert result.meta["day_open"] == "80.00"
+    assert result.points[0]["date"] == _PRAGUE_MIDNIGHT_TS
+    assert result.meta["day_open"] != "90.00"
+
+
+def test_history_stock_class_1d_keeps_us_session_tags():
+    """Stocks book 1D still prior_close / pre / rth / ah — not local."""
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("America/New_York")
+    now = _et(2026, 8, 10, 10, 0)
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [_lot(ticker="PLTR", asset_class=AssetClass.STOCK, qty="3", cost_usd="30")],
+    )
+    repo.upsert_rows(
+        "InvestmentEvents",
+        [
+            _event(
+                ticker="PLTR",
+                event_type=InvestmentEventType.BUY,
+                event_date=date(2020, 1, 1),
+                qty="3",
+                asset_class=AssetClass.STOCK,
+            ),
+        ],
+    )
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        our = yahoo_map[yahoo_symbols[0]]
+        return {our: list(_stock_extended_bars())}
+
+    svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
+    result = svc.history(
+        scope="asset_class",
+        range_key="1d",
+        asset_class="Stock",
+        now=now,
+        zone=zone,
+    )
+    sessions = {p.get("session") for p in result.points}
+    allowed = {"prior_close", "pre", "rth", "ah"}
+    assert sessions <= allowed
+    assert "local" not in sessions
+    assert "prior_close" in sessions
+    assert sessions & {"pre", "rth", "ah"}
+
+
+def test_history_mixed_all_1d_serialized_points_have_no_session():
+    """scope=all 1D stays serialize-stripped (no local or US tags on points)."""
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo("Europe/Prague")
+    now = datetime(2026, 8, 10, 14, 0, tzinfo=ZoneInfo("America/New_York"))
+    repo = InMemorySheetsRepository()
+    repo.upsert_rows(
+        "InvestmentLots",
+        [
+            _lot(ticker="PLTR", asset_class=AssetClass.STOCK, qty="10", cost_usd="200"),
+            _lot(ticker="BTC", asset_class=AssetClass.CRYPTO, qty="1", cost_usd="80"),
+        ],
+    )
+    repo.upsert_rows(
+        "InvestmentEvents",
+        [
+            _event(
+                ticker="PLTR",
+                event_type=InvestmentEventType.BUY,
+                event_date=date(2020, 1, 1),
+                qty="10",
+                asset_class=AssetClass.STOCK,
+            ),
+            _event(
+                ticker="BTC",
+                event_type=InvestmentEventType.BUY,
+                event_date=date(2020, 1, 1),
+                qty="1",
+                asset_class=AssetClass.CRYPTO,
+            ),
+        ],
+    )
+
+    def fake_fetch(yahoo_symbols, yahoo_map, period, interval):
+        out: dict[str, list[tuple[str, Decimal]]] = {}
+        for _y, our in yahoo_map.items():
+            if our == "BTC":
+                out[our] = [
+                    ("2026-08-09T21:55:00+00:00", Decimal("80.00")),
+                    (_PRAGUE_MIDNIGHT_TS, Decimal("80.00")),
+                    (_RTH_OPEN_TS, Decimal("90.00")),
+                    ("2026-08-10T17:55:00+00:00", Decimal("91.00")),
+                ]
+            else:
+                out[our] = list(_stock_extended_bars())
+        return out
+
+    svc = PriceHistoryService(repo, enabled=True, fetcher=fake_fetch)
+    result = svc.history(scope="all", range_key="1d", now=now, zone=zone)
+    assert result.points
+    for p in result.points:
+        assert "session" not in p
+
+
+def test_day_change_from_series_local_tagged_day_open_is_first_px():
+    """Local-tagged crypto tape parks day_open on the midnight seed, not 09:30 ET."""
+    from backend.services.price_history import SeriesPoint, _day_change_from_series
+
+    series = [
+        SeriesPoint(_PRAGUE_MIDNIGHT_TS, Decimal("80.00"), "local"),
+        SeriesPoint(_RTH_OPEN_TS, Decimal("90.00"), "local"),
+        SeriesPoint("2026-08-10T12:55:00+00:00", Decimal("91.00"), "local"),
+    ]
+    meta = _day_change_from_series(series, places=2)
+    assert meta["day_open"] == "80.00"
+
+    # Contrast: the same prices US-tagged would jump day_open to first RTH.
+    us_tagged = [
+        SeriesPoint(_PRAGUE_MIDNIGHT_TS, Decimal("80.00"), "ah"),
+        SeriesPoint(_RTH_OPEN_TS, Decimal("90.00"), "rth"),
+        SeriesPoint("2026-08-10T12:55:00+00:00", Decimal("91.00"), "rth"),
+    ]
+    us_meta = _day_change_from_series(us_tagged, places=2)
+    assert us_meta["day_open"] == "90.00"

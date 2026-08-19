@@ -4,6 +4,19 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-19 — Crypto book 1D keeps local session tags
+
+- Crypto ticker 1D was already `session=local` (trim → serialize). Crypto **book**
+  MV ran the same local-midnight trim, then `aggregate_mv_series` /
+  `aggregate_mv_series_time_aware` overwrote tags with `classify_us_session`.
+  Prague midnight (`T22:00Z` = 18:00 ET) became `ah`; overnight ET hours became
+  `None` (chart holes); `day_open` jumped to first RTH.
+- Both aggregators now call `_mv_session_for_ts`: all `prior_close` → seed;
+  all known tags `local` → `local` (crypto-only book); else US classify.
+  Mixed All 1D still serialize-strips `session`. No frontend change.
+
+---
+
 ## 2026-08-19 — Grok+ leftover paging is exclude-then-slice
 
 - Plus `/vendor-suggest-plus` no longer clusters a 300-prefix then drops `exclude_merchant_keys` (empty window after ~300 sent keys).

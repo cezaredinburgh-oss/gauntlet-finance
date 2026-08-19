@@ -248,6 +248,23 @@ def _tag_local(points: list[SeriesPoint]) -> list[SeriesPoint]:
     return [SeriesPoint(ts=p.ts, px=p.px, session="local") for p in points]
 
 
+def _mv_session_for_ts(at_ts: list[SessionTag | None], ts: str) -> SessionTag | None:
+    """Session for one aggregated MV bar.
+
+    prior_close wins only when every contributor at this ts is the seed.
+    local wins only when every *known* contributor is local (crypto-only book).
+    Mixed / untagged intraday falls through to the US clock.
+    """
+    if at_ts and all(s == "prior_close" for s in at_ts):
+        return "prior_close"
+    known = [s for s in at_ts if s is not None]
+    if known and all(s == "local" for s in known):
+        return "local"
+    if "T" in ts:
+        return classify_us_session(ts)
+    return None
+
+
 def _last_px_at_or_before(
     series: list[SeriesPoint], cutoff: datetime
 ) -> Decimal | None:
@@ -853,12 +870,7 @@ def aggregate_mv_series(
             for t, sm in session_maps.items()
             if ts in sm
         ]
-        if at_ts and all(s == "prior_close" for s in at_ts):
-            sess: SessionTag | None = "prior_close"
-        elif "T" in ts:
-            sess = classify_us_session(ts)
-        else:
-            sess = None
+        sess = _mv_session_for_ts(at_ts, ts)
         result.append(SeriesPoint(ts, _q2(total), sess))
 
     series_start = result[0].ts if result else None
@@ -1583,12 +1595,7 @@ def aggregate_mv_series_time_aware(
             for t, sm in session_maps.items()
             if ts in sm
         ]
-        if at_ts and all(s == "prior_close" for s in at_ts):
-            sess: SessionTag | None = "prior_close"
-        elif "T" in ts:
-            sess = classify_us_session(ts)
-        else:
-            sess = None
+        sess = _mv_session_for_ts(at_ts, ts)
         result.append(SeriesPoint(ts, _q2(total_mv), sess))
 
     series_start = result[0].ts if result else None
