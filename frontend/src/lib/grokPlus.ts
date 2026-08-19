@@ -4,6 +4,45 @@ import type { VendorBucket } from "./ruleSuggest";
 export const GROK_PLUS_BATCH = 12;
 export const GROK_PLUS_SESSION_CAP = 80;
 
+export type GrokPlusPhase = "idle" | "running" | "paused" | "caught_up" | "error";
+
+export function grokPlusStatusLabel(phase: string, bucketCount: number): string {
+  if (phase === "running") return "Working — matching leftovers";
+  if (phase === "paused") return bucketCount ? "Paused — ready for review" : "Paused";
+  if (phase === "caught_up") return bucketCount ? "Ready for review" : "Caught up";
+  if (phase === "error") return "Stopped — see message";
+  if (bucketCount) return "Ready for review";
+  return "Grok+ idle";
+}
+
+export function grokPlusMinimizedLabel(phase: string, bucketCount: number): string {
+  if (phase === "running") return "Working";
+  if (phase === "paused") return bucketCount ? "Paused — ready for review" : "Paused";
+  if (phase === "caught_up") return bucketCount ? "Ready for review" : "Caught up";
+  if (phase === "error") return "Stopped";
+  if (bucketCount) return "Ready for review";
+  return "Grok+";
+}
+
+/** running → paused on restore. */
+export function restorePhase(raw: unknown, bucketCount: number): GrokPlusPhase {
+  if (raw === "error") return "error";
+  if (raw === "caught_up") return "caught_up";
+  if (raw === "paused" || raw === "running") return "paused";
+  if (bucketCount > 0) return "paused";
+  return "idle";
+}
+
+/** Session chrome (status + Play) stays up after restore even with 0 buckets. */
+export function grokPlusSessionStarted(phase: string, bucketCount: number): boolean {
+  return (
+    bucketCount > 0 ||
+    phase === "paused" ||
+    phase === "caught_up" ||
+    phase === "error"
+  );
+}
+
 export function mapGrokSuggestions(
   suggestions: AiCategorySuggestion[],
   catsSorted: Category[],

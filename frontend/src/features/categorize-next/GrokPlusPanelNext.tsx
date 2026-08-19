@@ -10,6 +10,7 @@ import {
 import { Spinner } from "../../components/Spinner";
 import { cn } from "../../lib/cn";
 import { CreateCategoryInline } from "../new-et/CreateCategoryInline";
+import { useGrokPlus } from "../new-et/GrokPlusContext";
 import { GrokPlusStatus } from "../new-et/GrokPlusStatus";
 import type { VendorApplyRow } from "./VendorInbox";
 
@@ -60,6 +61,7 @@ export function GrokPlusPanelNext({
   openId: string | null;
   setOpenId: Dispatch<SetStateAction<string | null>>;
 }) {
+  const grok = useGrokPlus();
   const displayBuckets = useMemo(
     () => applyVendorCategoryOverrides(buckets, remaps, catsSorted),
     [buckets, remaps, catsSorted],
@@ -111,6 +113,18 @@ export function GrokPlusPanelNext({
   const tickedGroupCount =
     groups.filter((g) => isTicked(g.categoryId)).length +
     (unassigned.length && isTicked(UNMATCHED_ID, true) ? 1 : 0);
+  const emptyList = groups.length === 0 && unassigned.length === 0;
+  const sessionQuiet =
+    grok.started ||
+    grok.phase === "caught_up" ||
+    grok.phase === "paused" ||
+    grok.phase === "error" ||
+    Boolean(message);
+  const emptyCopy = busy
+    ? "Still working — leftover vendors will land in this list."
+    : sessionQuiet
+      ? message || "Caught up — no guesses waiting."
+      : "No categories matched yet. Use Ask Grok+ to start leftover matching.";
 
   return (
     <div className="card min-w-0 max-w-full space-y-3 p-4">
@@ -155,14 +169,12 @@ export function GrokPlusPanelNext({
         </div>
       ) : null}
 
-      {message ? <p className="break-words text-sm text-ink">{message}</p> : null}
+      {message && !emptyList ? (
+        <p className="break-words text-sm text-ink">{message}</p>
+      ) : null}
 
-      {groups.length === 0 && unassigned.length === 0 ? (
-        <p className="text-sm text-ink-faint">
-          {busy
-            ? "Still working — leftover vendors will land in this list."
-            : "No categories matched yet. Use Ask Grok+ to start leftover matching."}
-        </p>
+      {emptyList ? (
+        <p className="break-words text-sm text-ink-faint">{emptyCopy}</p>
       ) : (
         <>
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
