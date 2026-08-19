@@ -252,9 +252,23 @@ export function categoryDrillParamPatch(
   });
 }
 
-/** Open or close the ledger drawer. Other params stay. */
+/** Open the ledger drawer. Other params stay. */
 export function txParamPatch(txId: string | null): Record<string, string | null> {
   return { tx: txId };
+}
+
+/**
+ * Close the drawer without clearScope(). A tx=-only URL would otherwise
+ * collapse to the hub; write mode=txs so the list backdrop remains.
+ */
+export function closeTxParamPatch(
+  params: URLSearchParams,
+): Record<string, string | null> {
+  const withoutTx = applyParamPatch(params, { tx: null });
+  if (screenFromSearchParams(withoutTx) === "hub") {
+    return { tx: null, mode: "txs" };
+  }
+  return { tx: null };
 }
 
 export function undrillParamPatch(

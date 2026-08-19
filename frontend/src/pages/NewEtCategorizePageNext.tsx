@@ -52,6 +52,7 @@ import {
   ruleDrillParamPatch,
   screenFromSearchParams,
   shouldRestoreNextStepsFromSimilar,
+  closeTxParamPatch,
   srcWindowLabel,
   txParamPatch,
   undrillParamPatch,
@@ -172,7 +173,6 @@ export function NewEtCategorizePageNext() {
   const txTableRef = useRef<HTMLDivElement | null>(null);
   const simFlowRef = useRef(IDLE_SIM);
   const txPushedRef = useRef(false);
-  const txFetchAttemptRef = useRef<{ id: string; retry: number } | null>(null);
   const [txRetry, setTxRetry] = useState(0);
   const [txFetch, setTxFetch] = useState<{
     key: string;
@@ -324,30 +324,23 @@ export function NewEtCategorizePageNext() {
   // Deep-link / missing workbench id: one list-by-ids fetch. Never GET /transactions/{id}.
   useEffect(() => {
     if (!txParam) {
-      txFetchAttemptRef.current = null;
-      if (txFetch.key !== "" || txFetch.status !== "idle") {
-        setTxFetch({ key: "", status: "idle" });
-      }
+      setTxFetch((prev) =>
+        prev.key === "" && prev.status === "idle"
+          ? prev
+          : { key: "", status: "idle" },
+      );
       return;
     }
     const want = normTxId(txParam);
     if (items.some((t) => normTxId(t.id) === want)) {
-      if (txFetch.key !== want || txFetch.status !== "idle") {
-        setTxFetch({ key: want, status: "idle" });
-      }
+      setTxFetch((prev) =>
+        prev.key === want && prev.status === "idle"
+          ? prev
+          : { key: want, status: "idle" },
+      );
       return;
     }
     if (loading) return;
-    const last = txFetchAttemptRef.current;
-    if (
-      last &&
-      last.id === want &&
-      last.retry === txRetry &&
-      txFetch.status !== "idle"
-    ) {
-      return;
-    }
-    txFetchAttemptRef.current = { id: want, retry: txRetry };
     let cancelled = false;
     setTxFetch({ key: want, status: "loading" });
     void (async () => {
@@ -378,7 +371,7 @@ export function NewEtCategorizePageNext() {
     return () => {
       cancelled = true;
     };
-  }, [txParam, items, loading, txRetry, txFetch.key, txFetch.status]);
+  }, [txParam, items, loading, txRetry]);
 
   useEffect(() => {
     if (!txParam) txPushedRef.current = false;
@@ -823,7 +816,7 @@ export function NewEtCategorizePageNext() {
       return;
     }
     txPushedRef.current = false;
-    patchParams(txParamPatch(null));
+    patchParams(closeTxParamPatch(searchParams));
   }
 
   function similarForSeeds(seeds: Transaction[]): Transaction[] {

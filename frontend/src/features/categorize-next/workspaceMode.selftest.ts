@@ -17,6 +17,7 @@ import {
   ruleDrillParamPatch,
   screenFromSearchParams,
   shouldRestoreNextStepsFromSimilar,
+  closeTxParamPatch,
   txParamPatch,
   undrillParamPatch,
   windowParamPatch,
@@ -126,9 +127,28 @@ assertTrue(
 const openedTx = applyParamPatch(new URLSearchParams(), txParamPatch("abc-uuid"));
 assertEq(openedTx.get("tx"), "abc-uuid", "txParamPatch writes tx");
 assertEq(screenFromSearchParams(openedTx), "txs", "txParamPatch alone → txs");
-const closedTx = applyParamPatch(openedTx, txParamPatch(null));
-assertEq(closedTx.get("tx"), null, "txParamPatch(null) deletes tx");
-assertEq(screenFromSearchParams(closedTx), "hub", "close tx with no other scope → hub");
+const closedTx = applyParamPatch(openedTx, closeTxParamPatch(openedTx));
+assertEq(closedTx.get("tx"), null, "closeTxParamPatch deletes tx");
+assertEq(closedTx.get("mode"), "txs", "close tx-only writes mode=txs");
+assertEq(
+  screenFromSearchParams(closedTx),
+  "txs",
+  "close tx-only deep link keeps txs backdrop",
+);
+const closedWithDates = applyParamPatch(
+  new URLSearchParams("date_from=2026-01-01&tx=abc-uuid"),
+  closeTxParamPatch(new URLSearchParams("date_from=2026-01-01&tx=abc-uuid")),
+);
+assertEq(closedWithDates.get("tx"), null, "close with dates deletes tx");
+assertEq(closedWithDates.get("mode"), null, "close with other scope does not write mode");
+assertEq(closedWithDates.get("date_from"), "2026-01-01", "close keeps inbound dates");
+assertEq(screenFromSearchParams(closedWithDates), "txs", "close with dates stays txs");
+const closedOnReview = applyParamPatch(
+  new URLSearchParams("mode=review&tx=abc-uuid"),
+  closeTxParamPatch(new URLSearchParams("mode=review&tx=abc-uuid")),
+);
+assertEq(closedOnReview.get("mode"), "review", "close on leftovers keeps mode=review");
+assertEq(screenFromSearchParams(closedOnReview), "review", "close on leftovers stays leftovers");
 assertEq(
   screenFromSearchParams(
     new URLSearchParams(
