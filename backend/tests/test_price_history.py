@@ -1591,7 +1591,7 @@ def test_portfolio_window_components_local_day():
         now=now,
         zone=zone,
     )
-    assert comp["method"] == "stocks_rth_plus_crypto_local_day_mark"
+    assert comp["method"] == "stocks_extended_plus_crypto_local_day_mark"
     s = Decimal(comp["stocks"]["change_usd"])
     c = Decimal(comp["crypto"]["change_usd"])
     assert Decimal(comp["sum_change_usd"]) == s + c
@@ -1980,7 +1980,18 @@ def test_pre_market_change_rth_is_none():
     assert hist.meta["change_abs"] == "1.0000"  # 101 − 100
 
 
-def test_portfolio_grid_overnight_ignores_pre_print():
+def _iso_et(day: int, hh: int, mm: int, *, month: int = 8, year: int = 2026) -> str:
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    return (
+        datetime(year, month, day, hh, mm, tzinfo=et)
+        .astimezone(timezone.utc)
+        .isoformat()
+    )
+
+
+def test_portfolio_grid_0430_et_live_pre_not_stuck_on_prior_rth():
     from zoneinfo import ZoneInfo
 
     from backend.services.price_history import (
@@ -1989,21 +2000,144 @@ def test_portfolio_grid_overnight_ignores_pre_print():
     )
 
     zone = ZoneInfo("Europe/Prague")
-    now = _et(2026, 8, 10, 8, 0)  # 14:00 Prague summer
-    et = ZoneInfo("America/New_York")
+    now = _et(2026, 8, 10, 4, 30)
     stock = [
-        (
-            datetime(2026, 8, 7, 15, 55, tzinfo=et).astimezone(timezone.utc).isoformat(),
-            Decimal("100"),
-        ),
-        (
-            datetime(2026, 8, 10, 4, 30, tzinfo=et).astimezone(timezone.utc).isoformat(),
-            Decimal("120"),
-        ),
+        (_iso_et(7, 15, 55), Decimal("100")),
+        (_iso_et(10, 4, 30), Decimal("120")),
     ]
     crypto = [
         ("2026-08-09T22:00:00+00:00", Decimal("1000")),
-        ("2026-08-10T12:00:00+00:00", Decimal("1000")),
+        ("2026-08-10T08:30:00+00:00", Decimal("1000")),
+    ]
+    aligned, status = build_portfolio_1d_aligned_closes(
+        {"STK": stock, "CRY": crypto},
+        {"STK": "Stock", "CRY": "Crypto"},
+        now=now,
+        zone=zone,
+    )
+    assert status == "local_day"
+    window_open = datetime(2026, 8, 9, 22, 0, tzinfo=timezone.utc)
+    prior = _prior_rth_close(stock, before=window_open)
+    assert prior == Decimal("100")
+    assert aligned["STK"][0][1] == Decimal("100")
+    assert aligned["STK"][-1][1] == Decimal("120")
+    pre_ts = _parse_ts(_iso_et(10, 4, 30))
+    for ts, px in aligned["STK"]:
+        if _parse_ts(ts) < pre_ts:
+            assert px == Decimal("100")
+        else:
+            assert px == Decimal("120")
+
+
+def test_portfolio_grid_prague_midnight_seed_is_friday_ah():
+    from zoneinfo import ZoneInfo
+
+    from backend.services.price_history import build_portfolio_1d_aligned_closes
+
+    zone = ZoneInfo("Europe/Prague")
+    # Sat 08:00 Prague = Fri 18:00 ET window already closed; seed is Fri 17:00 AH.
+    now = datetime(2026, 8, 8, 6, 0, tzinfo=timezone.utc)
+    stock = [
+        (_iso_et(7, 15, 55), Decimal("100")),
+        (_iso_et(7, 17, 0), Decimal("110")),
+    ]
+    crypto = [
+        ("2026-08-07T22:00:00+00:00", Decimal("1000")),
+        ("2026-08-08T05:55:00+00:00", Decimal("1000")),
+    ]
+    aligned, status = build_portfolio_1d_aligned_closes(
+        {"STK": stock, "CRY": crypto},
+        {"STK": "Stock", "CRY": "Crypto"},
+        now=now,
+        zone=zone,
+    )
+    assert status == "local_day"
+    assert aligned["STK"][0][0] == "2026-08-07T22:00:00+00:00"
+    assert aligned["STK"][0][1] == Decimal("110")
+    assert aligned["STK"][0][1] != Decimal("100")
+    assert aligned["STK"][-1][1] == Decimal("110")
+
+
+def test_portfolio_grid_extended_additive_identity():
+    from zoneinfo import ZoneInfo
+
+    from backend.services.price_history import (
+        COVERAGE_THRESHOLD_INTRADAY,
+        aggregate_mv_series_time_aware,
+        build_portfolio_1d_aligned_closes,
+    )
+
+    zone = ZoneInfo("Europe/Prague")
+    now = _et(2026, 8, 10, 17, 0)
+    stock = [
+        (_iso_et(7, 15, 55), Decimal("100")),
+        (_iso_et(7, 17, 0), Decimal("105")),
+        (_iso_et(10, 4, 30), Decimal("108")),
+        (_iso_et(10, 17, 0), Decimal("112")),
+    ]
+    crypto = _five_min_series(
+        datetime(2026, 8, 9, 21, 0, tzinfo=timezone.utc),
+        now,
+        lambda i, _t: Decimal("1000") + Decimal(i) * Decimal("0.25"),
+    )
+    aligned, status = build_portfolio_1d_aligned_closes(
+        {"STK": stock, "CRY": crypto},
+        {"STK": "Stock", "CRY": "Crypto"},
+        now=now,
+        zone=zone,
+    )
+    assert status == "local_day"
+    assert [p[0] for p in aligned["STK"]] == [p[0] for p in aligned["CRY"]]
+    assert aligned["STK"][0][1] == Decimal("105")
+    assert aligned["STK"][-1][1] == Decimal("112")
+
+    events = [
+        _event(
+            ticker="STK",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="10",
+            asset_class=AssetClass.STOCK,
+        ),
+        _event(
+            ticker="CRY",
+            event_type=InvestmentEventType.BUY,
+            event_date=date(2020, 1, 1),
+            qty="1",
+            asset_class=AssetClass.CRYPTO,
+        ),
+    ]
+    tl = build_holdings_timeline(events, [])
+    series, _ = aggregate_mv_series_time_aware(
+        tl,
+        aligned,
+        coverage_threshold=COVERAGE_THRESHOLD_INTRADAY,
+        preseed_first_marks=True,
+    )
+    d_stk = (aligned["STK"][-1][1] - aligned["STK"][0][1]) * Decimal("10")
+    d_cry = (aligned["CRY"][-1][1] - aligned["CRY"][0][1]) * Decimal("1")
+    d_chart = series[-1][1] - series[0][1]
+    assert d_stk == Decimal("70")
+    assert abs(d_chart - (d_stk + d_cry)) <= Decimal("0.01")
+
+
+def test_portfolio_grid_monday_0200_et_is_friday_last_ah():
+    from zoneinfo import ZoneInfo
+
+    from backend.services.price_history import (
+        _prior_rth_close,
+        build_portfolio_1d_aligned_closes,
+    )
+
+    zone = ZoneInfo("Europe/Prague")
+    now = _et(2026, 8, 10, 2, 0)
+    stock = [
+        (_iso_et(7, 15, 55), Decimal("100")),
+        (_iso_et(7, 17, 0), Decimal("110")),
+    ]
+    crypto = [
+        ("2026-08-09T22:00:00+00:00", Decimal("1000")),
+        ("2026-08-10T06:00:00+00:00", Decimal("1000")),
     ]
     aligned, status = build_portfolio_1d_aligned_closes(
         {"STK": stock, "CRY": crypto},
@@ -2017,7 +2151,8 @@ def test_portfolio_grid_overnight_ignores_pre_print():
         before=datetime(2026, 8, 9, 22, 0, tzinfo=timezone.utc),
     )
     assert prior == Decimal("100")
-    assert all(p[1] == Decimal("100") for p in aligned["STK"])
+    assert all(p[1] == Decimal("110") for p in aligned["STK"])
+    assert aligned["STK"][-1][1] != Decimal("100")
 
 
 def test_yfinance_history_batch_prepost_kwarg(monkeypatch):

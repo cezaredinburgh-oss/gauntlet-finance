@@ -464,7 +464,7 @@ def _prior_rth_close(
 
 
 def rth_only(series: list[SeriesPoint]) -> list[SeriesPoint]:
-    """Keep RTH prints only (09:30 ≤ ET < 16:00). Used inside the mixed 1D grid."""
+    """Keep RTH prints only (09:30 ≤ ET < 16:00). Ticker trim / vs-close, not the mixed grid."""
     out: list[SeriesPoint] = []
     for p in _coerce_series(series):
         sess = p.session if p.session is not None else classify_us_session(p.ts)
@@ -536,9 +536,9 @@ def _align_closes_on_grid(
         ac = (asset_classes.get(ticker) or "").lower()
         is_crypto = ac == "crypto"
         full_pts = _coerce_series(full)
-        live_src = full_pts if is_crypto else rth_only(full_pts)
-        pairs = _series_to_sorted_pairs(live_src)
-        if is_crypto and not pairs:
+        # Stocks use the prepost tape so overnight marks move on AH/pre.
+        pairs = _series_to_sorted_pairs(full_pts)
+        if not pairs:
             continue
 
         if is_crypto:
@@ -551,13 +551,12 @@ def _align_closes_on_grid(
             if open_px is None:
                 open_px = pairs[0][1]
         else:
-            open_px = _prior_rth_close(full_pts, before=window_open)
+            # Last print ≤ local midnight; RTH close only if the tape has none.
+            open_px, _ = _px_asof(pairs, window_open)
             if open_px is None:
-                open_px, _ = _px_asof(pairs, window_open) if pairs else (None, 0)
-            if open_px is None and pairs:
+                open_px = _prior_rth_close(full_pts, before=window_open)
+            if open_px is None:
                 open_px = pairs[0][1]
-            if open_px is None:
-                continue
 
         series_out: list[SeriesPoint] = []
         last_px = open_px
@@ -584,10 +583,10 @@ def build_portfolio_1d_aligned_closes(
     Portfolio 1D on a **shared 5m UTC grid** from local midnight to now.
 
     Every ticker gets a mark on every grid timestamp (forward-filled):
-      - Equity: previous RTH close until the first live RTH bar, then live
+      - Equity: last prepost print ≤ local midnight (fallback prior RTH), then live including pre/AH
       - Crypto: last print ≤ window open, then live 5m
 
-    Same timestamps → additive window Δ = stocks session + crypto local day.
+    Same timestamps → additive window Δ = stocks extended last + crypto local day.
     """
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
@@ -1845,7 +1844,7 @@ def portfolio_window_from_components(
         "first_usd": _str_dec(first_total) if first_total is not None else None,
         "last_usd": _str_dec(last_total) if last_total is not None else None,
         "method": (
-            "stocks_rth_plus_crypto_local_day_mark"
+            "stocks_extended_plus_crypto_local_day_mark"
             if used_aligned_grid
             else (
                 "stocks_rth_plus_crypto_local_day_independent"

@@ -13,6 +13,12 @@ Incremental notes per PR. Deviations from Collective are recorded here.
 
 ---
 
+## 2026-08-19 — Portfolio 1D grid marks extended last overnight
+
+- Mixed `scope=all` 1D seeds each stock at last prepost print ≤ local midnight (fallback prior RTH close); live `_px_asof` carries AH/pre. Crypto midnight unchanged. Method `stocks_extended_plus_crypto_local_day_mark`.
+
+---
+
 ## 2026-08-19 — Rule-create fills leftovers; Apply this rule
 
 - `POST /category-rules` validates needle + category, persists, then `apply_one_rule_fill_residuals` (`also_apply` default true). Every apply failure after insert is **200 + `apply_error`** (never 400/500). `WritableUserDep` (tour 403).
